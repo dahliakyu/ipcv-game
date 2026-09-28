@@ -1,0 +1,30 @@
+# Pinned for Python 3.12 (conda env "ipcvgame"). Install:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements.txt && pip install -e .
+# CPU-only machines: use --index-url https://download.pytorch.org/whl/cpu for torch.
+# Owners add their module's dependencies here (with a comment) via their PR.
+
+# --- deep learning / models ---
+torch==2.11.0                  # CUDA 12.8 build from the PyTorch index (see above)
+torchvision==0.26.0
+ultralytics==8.4.164           # Task 2 YOLO-pose; later YOLO-seg / ByteTrack baseline (AGPL-3.0)
+mediapipe==1.0.1               # Task 1 face landmarker (Apache 2.0)
+
+# --- vision / numerics ---
+# mediapipe pulls opencv-contrib-python, ultralytics pulls opencv-python; both
+# provide cv2 and MUST stay at the same version.
+opencv-python==5.0.0.93
+opencv-contrib-python==5.0.0.93
+numpy==2.5.2
+scipy==1.18.1                  # Task 3 Hungarian (linear_sum_assignment)
+filterpy==1.4.5                # Kalman filters (Tasks 2, 3)
+
+# --- game / rendering ---
+pygame-ce==2.5.8               # final game renderer and sound
+
+# --- config, analysis, dev ---
+PyYAML==6.0.3
+pandas==3.0.6                  # CSV log analysis for the report
+matplotlib==3.11.2
+pytest==9.1.1
+ruff==0.16.9

@@ -1,0 +1,86 @@
+# Every threshold, filter parameter and cooldown lives here, one section per
+# module, each with a comment on WHY it has that value. Owners justify their
+# own section in the individual questions.
+#
+# Override from the CLI:  --set pose.conf_threshold=0.4
+
+source:
+  # Webcam index (int) or path to a video file (str). CLI --source overrides.
+  uri: 0
+  # Requested capture size. 1280x720 is the common native mode of laptop
+  # webcams; the driver may silently fall back to something else.
+  width: 1280
+  height: 720
+  # Requested webcam FPS. 30 is what most UVC webcams deliver at 720p.
+  fps: 30
+  # Mirror once at capture so "left" is the same for players and code.
+  # Clips are recorded raw (unmirrored) and mirrored on load, like the webcam.
+  mirror: true
+  # Video files only: "file" derives Frame.t from the video timestamp, so
+  # filters see the true dt and runs are reproducible. "wall" uses the
+  # processing clock, like a live webcam.
+  video_time: file
+  # Video files only: restart at the end instead of stopping.
+  loop: false
+
+pose:                     # Task 2 — detection
+  # "yolo" = real pretrained model; "none" = no detections (for tests
+  # without weights or GPU).
+  backend: yolo
+  # Nano model: fast enough for real time on a laptop GPU. Downloaded into
+  # models/ on first run (gitignored).
+  weights: models/yolo26n-pose.pt
+  # "auto" = cuda:0 if available, else cpu.
+  device: auto
+  # Inference size (long side). 640 is the size the model was trained at.
+  imgsz: 640
+  # Minimum person score to keep a detection. Low-ish so a partly occluded
+  # player is still reported; Task 3 decides what to trust.
+  det_conf: 0.35
+  # Upper bound on persons returned. The game has 2 players; a few extra
+  # lets identity reject bystanders instead of the detector dropping players.
+  max_det: 5
+  # Half-precision inference on CUDA; ~2x faster with no visible accuracy loss.
+  half: true
+  # Debug overlay only: hide keypoints below this confidence. 0.5 matches
+  # the threshold Ultralytics uses when drawing keypoints.
+  debug_kpt_conf: 0.5
+
+identity:                 # Task 3 — phase-1 stub: left half = P1, right half = P2
+  # Frames can contain bystanders; the stub keeps only the best-scoring
+  # detection per half.
+  num_players: 2
+
+motion:                   # Task 2 — motion filtering (stub: pass-through)
+  # Keypoints under this confidence are marked invalid. 0.5 matches the
+  # threshold Ultralytics uses when drawing keypoints.
+  kpt_conf_threshold: 0.5
+
+face:                     # Task 1 — stub: above_head anchor above the nose
+  # above_head sits this many shoulder-widths above the nose. ~0.9 clears
+  # the top of the head for an average adult.
+  above_head_factor: 0.9
+  # Fallback head scale (px) when shoulders are not visible.
+  default_scale: 80.0
+
+gestures:                 # Task 4 — stub: no events
+  {}
+
+game:                     # Task 4 — stub: prints events
+  {}
+
+recorder:
+  # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
+  # status/pos). This is the evidence for FPS and latency in the report.
+  log: true
+  log_dir: logs
+  # Append buffered rows to the CSV every N frames (~10 s at 30 fps): bounds
+  # data loss on a crash without file I/O every frame.
+  flush_every: 300
+  # Codec for recorded clips. mp4v is available in every OpenCV build.
+  fourcc: mp4v
+
+render:
+  window_name: IPCV game
+  # Show per-stage timings and FPS in the corner of the game window.
+  show_timings: true

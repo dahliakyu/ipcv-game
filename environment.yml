@@ -1,0 +1,10 @@
+# conda env create -f environment.yml && conda activate ipcvgame && pip install -e .
+name: ipcvgame
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - -r requirements.txt

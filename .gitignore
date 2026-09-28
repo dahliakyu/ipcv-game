@@ -1,0 +1,45 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Environments (conda env lives outside the repo; venv users keep it here)
+.venv/
+venv/
+.env
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local assistant state (personal, not shared)
+.claude/settings.local.json
+CLAUDE.local.md
+graphify-out/
+
+# Model weights and videos stay out of the repo (see README for downloads)
+models/
+*.pt
+*.onnx
+*.engine
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Shared clips come from the drive
+data/clips/
+
+# Run outputs
+logs/
+runs/
+*.csv.tmp
