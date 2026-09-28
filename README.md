@@ -41,7 +41,7 @@ python -m ipcvgame.app.main --set pose.det_conf=0.5           # config override
 ```
 
 Keys: `q`/`Esc` quit, `p` pause, `r` reset module state.
-`--until {pose,identity,motion,face,gesture,game}` runs the pipeline up to that
+`--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
 module and shows only its `draw_debug` overlay. `--headless --max-frames N`
 runs without a window.
 
@@ -56,8 +56,8 @@ Clips are stored raw (un-mirrored) with a `<clip>.timestamps.csv` sidecar of
 real capture times; `VideoFile` replays those times so filters see the true dt.
 Every run also writes `logs/run-<time>.csv` (frame_id, t, per-stage ms,
 per-player status/pos/box; `--no-log` to skip). To add your own columns, give
-your module a `log_fields(state) -> dict` method, keys prefixed with your
-module (e.g. `face_p1_roll`).
+your module a `log_fields(state) -> dict` method with keys named
+`<stage>_p<pid>_<field>` (e.g. `face_p1_roll`).
 
 ## Layout
 
@@ -76,6 +76,28 @@ tools/                   run_module.py, record_clip.py, eval_*.py (per task)
 tests/                   pytest; no model or camera needed
 data/clips/, models/, logs/   gitignored
 ```
+
+## Naming conventions
+
+Full version with examples: [docs/phase-1/status.md](docs/phase-1/status.md#naming-conventions).
+
+- **Stages** The code names each pipeline step by what it
+  does, and the same name is used for `--until`, the config section and the
+  CSV timing column (`ms_<stage>`):
+
+  | Stage | `pose` | `identity` | `motion` | `face` | `gestures` | `game` | `render` |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | Task | 2 | 3 | 2 | 1 | 4 | 4 | 5 |
+
+  Task numbers appear only in branch names: `task<N>-<name>`, e.g. `task3-identity`.
+- **Players** are `pid` integers from 1: `state.players[1]` in code, `P1` on
+  screen, `p1_<field>` in the CSV, and `<stage>_p1_<field>` for your own columns.
+- **Keypoints**: `sk.L_WRIST` in code, `l_wrist` in strings. Frames are
+  mirrored, so `L_*` is the player's own **right** side.
+- **Shared strings** (signals, anchors, gesture names, clip names) are
+  lowercase `snake_case`: `r_wrist_speed`, `above_head`, `crossing.mp4`.
+- **Files**: `tools/eval_<stage>.py`, `tests/test_<module>.py`,
+  `data/clips/<scenario>.mp4`.
 
 ## Develop
 

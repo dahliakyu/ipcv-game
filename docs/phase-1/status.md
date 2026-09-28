@@ -49,7 +49,7 @@ Every module has the same methods; replace the body, keep the signature.
 | `update(...)` | Typed inputs → its own output type (pose uses `detect(frame)`) |
 | `reset(pid=None)` | Clear state for one player, or all when `pid` is None |
 | `draw_debug(canvas, state)` | Draw your internals; shown with `--until <your stage>` |
-| `log_fields(state) -> dict` *(optional)* | Extra CSV columns; prefix keys with your module, e.g. `face_p1_roll` |
+| `log_fields(state) -> dict` *(optional)* | Extra CSV columns, named `<stage>_p<pid>_<field>`, e.g. `face_p1_roll` |
 
 `log_fields` is new since the setup guide. It is optional and does not touch `types.py`.
 
@@ -65,12 +65,63 @@ Every module has the same methods; replace the body, keep the signature.
 
 One cross-section read exists today: `FaceTracker` receives `motion.kpt_conf_threshold` for deciding whether the nose keypoint is trustworthy. Task 1 may replace this with its own key in `face:`.
 
+### Naming conventions
+
+**Tasks vs stages.** Task numbers are for people and branches only. The code never uses them; it uses **stage names**, one per pipeline step, and the same name appears everywhere that step shows up:
+
+| Stage | Task | Code | Config section | `--until` | CSV timing column |
+| --- | --- | --- | --- | --- | --- |
+| `pose` | 2 | `pose/estimator.py` | `pose:` | `pose` | `ms_pose` |
+| `identity` | 3 | `identity/tracker.py` | `identity:` | `identity` | `ms_identity` |
+| `motion` | 2 | `pose/motion.py` | `motion:` | `motion` | `ms_motion` |
+| `face` | 1 | `face/tracker.py` (+ `effects.py`) | `face:` | `face` | `ms_face` |
+| `gestures` | 4 | `interaction/gestures.py` | `gestures:` | `gestures` | `ms_gestures` |
+| `game` | 4 | `interaction/game.py` | `game:` | `game` | `ms_game` |
+| `render` | 5 | `scene/renderer.py` | `render:` | (default view) | `ms_render` |
+
+`source:` and `recorder:` are Task 5 config sections that are not pipeline stages. `ms_total` is the whole frame. Task 2 and Task 4 each own two stages, which is why a task number cannot name a stage.
+
+**Players.** The player id (`pid`) is the only player identity; every per-player output is keyed by it.
+
+| Where | Form | Example |
+| --- | --- | --- |
+| Code: `Player.pid`, dict keys, `Face.pid`, `GestureEvent.pid` | int from **1** (never 0) | `state.players[1]`, `state.motion[2]` |
+| Screen | `P<pid>` | `P1`, `P2` |
+| Colour | `player_color(pid)` | P1 orange, P2 blue; grey = no pid yet |
+| CSV, built-in columns | `p<pid>_<field>` | `p1_status`, `p2_cx` |
+| CSV, your `log_fields` | `<stage>_p<pid>_<field>` | `face_p1_roll`, `identity_p2_hist_dist` |
+
+A player keeps their pid for the whole run: when they leave they stay in `players` with `status="lost"`, and they return under the same pid with `reentered=True`.
+
+**Keypoints.** In code use the constants from `core/skeleton.py` (`sk.L_WRIST`); in strings (signals, CSV columns) use the lowercase names from `sk.NAMES` (`l_wrist`).
+
+> ⚠️ **Left/right is the model's label, not the player's side.** Checked with YOLO26n-pose: models label sides as in an ordinary photo, but our frames are mirrored. So `sk.L_WRIST` is the player's own **right** wrist. Keep this in mind for any "raise your left hand" gesture. Whether the adapter should swap the labels is on the decision list below.
+
+**Strings shared between modules** are lowercase `snake_case`:
+
+| What | Rule | Examples | Agreed by |
+| --- | --- | --- | --- |
+| Player status | fixed set | `active`, `occluded`, `lost` | contract |
+| Face anchors | body location | `above_head`, `forehead`, `mouth` | Task 1 ↔ 4, 5 |
+| Motion signals | `<side>_<joint>_<quantity>`, or a state name as 0.0/1.0 | `r_wrist_speed`, `hands_above_head` | Task 2 ↔ 4 (proposal) |
+| Gesture events | the action | `punch`, `raise_hands` | Task 4 (proposal) |
+
+**Files and branches.**
+
+| What | Pattern | Examples |
+| --- | --- | --- |
+| Branch | `task<N>-<name>` | `task1-face`, `task2-pose`, `task3-identity`, `task4-interaction`, `task5-integration` |
+| Test clip | `data/clips/<scenario>.mp4` + `<scenario>.timestamps.csv` | `crossing.mp4`, `fast_arms.mp4` |
+| Run log | `logs/run-<YYYYMMDD-HHMMSS>.csv` (automatic) | `run-20260928-182420.csv` |
+| Evaluation script | `tools/eval_<stage>.py` | `eval_identity.py`, `eval_face.py` |
+| Tests | `tests/test_<module>.py` | `test_filters.py`, `test_identity.py` |
+
 ### Measured performance (demo candidate: RTX 3070 Ti)
 
 | Stage | ms/frame |
 | --- | --- |
 | pose (YOLO26n-pose, fp16) | ~10 |
-| identity, motion, face, gesture, game (stubs) | < 0.1 each |
+| identity, motion, face, gestures, game (stubs) | < 0.1 each |
 | render | ~1 |
 | **total** | **~11** |
 
@@ -94,7 +145,7 @@ pytest                                        # before every PR
 
 ## What each person has to do
 
-### Task 1: Face tracking and AR — owner: ____________
+### Task 1: Face tracking and AR — owner: @eline
 
 **Stub today:** `FaceTracker.update` puts `center` on the nose keypoint and sets `scale` to the shoulder width. Its only anchor is `above_head`, placed 0.9 × scale above the nose. It sets `landmarks=None` and `roll = yaw = 0`. `FaceEffects.draw` draws a coloured dot at `above_head`.
 
@@ -180,6 +231,7 @@ pytest                                        # before every PR
 | Pose model | YOLO26n-pose (Task 2 confirms on clips) | ☐ |
 | Motion signal names (Task 2 ↔ Task 4) | | ☐ |
 | Face anchor names beyond `above_head` | `forehead`, `mouth` | ☐ |
+| Keypoint left/right on mirrored frames | Swap in the adapter so `L_*` = the player's own left | ☐ |
 | Game design | | ☐ |
 
 ### Shared test clips (`data/clips/`, on the drive)

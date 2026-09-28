@@ -48,6 +48,9 @@ FROM_COCO17 = list(range(K))
 # MediaPipe Pose (33 landmarks) -> COCO-17.
 FROM_MEDIAPIPE33 = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
 
-# Note on mirroring: frames are mirrored at capture, and models label sides
-# from the image as they see it. So L_WRIST is the wrist on the left of the
-# screen from the model's point of view; the pose adapter owns any remapping.
+# Left/right and mirroring (checked with YOLO26n-pose): models label sides as
+# if the image were an ordinary photo, so for a player facing the camera L_*
+# lands on the RIGHT of the screen. Our frames are mirrored, where the player's
+# own left hand appears on the screen's left; therefore L_WRIST is the
+# player's own RIGHT wrist. The adapter does no swap yet (open team decision,
+# see docs/phase-1/status.md); if we swap, it is one mapping here.

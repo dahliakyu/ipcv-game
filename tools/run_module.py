@@ -11,5 +11,5 @@ from ipcvgame.app.main import main
 
 if __name__ == "__main__":
     if "--until" not in sys.argv:
-        sys.exit("usage: run_module.py --until {pose,identity,motion,face,gesture,game} [...]")
+        sys.exit("usage: run_module.py --until {pose,identity,motion,face,gestures,game} [...]")
     main(sys.argv[1:])

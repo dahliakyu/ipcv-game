@@ -1,6 +1,6 @@
 """Task 5 — wires the modules together, in the order from the setup guide:
 
-    pose -> identity -> motion -> face -> gesture -> game -> render
+    pose -> identity -> motion -> face -> gestures -> game -> render
 
 Single-threaded; every module takes typed inputs and returns its own output
 type (core/types.py). `until` stops after a given stage, so each owner can run
@@ -22,7 +22,7 @@ from ipcvgame.pose.estimator import PoseEstimator
 from ipcvgame.pose.motion import MotionFilter
 from ipcvgame.scene.renderer import Renderer, draw_timings
 
-STAGES = ["pose", "identity", "motion", "face", "gesture", "game", "render"]
+STAGES = ["pose", "identity", "motion", "face", "gestures", "game", "render"]
 
 
 class Pipeline:
@@ -44,7 +44,7 @@ class Pipeline:
         self._warmup(cfg["source"])
         self.debug_module = {
             "pose": self.pose, "identity": self.identity, "motion": self.motion,
-            "face": self.face, "gesture": self.gestures, "game": self.game,
+            "face": self.face, "gestures": self.gestures, "game": self.game,
         }
 
     def _warmup(self, source_cfg: dict) -> None:
@@ -79,8 +79,8 @@ class Pipeline:
         if self._runs("face"):
             with prof("face"):
                 faces = self.face.update(frame, players)
-        if self._runs("gesture"):
-            with prof("gesture"):
+        if self._runs("gestures"):
+            with prof("gestures"):
                 events = self.gestures.update(motion, frame.t)
 
         # Timings of the previous full frame (this one is not finished yet).
