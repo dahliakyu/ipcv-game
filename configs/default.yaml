@@ -185,12 +185,15 @@ clash:                    # Task 5 — Color Clash bolt prototype (branch test-g
   elbow_pole: [1.0, -0.2, -1.0]
 
   # --- field, metres. P1 on the left half (x < 0), P2 on the right.
-  # 9 m long: players start ~5 m apart, so a bolt is in the air ~0.6 s,
+  # Players move in 1D only, along the depth y; their x is fixed. Later a
+  # sideways step in front of the webcam (image x, tracked to a few mm)
+  # maps to this y, so the game never needs camera depth (~7x noisier).
+  # 9 m long: players stand ~5 m apart, so a bolt is in the air ~0.6 s,
   # long enough to see it and step aside (human reaction ~0.25 s).
   field_length: 9.0
-  # 4 m deep: room to dodge several body widths in depth.
-  field_depth: 4.0
-  centre_gap: 0.75        # nobody stands right at the centre line (no point-blank shots)
+  # 6 m deep: the only movement axis, room to dodge many body widths.
+  field_depth: 6.0
+  centre_gap: 0.75        # players stand midway between this and the field end
   edge_margin: 0.4        # ~ body radius: the avatar stays fully on the field
 
   # --- colours (RGB 0..1), design doc 5: P1 blue, P2 red
@@ -225,7 +228,7 @@ clash:                    # Task 5 — Color Clash bolt prototype (branch test-g
 
   # --- controls
   mouse_lag: 0.12         # s; P1 walks to the cursor instead of teleporting
-  key_speed: 3.0          # m/s P2 walking speed: a brisk step, crosses the depth in ~1.2 s
+  key_speed: 3.0          # m/s P2 walking speed: a brisk step, crosses the depth in ~1.7 s
 
   # --- camera: orthographic, from the front and raised, looking along +y.
   # The field runs left-right on screen like the webcam view. Each avatar is

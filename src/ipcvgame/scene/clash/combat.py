@@ -2,7 +2,9 @@
 
 World frame (metres, Z up, as in Panda3D): x along the field, P1 on the left
 (x < 0) fires towards +x, P2 on the right fires towards -x; y is depth (away
-from the camera), z up. Each player moves on the floor of their own half.
+from the camera), z up. Each player moves in 1D only, along y, at a fixed x
+in their own half. With pose input, a sideways step in front of the webcam
+(image x, well tracked) becomes this y; camera depth is never needed.
 
 Round flow:
 
@@ -34,7 +36,8 @@ PIDS = (1, 2)
 class Arena:
     half_length: float     # field runs x in [-half_length, half_length]
     half_depth: float      # y in [-half_depth, half_depth]
-    centre_gap: float      # no-man's land on each side of x = 0
+    centre_gap: float      # no-man's land on each side of x = 0; players stand midway
+                           # between it and the field end
     edge_margin: float     # players stay this far inside the field edges
 
     @classmethod
@@ -47,14 +50,13 @@ class Arena:
         return -1 if pid == 1 else 1
 
     def clamp(self, pid: int, pos: np.ndarray) -> np.ndarray:
-        """Keep a floor position (x, y) inside the player's own half."""
-        s, m = self.side(pid), self.edge_margin
-        lo, hi = sorted((s * self.centre_gap, s * (self.half_length - m)))
-        d = self.half_depth - m
-        return np.array([np.clip(pos[0], lo, hi), np.clip(pos[1], -d, d)])
+        """Project a floor position (x, y) onto the player's line of movement:
+        x fixed at the player's spot, y kept inside the field."""
+        d = self.half_depth - self.edge_margin
+        return np.array([self.start(pid)[0], np.clip(pos[1], -d, d)])
 
     def start(self, pid: int) -> np.ndarray:
-        """Spawn point: middle of the player's half."""
+        """Spawn point, and the fixed x of the player: middle of their half."""
         return np.array([self.side(pid) * (self.centre_gap + self.half_length) / 2, 0.0])
 
 

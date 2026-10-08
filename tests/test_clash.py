@@ -101,23 +101,25 @@ def test_full_coverage_wins_and_stops_damage():
     assert c.state == "countdown" and c.fighters[1].damage == 0 and c.winner is None
 
 
-def test_players_stay_in_their_own_half():
+def test_players_move_only_in_depth_and_stay_on_the_field():
     c = fighting()
+    a = c.arena
     c.move(1, (5.0, 9.0))
     c.move(2, (-5.0, -9.0))
-    a = c.arena
     p1, p2 = c.fighters[1].pos, c.fighters[2].pos
-    assert p1[0] <= -a.centre_gap and p2[0] >= a.centre_gap
-    assert abs(p1[1]) <= a.half_depth and abs(p2[1]) <= a.half_depth
+    assert p1[0] == a.start(1)[0] and p2[0] == a.start(2)[0]   # x never changes
+    assert p1[1] == a.half_depth - a.edge_margin and p2[1] == -(a.half_depth - a.edge_margin)
 
 
 def test_keyboard_walks_at_constant_speed_and_is_clamped():
     c = Combat(CFG)
-    down = {"d", "w"}
+    down = {"w", "a", "d"}     # A/D do nothing: movement is 1D
     kb = KeyboardControl(CFG, lambda k: k in down, c.arena.start(2), lambda p: c.arena.clamp(2, p))
     start = kb.pos.copy()
     p = kb.read(0.1)
-    assert np.isclose(np.linalg.norm(p - start), CFG["key_speed"] * 0.1)  # diagonal not faster
+    assert np.allclose(p - start, [0.0, CFG["key_speed"] * 0.1])
     for _ in range(200):
         p = kb.read(0.1)
-    assert np.allclose(p, c.arena.clamp(2, np.array([99.0, 99.0])))
+    assert np.allclose(p, c.arena.clamp(2, np.array([0.0, 99.0])))
+    down.add("s")              # W + S cancel
+    assert np.allclose(kb.read(0.1), p)

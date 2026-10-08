@@ -2,8 +2,9 @@
 
     python -m ipcvgame.scene.clash.app [--set clash.bolt_speed=12]
 
-P1 (blue, left) walks to the mouse cursor and fires with a left click. P2
-(red, right) walks with WASD and fires with SPACE. A hit tints the victim
+Players move in 1D, up and down the field depth. P1 (blue, left) follows the
+mouse cursor and fires with a left click. P2 (red, right) walks with W/S and
+fires with SPACE. A hit tints the victim
 towards the attacker's colour; the first player fully covered loses. R
 restarts the round, ESC quits.
 
@@ -197,8 +198,9 @@ class ClashApp(ShowBase):
                        2: rect(field, 0, L, -D, D, (*FLOOR, 1), (0, 0, 0), (0, -90, 0))}
         white = (0.95, 0.95, 0.95, 1)
         rect(field, -0.03, 0.03, -D, D, white, (0, 0, 0.002), (0, -90, 0))           # centre line
-        for x in (-a.centre_gap, a.centre_gap):                                       # no-man's land
-            rect(field, x - 0.015, x + 0.015, -D, D, (0.8, 0.8, 0.8, 1), (0, 0, 0.002), (0, -90, 0))
+        for pid in PIDS:                                                              # movement tracks
+            x, m = a.start(pid)[0], D - a.edge_margin
+            rect(field, x - 0.02, x + 0.02, -m, m, (0.85, 0.85, 0.85, 1), (0, 0, 0.002), (0, -90, 0))
         for y in (-D, D):                                                             # edges
             rect(field, -L, L, y - 0.03, y + 0.03, white, (0, 0, 0.002), (0, -90, 0))
         for x in (-L, L):
@@ -224,7 +226,7 @@ class ClashApp(ShowBase):
             self.bars[pid] = (grow, fill, cool, label)
         self.msg_text = OnscreenText(text="", pos=(0, 0.55), scale=0.12, fg=(1, 0.95, 0.4, 1),
                                      shadow=(0, 0, 0, 0.8), mayChange=True)
-        OnscreenText(text="P1: mouse walks, click fires     P2: WASD walks, SPACE fires"
+        OnscreenText(text="P1: mouse moves, click fires     P2: W/S moves, SPACE fires"
                           "     R: restart   ESC: quit", pos=(0, -0.95), scale=0.045, fg=(0.8, 0.8, 0.8, 1))
 
     def _card(self, x0: float, x1: float, z0: float, z1: float, color) -> NodePath:
