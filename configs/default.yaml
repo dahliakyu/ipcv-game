@@ -214,14 +214,27 @@ clash:                    # Task 5 — Color Clash bolt prototype (branch test-g
   jab_time: 0.18          # s the firing arm stays extended after a shot
   # Hit volume as spheres above the player's floor position: [height, radius].
   # Measured from the model joints at avatar_scale 0.58: hips 0.88 m, neck
-  # 1.48 m, head + ears up to 2.39 m (big chibi head).
-  body_spheres: [[1.15, 0.3], [1.85, 0.38]]
+  # 1.48 m, top of the head ~2.1 m (big chibi head; the ears up to 2.39 m
+  # don't count, or nobody could duck under a bolt).
+  body_spheres: [[1.15, 0.3], [1.8, 0.3]]
+
+  # --- crouch (design doc 4.4: crouch to avoid). Standing jabs fly at ~1.75 m
+  # (head height), so the bolt's bottom is at ~1.63 m and the head top must
+  # drop below it: 2.1 - 0.55 = 1.55 m leaves a 8 cm margin. Hips go from
+  # 0.88 to 0.33 m: a deep squat, but the knees can still bend that far.
+  crouch_drop: 0.55
+  # s to get fully down (and back up): a duck has to start ~0.15 s before the
+  # bolt arrives, so it is a timing skill, not a free reaction. No firing
+  # while down or getting up, so ducking also costs attack time.
+  crouch_time: 0.15
 
   # --- firing arm. Hand target relative to the body, as (towards opponent,
-  # depth, height) in metres. Ready: hand in front of the chest; jab: further
-  # than the ~0.49 m arm can reach, so IK straightens the arm.
-  hand_ready: [0.25, -0.2, 1.2]
-  hand_jab: [0.7, -0.2, 1.3]
+  # depth, height) in metres; heights drop with the crouch. Ready: hand raised
+  # in front of the face (shoulder 1.36 m, arm ~0.49 m), so a standing bolt
+  # flies at head height and can be ducked; jab: further than the arm can
+  # reach, so IK straightens the arm.
+  hand_ready: [0.2, -0.2, 1.75]
+  hand_jab: [0.7, -0.2, 1.85]
   # The arm on the camera side fires (stays visible): with the facing cheat
   # below that is P1's right and P2's left arm.
   fire_arm: [R, L]
@@ -229,6 +242,7 @@ clash:                    # Task 5 — Color Clash bolt prototype (branch test-g
   # --- controls
   mouse_lag: 0.12         # s; P1 walks to the cursor instead of teleporting
   key_speed: 3.0          # m/s P2 walking speed: a brisk step, crosses the depth in ~1.7 s
+  # Crouch is held: P1 right mouse button, P2 C (next to W/S and SPACE).
 
   # --- camera: orthographic, from the front and raised, looking along +y.
   # The field runs left-right on screen like the webcam view. Each avatar is

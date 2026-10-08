@@ -54,46 +54,80 @@ def two_bone_ik(shoulder: np.ndarray, target: np.ndarray, l1: float, l2: float,
     return elbow, shoulder + dist * u
 
 
-class Arm:
-    """One arm: shoulder.X -> upper_arm.X -> forearm.X -> hand.X (X = L or R)."""
+class Limb:
+    """Two bones: parent -> upper -> lower -> end joint. The arm is
+    shoulder.X -> upper_arm.X -> forearm.X -> hand.X, the leg
+    spine -> thigh.X -> shin.X -> foot.X. `parent` must be the upper joint's
+    real parent in the rig, or the upper bone is posed in the wrong frame.
 
-    def __init__(self, actor: Actor, side: str, palm_frac: float):
-        names = [f"upper_arm.{side}", f"forearm.{side}", f"hand.{side}", f"shoulder.{side}"]
+    The tip is `tip_frac` of the lower bone past the end joint: the palm for
+    an arm (the hand tail is not a joint), the ankle itself (0) for a leg.
+    With `hold_end`, the end joint keeps its rest orientation in actor space,
+    so a foot stays flat on the floor however the shin turns.
+    """
+
+    def __init__(self, actor: Actor, parent: str, upper: str, lower: str, end: str,
+                 tip_frac: float, hold_end: bool = False):
+        names = [upper, lower, end, parent]
         exposed = {n: actor.exposeJoint(None, "modelRoot", n) for n in names}
         rest = {n: exposed[n].getTransform(actor) for n in names}
-        # hand tail is not a joint; approximate the palm a fraction along the
-        # forearm direction past the wrist (hand bone ~0.25 of the arm here)
-        p_sh = _v(rest[names[0]].getPos())
-        p_el = _v(rest[names[1]].getPos())
-        p_wr = _v(rest[names[2]].getPos())
-        p_palm = p_wr + palm_frac * (p_wr - p_el)
+        p_base = _v(rest[upper].getPos())
+        p_mid = _v(rest[lower].getPos())
+        p_end = _v(rest[end].getPos())
+        p_tip = p_end + tip_frac * (p_end - p_mid)
         self.actor = actor
-        self.rest_parent = rest[names[3]]
-        self.rest_upper, self.rest_fore = rest[names[0]], rest[names[1]]
-        self.shoulder = p_sh
-        self.dir_upper = p_el - p_sh
-        self.dir_fore = p_palm - p_el
+        self.rest_parent = rest[parent]
+        self.rest_upper, self.rest_fore, self.rest_end = rest[upper], rest[lower], rest[end]
+        self.base = p_base
+        self.rest_tip = p_tip
+        self.dir_upper = p_mid - p_base
+        self.dir_fore = p_tip - p_mid
         self.l1 = float(np.linalg.norm(self.dir_upper))
         self.l2 = float(np.linalg.norm(self.dir_fore))
-        self.ctrl_upper = actor.controlJoint(None, "modelRoot", names[0])
-        self.ctrl_fore = actor.controlJoint(None, "modelRoot", names[1])
+        self.ctrl_upper = actor.controlJoint(None, "modelRoot", upper)
+        self.ctrl_fore = actor.controlJoint(None, "modelRoot", lower)
+        self.ctrl_end = actor.controlJoint(None, "modelRoot", end) if hold_end else None
 
     def set_directions(self, upper: np.ndarray, fore: np.ndarray) -> np.ndarray:
         """Point both bones along the given actor-space directions. Returns
-        the palm position in actor space."""
+        the tip position in actor space."""
         q_up = self.rest_upper.getQuat() * shortest_arc(self.dir_upper, upper)
         net_up = self.rest_upper.setQuat(q_up)
-        elbow = self.shoulder + self.l1 * upper / np.linalg.norm(upper)
+        mid = self.base + self.l1 * upper / np.linalg.norm(upper)
         q_fo = self.rest_fore.getQuat() * shortest_arc(self.dir_fore, fore)
-        net_fo = self.rest_fore.setQuat(q_fo).setPos(Point3(*elbow))
+        net_fo = self.rest_fore.setQuat(q_fo).setPos(Point3(*mid))
         self.ctrl_upper.setTransform(self.rest_parent.invertCompose(net_up))
         self.ctrl_fore.setTransform(net_up.invertCompose(net_fo))
-        return elbow + self.l2 * fore / np.linalg.norm(fore)
+        tip = mid + self.l2 * fore / np.linalg.norm(fore)
+        if self.ctrl_end is not None:
+            net_end = self.rest_end.setPos(Point3(*tip))
+            self.ctrl_end.setTransform(net_fo.invertCompose(net_end))
+        return tip
 
     def reach(self, target: np.ndarray, pole: np.ndarray) -> np.ndarray:
-        """IK to an actor-space target; returns the palm in actor space."""
-        elbow, hand = two_bone_ik(self.shoulder, target, self.l1, self.l2, pole)
-        return self.set_directions(elbow - self.shoulder, hand - elbow)
+        """IK to an actor-space target; returns the tip in actor space."""
+        mid, tip = two_bone_ik(self.base, target, self.l1, self.l2, pole)
+        return self.set_directions(mid - self.base, tip - mid)
+
+
+class Arm(Limb):
+    """One arm: shoulder.X -> upper_arm.X -> forearm.X -> hand.X (X = L or R)."""
+
+    def __init__(self, actor: Actor, side: str, palm_frac: float):
+        super().__init__(actor, f"shoulder.{side}", f"upper_arm.{side}", f"forearm.{side}",
+                         f"hand.{side}", palm_frac)
+
+
+class Leg(Limb):
+    """One leg: spine -> thigh.X -> shin.X -> foot.X; the foot stays flat.
+
+    The thigh's parent joint is the root `spine` (the hips), not pelvis.X:
+    in this rig pelvis.X is a sibling (check with `actor.listJoints()`).
+    """
+
+    def __init__(self, actor: Actor, side: str):
+        super().__init__(actor, "spine", f"thigh.{side}", f"shin.{side}",
+                         f"foot.{side}", 0.0, hold_end=True)
 
 
 class Avatar:
@@ -112,6 +146,19 @@ class Avatar:
                      "L": Arm(self.actor, "L", cfg["palm_frac"])}
         # idle arm: down and slightly out
         self._idle_dir = {s: self.body_dir(s, cfg["idle_arm_dir"]) for s in ("R", "L")}
+        self._legs: dict[str, Leg] | None = None  # taken over on the first crouch only
+
+    def crouch(self, drop: float) -> None:
+        """Lower the body by `drop` metres; the knees bend forward so the
+        feet stay where they were on the floor."""
+        if self._legs is None:
+            if drop <= 0:
+                return
+            self._legs = {s: Leg(self.actor, s) for s in ("R", "L")}
+        self.actor.setZ(-drop)
+        up = drop / self.actor.getSz()   # world metres -> model units
+        for s, leg in self._legs.items():
+            leg.reach(leg.rest_tip + np.array([0.0, 0.0, up]), self.body_dir(s, (0.0, 1.0, 0.0)))
 
     @staticmethod
     def body_dir(side: str, d) -> np.ndarray:

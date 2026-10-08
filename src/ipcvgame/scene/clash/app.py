@@ -3,13 +3,13 @@
     python -m ipcvgame.scene.clash.app [--set clash.bolt_speed=12]
 
 Players move in 1D, up and down the field depth. P1 (blue, left) follows the
-mouse cursor and fires with a left click. P2 (red, right) walks with W/S and
-fires with SPACE. A hit tints the victim
-towards the attacker's colour; the first player fully covered loses. R
-restarts the round, ESC quits.
+mouse cursor, fires with a left click and ducks while the right button is
+held. P2 (red, right) walks with W/S, fires with SPACE and ducks while C is
+held. A hit tints the victim towards the attacker's colour; the first player
+fully covered loses. R restarts the round, ESC quits.
 
 Rendering only: rules live in combat.py, input in control.py, the avatar and
-its arm IK in scene/squash/avatar.py.
+its arm and leg IK in scene/squash/avatar.py.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from panda3d.core import (
     DirectionalLight,
     Filename,
     KeyboardButton,
+    MouseButton,
     NodePath,
     OrthographicLens,
     Plane,
@@ -226,8 +227,9 @@ class ClashApp(ShowBase):
             self.bars[pid] = (grow, fill, cool, label)
         self.msg_text = OnscreenText(text="", pos=(0, 0.55), scale=0.12, fg=(1, 0.95, 0.4, 1),
                                      shadow=(0, 0, 0, 0.8), mayChange=True)
-        OnscreenText(text="P1: mouse moves, click fires     P2: W/S moves, SPACE fires"
-                          "     R: restart   ESC: quit", pos=(0, -0.95), scale=0.045, fg=(0.8, 0.8, 0.8, 1))
+        OnscreenText(text="P1: mouse moves, left click fires, right button ducks      "
+                          "P2: W/S moves, SPACE fires, C ducks      R: restart   ESC: quit",
+                     pos=(0, -0.95), scale=0.045, fg=(0.8, 0.8, 0.8, 1))
 
     def _card(self, x0: float, x1: float, z0: float, z1: float, color) -> NodePath:
         cm = CardMaker("bar")
@@ -273,6 +275,8 @@ class ClashApp(ShowBase):
         dt = min(ClockObject.getGlobalClock().getDt(), 0.05)  # a stalled frame must not teleport a bolt
         self.combat.move(1, self.mouse.read(t))
         self.combat.move(2, self.keys.read(dt))
+        self.combat.hold_crouch(1, self.mouseWatcherNode.isButtonDown(MouseButton.three()))
+        self.combat.hold_crouch(2, self._key_down("c"))
         for pid in PIDS:
             self.palms[pid] = self._pose(pid)
             if self.want_fire[pid]:
@@ -287,11 +291,13 @@ class ClashApp(ShowBase):
         """Place the avatar and its firing arm; returns the palm (world)."""
         c, f, av = self.cfg, self.combat.fighters[pid], self.avatars[pid]
         av.set_pos(*f.pos)
+        drop = self.combat.drop(pid)
+        av.crouch(drop)
         # jab: hand goes out and back once over jab_time (half a sine)
         k = math.sin(math.pi * (1 - f.jab / c["jab_time"])) if f.jab > 0 else 0.0
         fwd, depth, height = lerp(c["hand_ready"], c["hand_jab"], k)
         toward = -self.arena.side(pid)                # +1: opponent is at +x
-        target = np.array([f.pos[0] + toward * fwd, f.pos[1] + depth, height])
+        target = np.array([f.pos[0] + toward * fwd, f.pos[1] + depth, height - drop])
         side = self.fire_arm[pid]
         pole = av.to_world(Avatar.body_dir(side, c["elbow_pole"]))
         return av.reach(side, target, pole)
@@ -341,6 +347,7 @@ class ClashApp(ShowBase):
             grow, fill, cool, label = self.bars[pid]
             fill.setSx(grow * max(f.damage, 1e-4))     # zero scale would make the matrix singular
             cool.setSx(grow * max(1 - f.cooldown / c["bolt_cooldown"], 1e-4))
+            cool.setAlphaScale(0.25 if f.crouch > 0 else 1.0)   # can't fire while ducking
             label.setText(f"P{pid}  {round(100 * f.damage)} % covered")
 
         while len(self.bolt_views) < len(cb.bolts):

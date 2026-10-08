@@ -123,3 +123,62 @@ def test_keyboard_walks_at_constant_speed_and_is_clamped():
     assert np.allclose(p, c.arena.clamp(2, np.array([0.0, 99.0])))
     down.add("s")              # W + S cancel
     assert np.allclose(kb.read(0.1), p)
+
+
+HEAD = 1.75  # a standing jab (hand_ready height)
+
+
+def duel(victim_crouch: bool, bolt_z: float, duck_after: float = 0.0) -> list[str]:
+    """P1 fires at P2 in the same lane; P2 holds crouch from `duck_after` s."""
+    c = fighting()
+    c.update(0.0)
+    p = palm(c, 1)
+    p[2] = bolt_z
+    c.fire(1, p)
+    events, t, dt = [], 0.0, 1 / 120
+    while t < 1.2:
+        c.hold_crouch(2, victim_crouch and t >= duck_after)
+        events += c.update(dt)
+        t += dt
+    return [e.name for e in events]
+
+
+def test_standing_jab_hits_a_standing_player_in_the_head():
+    assert "hit" in duel(False, HEAD)
+
+
+def test_duck_lets_a_head_height_bolt_pass():
+    assert duel(True, HEAD) == ["fizzle"]
+
+
+def test_duck_timing_half_a_crouch_late_hits_just_in_time_dodges():
+    c = Combat(CFG)
+    gap = c.arena.start(2)[0] - c.arena.start(1)[0]
+    head_r = CFG["body_spheres"][1][1]
+    contact = (gap - CFG["bolt_radius"] - head_r) / CFG["bolt_speed"]   # bolt touches the head
+    assert "hit" in duel(True, HEAD, duck_after=contact - 0.5 * CFG["crouch_time"])
+    assert duel(True, HEAD, duck_after=contact - 1.2 * CFG["crouch_time"]) == ["fizzle"]
+
+
+def test_cannot_fire_while_ducking_or_getting_up():
+    c = fighting()
+    c.hold_crouch(1, True)
+    c.update(CFG["crouch_time"])
+    assert not c.fire(1, palm(c, 1))
+    c.hold_crouch(1, False)
+    c.update(CFG["crouch_time"] / 2)              # halfway back up
+    assert not c.fire(1, palm(c, 1)) and not c.bolts
+    c.update(CFG["crouch_time"])
+    assert c.fire(1, palm(c, 1))
+
+
+def test_crouch_ramps_down_and_back_up():
+    c = fighting()
+    c.hold_crouch(1, True)
+    c.update(CFG["crouch_time"] / 2)
+    assert 0 < c.drop(1) < CFG["crouch_drop"]
+    c.update(CFG["crouch_time"])
+    assert c.drop(1) == CFG["crouch_drop"]
+    c.hold_crouch(1, False)
+    c.update(CFG["crouch_time"] * 1.01)
+    assert c.drop(1) == 0

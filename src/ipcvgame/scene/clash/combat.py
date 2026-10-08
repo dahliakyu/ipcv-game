@@ -13,9 +13,11 @@ Round flow:
         +-------------------------------- restart ----------------------------+
 
 Magic Bolt (design doc 4.1): fast, straight, small, low damage, short cooldown,
-dodged by stepping out of its line. A bolt is a ball flying parallel to the
-field axis at the height of the hand that fired it, so the shooter aims by
-lining up their depth with the opponent and the opponent dodges in depth.
+dodged by stepping out of its line or by ducking (design doc 4.4: crouch). A
+bolt is a ball flying parallel to the field axis at the height of the hand
+that fired it: a jab flies at head height, so a crouch lets it pass overhead.
+Nobody can fire while their body is down (crouching or getting back up), so
+a player has to choose between dodging and attacking.
 
 If the prototype becomes the game, these rules move to interaction/game.py
 (Task 4), and pose gestures replace the click / key that calls fire().
@@ -68,6 +70,8 @@ class Fighter:
     damage: float = 0.0              # 0 = own colour .. 1 = covered in the opponent's colour
     cooldown: float = 0.0            # seconds until the next bolt is allowed
     jab: float = 0.0                 # seconds left of the arm-extension animation
+    crouch: float = 0.0              # 0 = standing .. 1 = fully down
+    crouch_held: bool = False        # input this frame
 
 
 @dataclass
@@ -102,15 +106,24 @@ class Combat:
         self.winner: int | None = None
         self.t_state = 0.0
 
+    def hold_crouch(self, pid: int, held: bool) -> None:
+        """Crouch input for this frame (key / button held)."""
+        self.fighters[pid].crouch_held = held
+
+    def drop(self, pid: int) -> float:
+        """How far the player's body is lowered right now, in metres."""
+        return self.fighters[pid].crouch * self.cfg["crouch_drop"]
+
     def move(self, pid: int, target: np.ndarray) -> None:
         """Set where a player stands this frame; clamped to their half."""
         self.fighters[pid].pos = self.arena.clamp(pid, np.asarray(target, dtype=float))
 
     def fire(self, pid: int, palm: np.ndarray) -> bool:
         """Fire a bolt from the palm towards the opponent's half. Returns
-        False (and does nothing) during cooldown or outside the fight."""
+        False (and does nothing) during cooldown, while ducking (also while
+        getting back up) or outside the fight."""
         f = self.fighters[pid]
-        if self.state != "fight" or f.cooldown > 0:
+        if self.state != "fight" or f.cooldown > 0 or f.crouch > 0:
             return False
         direction = -self.arena.side(pid)            # P1 (left) fires +x
         vel = np.array([direction * self.cfg["bolt_speed"], 0.0, 0.0])
@@ -129,6 +142,9 @@ class Combat:
         for f in self.fighters.values():
             f.cooldown = max(0.0, f.cooldown - dt)
             f.jab = max(0.0, f.jab - dt)
+            # going down takes crouch_time, so a duck must be started early
+            step = dt / self.cfg["crouch_time"]
+            f.crouch = min(1.0, f.crouch + step) if f.crouch_held else max(0.0, f.crouch - step)
 
         if self.state == "countdown" and self.t_state >= self.cfg["countdown"]:
             self._set("fight")
@@ -168,9 +184,10 @@ class Combat:
         the frame (the player may be dodging), so a fast bolt cannot skip
         through a body between two frames. Returns the bolt position on a hit."""
         r = self.cfg["bolt_radius"]
+        drop = self.drop(f.pid)
         for z, radius in self.body_spheres:
-            c0 = np.array([f.prev[0], f.prev[1], z])
-            c1 = np.array([f.pos[0], f.pos[1], z])
+            c0 = np.array([f.prev[0], f.prev[1], z - drop])
+            c1 = np.array([f.pos[0], f.pos[1], z - drop])
             if swept_hit(b0, b1, c0, c1, r + radius):
                 return b1.copy()
         return None
