@@ -84,3 +84,89 @@ render:
   window_name: IPCV game
   # Show per-stage timings and FPS in the corner of the game window.
   show_timings: true
+
+squash:                   # Task 5 — game-play prototype (branch test-game-play), mouse-controlled
+  # Avatar converted from resource/kongzoomaid-cat-seacret by
+  # `blender -b -P tools/convert_avatar.py` (path relative to the repo root).
+  model: resource/avatar.glb
+  window_size: [1280, 720]
+
+  # --- court, metres. Real squash court: 6.4 m wide, the T is ~5.4 m from
+  # the front wall, tin 0.48 m, service line 1.78 m, out line 4.57 m. The
+  # player stands at the T (y = 0).
+  court_width: 6.4
+  front_wall_y: 5.4
+  back_wall_y: -4.3
+  wall_height: 5.0
+  tin_height: 0.48
+  service_line: 1.78
+  out_line: 4.57
+  # Real ball radius is 0.02 m; 3x larger so it stays visible on screen.
+  ball_radius: 0.06
+  # Squash balls bounce low (~0.3-0.5 when warm). 0.55 is a bit livelier,
+  # so a mouse player gets time to react after the floor bounce.
+  floor_restitution: 0.55
+  # Walls return more energy than the floor (ball hits them at an angle).
+  wall_restitution: 0.7
+
+  # --- serve and returns
+  serve_height: 2.2        # where the ball leaves the front wall on a serve
+  serve_x_range: 1.5       # serve leaves the wall within +-1.5 m of centre
+  # Ball speed towards the player (m/s). 4.5 m/s over ~5 m is ~1.1 s of
+  # flight: slow enough to learn with a mouse. Raise for a harder game.
+  serve_speed: 4.5
+  # Assist: re-aim every front-wall rebound so it reaches the player's hit
+  # plane within the target box after one bounce. Off = pure physics.
+  assist: true
+  rebound_speed_min: 3.5   # a soft hit still comes back at a playable pace
+  rebound_speed_max: 7.0   # cap: a hard hit should not become unplayable
+  hit_y: 0.3               # hit plane: 0.3 m in front of the player (arm reach ~0.5 m)
+  target_x_range: 1.8      # returns arrive within +-1.8 m of centre: the player has to move
+  # Heights the avatar's hand can reach on the hit plane (shoulder ~1.36 m,
+  # arm ~0.49 m long at avatar_scale 0.58).
+  target_z_range: [1.0, 1.6]
+
+  # --- hitting
+  # Ball counts as hit when its centre comes this close to the palm during
+  # a frame (swept test). Generous: hand-only, no racket.
+  hit_radius: 0.3
+  # Return speed = min + gain * hand speed (m/s), capped at max. The minimum
+  # makes a still hand still "block" the ball back above the tin.
+  hit_speed_min: 6.0
+  hit_speed_gain: 1.0
+  hit_speed_max: 12.0
+  hit_aim_gain: 0.3        # m/s of ball per m/s of sideways / vertical hand motion
+  # Upward speed on every return. At 6 m/s forward the ball needs ~0.85 s to
+  # reach the wall and drops ~3.5 m in that time; 4 m/s up keeps it above the tin.
+  hit_lift: 4.0
+
+  # --- rules and pacing
+  miss_y: -1.0             # ball 1 m behind the player = missed
+  auto_serve_delay: 2.0    # serve by itself after 2 s (no mouse needed with pose input later)
+  miss_pause: 1.5          # show the miss message this long before the next serve
+
+  # --- avatar
+  # Model is ~4.1 units tall incl. ears, shoulders at 2.34; 0.58 puts the
+  # shoulders at ~1.36 m.
+  avatar_scale: 0.58
+  # Hand bone is not posed; the palm sits half a hand length past the wrist.
+  palm_frac: 0.5
+  idle_arm_dir: [0.25, 0.0, -1.0]   # non-hitting arm hangs down, slightly out
+  elbow_pole: [1.0, -0.3, -1.0]     # elbow bends out, back and down, like a forehand
+
+  # --- mouse control (control.py)
+  body_x_max: 2.6          # body x range: +-(half court - 0.6 m), so the hand stays inside
+  hand_reach_x: 0.6        # hand u = +-1 maps to +-0.6 m sideways from the body
+  hand_z_range: [0.7, 2.0] # hand v = -1..+1 maps to these heights (IK clamps what the arm can't reach)
+  body_lag: 0.25           # s; the body trails the mouse like a player running to the ball
+  hand_side: 0.3           # forehand: the hand rests a bit right of the body
+  hand_lead_gain: 1.5      # while the body lags, the hand leads towards the mouse
+  # Time constant for smoothing hand velocity (finite differences are noisy
+  # at 60 fps); short, so a swing still registers at full speed.
+  hand_vel_tau: 0.04
+
+  # --- camera, behind and above the player (TV squash view through a glass
+  # back wall). Far and high enough that the avatar covers little of the
+  # court; the ball is also drawn faintly through the avatar (app.py).
+  camera_pos: [0.0, -7.5, 3.4]
+  camera_look_at: [0.0, 2.0, 0.9]
