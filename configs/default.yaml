@@ -170,3 +170,69 @@ squash:                   # Task 5 — game-play prototype (branch test-game-pla
   # court; the ball is also drawn faintly through the avatar (app.py).
   camera_pos: [0.0, -7.5, 3.4]
   camera_look_at: [0.0, 2.0, 0.9]
+
+clash:                    # Task 5 — Color Clash bolt prototype (branch test-game-play), mouse vs WASD
+  # Same avatar as the squash prototype, loaded twice.
+  model: resource/avatar.glb
+  window_size: [1280, 720]
+  avatar_scale: 0.58      # shoulders at ~1.36 m, as in squash
+  palm_frac: 0.5
+  # Direction of a hanging arm as (out, forward, up); also used for the
+  # non-firing arm. Same value as squash.
+  idle_arm_dir: [0.25, 0.0, -1.0]
+  # Elbow pole for the firing arm as (out, forward, up): the elbow bends out
+  # and down, so a jab looks like a punch, not a chicken wing.
+  elbow_pole: [1.0, -0.2, -1.0]
+
+  # --- field, metres. P1 on the left half (x < 0), P2 on the right.
+  # 9 m long: players start ~5 m apart, so a bolt is in the air ~0.6 s,
+  # long enough to see it and step aside (human reaction ~0.25 s).
+  field_length: 9.0
+  # 4 m deep: room to dodge several body widths in depth.
+  field_depth: 4.0
+  centre_gap: 0.75        # nobody stands right at the centre line (no point-blank shots)
+  edge_margin: 0.4        # ~ body radius: the avatar stays fully on the field
+
+  # --- colours (RGB 0..1), design doc 5: P1 blue, P2 red
+  player_colors: [[0.15, 0.45, 1.0], [0.95, 0.2, 0.15]]
+  # How strongly the avatar is tinted (0 = untinted texture, 1 = flat colour).
+  # 0.6 keeps the face readable while the colour shift is obvious.
+  tint_strength: 0.6
+
+  # --- round
+  countdown: 3.0          # design doc 6, stage 1: "a short countdown"
+
+  # --- Magic Bolt (design doc 4.1: fast, small, low damage, short cooldown)
+  bolt_speed: 9.0         # m/s; crosses the ~5 m gap in ~0.6 s
+  bolt_radius: 0.12       # small hitbox; drawn at this size too
+  bolt_damage: 0.1        # 10 hits cover a player completely
+  bolt_cooldown: 0.5      # s; at most 2 bolts/s, so spamming does not beat dodging
+  trail_len: 6            # positions kept for the trail (~0.1 s at 60 fps)
+  jab_time: 0.18          # s the firing arm stays extended after a shot
+  # Hit volume as spheres above the player's floor position: [height, radius].
+  # Measured from the model joints at avatar_scale 0.58: hips 0.88 m, neck
+  # 1.48 m, head + ears up to 2.39 m (big chibi head).
+  body_spheres: [[1.15, 0.3], [1.85, 0.38]]
+
+  # --- firing arm. Hand target relative to the body, as (towards opponent,
+  # depth, height) in metres. Ready: hand in front of the chest; jab: further
+  # than the ~0.49 m arm can reach, so IK straightens the arm.
+  hand_ready: [0.25, -0.2, 1.2]
+  hand_jab: [0.7, -0.2, 1.3]
+  # The arm on the camera side fires (stays visible): with the facing cheat
+  # below that is P1's right and P2's left arm.
+  fire_arm: [R, L]
+
+  # --- controls
+  mouse_lag: 0.12         # s; P1 walks to the cursor instead of teleporting
+  key_speed: 3.0          # m/s P2 walking speed: a brisk step, crosses the depth in ~1.2 s
+
+  # --- camera: orthographic, from the front and raised, looking along +y.
+  # The field runs left-right on screen like the webcam view. Each avatar is
+  # turned this many degrees from the field axis towards the camera (the
+  # theatre "cheat"), so both faces show in 3/4 view while they face each other.
+  facing_cheat: 30
+  camera_elevation: 35    # degrees above the floor: classic isometric pitch
+  camera_distance: 20     # far enough to sit outside the field; ortho, so no perspective effect
+  camera_look_at: [0.0, 0.0, 0.9]
+  film_width: 11.0        # metres visible across the screen: field (9 m) plus margins

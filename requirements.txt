@@ -21,7 +21,7 @@ filterpy==1.4.5                # Kalman filters (Tasks 2, 3)
 
 # --- game / rendering ---
 pygame-ce==2.5.8               # final game renderer and sound
-panda3d==1.10.16               # squash prototype: 3D scene + rigged avatar (BSD-3)
+panda3d==1.10.16               # squash + clash prototypes: 3D scene, rigged avatar (BSD-3)
 panda3d-gltf==1.3.0            # glTF/.glb loader for panda3d (BSD-3)
 
 # --- config, analysis, dev ---
