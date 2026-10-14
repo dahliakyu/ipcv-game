@@ -1,29 +1,9 @@
-Oct 14, 2026 · @el created with help of Claude Opus 5.5
-
-# Improving `hat_tracker.py` before the port
-
-These are seven small steps that improve `hat_tracker.py` while it stays a single, runnable script. After them, each function in the script matches a piece of the `face/` module almost one to one, so the port into the pipeline is mostly moving code, not rewriting it.
-
-Steps 1 to 5 are refactors and bug fixes; step 6 is the only new behaviour. Run the script after every step to check that the hat and mustache still look the same.
-
-| Step | What | Why | Becomes in `face/` |
-| --- | --- | --- | --- |
-| 1 | `load_sprite` + `paste` | One function instead of two copies; faster; works from any folder | `effects.py`: `load_sprite`, `paste` |
-| 2 | MediaPipe Tasks API | Pinned `mediapipe==1.0.1` has no `mp.solutions` | `tracker.py`: per-player landmarker |
-| 3 | `measure()` | Geometry in one testable function | `tracker.py`: `measure` |
-| 4 | Named constants | Every number explained in one place | `configs/default.yaml`, `face:` section |
-| 5 | Hat along the face's "down" | Hat stays on a tilted head | `effects.py`: `FaceEffects.draw` |
-| 6 | Left/right order + One Euro | Steady hat, no jitter | `tracker.py`: filters per player |
-| 7 | FPS, errors, cleanup | Measure the speed-up; clear failures | `ms_face` in the run log |
-
-Work in the shared env so the script runs on the pinned versions: `conda activate ipcvgame`.
 
 ## Step 1: `load_sprite` and `paste`
 
-`draw_hat` and `draw_mustache` are the same code with three numbers changed: the sprite, the pivot point on the sprite, and the width. One `paste` function replaces both and fixes three things on the way:
-
-- **Paths.** `cv2.imread("hat.png")` reads from the folder you run the script from. Run it from anywhere else and it silently returns `None`, which crashes later with an unclear `NoneType` error. `load_sprite` reads next to the script and fails with a clear message.
-- **Speed.** Today each sprite is warped and blended over the whole frame: 2 sprites × 2 faces = 4 full-frame blends per frame. `paste` warps only the box the sprite covers.
+`draw_hat` and `draw_mustache` are the same code with three numbers changed: the sprite, the pivot point on the sprite, and the width. Instead of repeating yourself, a single function (named paste here) can be used to replace both and fixes:
+- **Paths.** `cv2.imread("hat.png")` reads from the folder you run the script from. Run it from anywhere else and it will cause error, which crashes later with an unclear `NoneType` error. `load_sprite` reads next to (in the same directory as) the script and gives clear error message.
+- **Speed.** Right now each sprite is warped and blended over the whole frame: 2 sprites × 2 faces = 4 full-frame blends per frame. `paste` warps only the box.
 - **Off-screen sprites.** A sprite that is partly or fully outside the frame is clipped or skipped.
 
 ```python
@@ -64,7 +44,7 @@ HAT = load_sprite("hat.png")
 MUSTACHE = load_sprite("mustache.png")
 ```
 
-The two old functions become two calls. The pivot and the maths are the same as before, so the result looks identical:
+The two old functions become two calls. Everything else is the same as before, so the result looks identical:
 
 ```python
 hh, hw = HAT.shape[:2]
@@ -75,13 +55,36 @@ paste(frame, MUSTACHE, lip, (mw / 2, mh / 2), angle, 0.80 * face_width)         
 
 ## Step 2: MediaPipe Tasks API
 
-The pinned `mediapipe==1.0.1` no longer has `mp.solutions`. The new API needs a model file, which you download once (`models/` is gitignored):
+The pinned `mediapipe==1.0.1` no longer has `mp.solutions`. The new API needs a model file, which you need to download once (`models/` is gitignored):
 
 ```bash
 wget -P models https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 ```
 
+To make sure you are using a consistent library, run in the cloned repository as instructed by README:
+```bash
+# conda 
+conda create -n ipcvgame python=3.12 -y && conda activate ipcvgame
+# ...or a plain venv
+python3.12 -m venv .venv && source .venv/bin/activate
+
+# GPU (CUDA 12.8). CPU-only: replace cu128 with cpu.
+pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+pip install -e .
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+most importantly check 
+
+```bash
+conda activate ipcvgame
+python -c "import mediapipe; print(mediapipe.__version__)"   # 1.0.1
+```
+
 The landmark indices (10, 234, 454, 164) are the same in the new model. Only `main()` changes:
+
+https://colab.research.google.com/github/googlesamples/mediapipe/blob/main/examples/face_landmarker/python/%5BMediaPipe_Python_Tasks%5D_Face_Landmarker.ipynb
 
 | Old (`mp.solutions`) | New (Tasks API) |
 | --- | --- |
@@ -151,7 +154,7 @@ for face in result.face_landmarks:
 
 ## Step 4: Named constants
 
-Give every number a name and a one-line reason at the top of the file. Each of these becomes a key in the `face:` section of `configs/default.yaml` when the script is ported, and each is something you may be asked to justify.
+Give every number a name and a one-line reason at the top of the file. Each of these becomes a key in the `face:` section of `configs/default.yaml` when the script is ported, with centralized variables tuning becomes way easier, also for later experiments.
 
 ```python
 FOREHEAD, LEFT_SIDE, RIGHT_SIDE, UPPER_LIP = 10, 234, 454, 164   # Face Mesh landmark indices
@@ -176,7 +179,7 @@ When the head is upright (`angle` = 0), `down` is `(0, 1)` and the result is exa
 
 ## Step 6: Left/right order and smoothing
 
-With `num_faces=2`, MediaPipe returns faces in no fixed order. A filter per face would mix the two people when the order flips, so first give each face a stable slot: sort by x, left face first. Then keep one set of One Euro filters per slot. Use the shared filter from the repo instead of writing a new one; it uses real time, so it works at any FPS.
+With `num_faces=2`, MediaPipe returns faces in no fixed order. A filter per face would mix the two people when the order flips, so first give each face a stable slot: sort by x, left face first. Then keep one set of One Euro filters per slot. Use the shared filter from the repo instead of writing a new one; it uses real time, so it works at any FPS. The import should work if your script is in the cloned repository and you have followed the set up guide from step 2!!
 
 ```python
 from ipcvgame.core.filters import OneEuro
@@ -211,15 +214,18 @@ for slot in range(len(faces), 2):
     filters[slot] = None      # face gone: start fresh, so the hat does not slide in
 ```
 
-Filter the few measured values, not the 478 landmarks: that is cheaper, and every drawn point is derived from them.
+Filter the few measured values instead of the 478 landmarks (expensive~!!)
 
-This shows the limit of a standalone script: if only one person is in view, they always get slot 0, whichever side they stand on. In the pipeline this is solved properly, because Task 3 gives each player a fixed ID and the face module runs one landmarker per player.
+A problem i found with standalone mediapipe:
+
+MediaPipe's face detector is built for close-up faces. On a full 1280×720 frame with two people standing back (each face about 11% of the frame width), it found a face in only 1 of 120 frames; on a crop where the face is about 30% of the width, it found it in 120 of 120. Therefore eventually the pipeline will be running on one landmarker per player on a head crop taken from the body keypoints.
 
 ## Step 7: FPS, errors and cleanup
 
 - Show the FPS in the window, so the speed-up from step 1 is visible.
 - Fail with a clear message when the camera does not open.
 - Close the landmarker at the end.
+- (this is for you to run individual experiment without having to run the whole codebase)
 
 ```python
 cap = cv2.VideoCapture(0)
@@ -243,11 +249,13 @@ cv2.destroyAllWindows()
 
 Moving the script into the pipeline is then mostly moving code:
 
-| In the script | Goes to |
-| --- | --- |
-| `load_sprite`, `paste`, the two `paste` calls | `face/effects.py`, `FaceEffects.draw` |
-| `measure` | `face/tracker.py`, module level |
-| Constants | `configs/default.yaml`, `face:` section |
-| `new_filters`, the filter calls | `face/tracker.py`, one set per player ID instead of per slot |
-| Landmarker setup | `face/tracker.py`, one landmarker per player, run on a head crop |
-| Camera, flip, window, FPS | Removed: the pipeline does these |
+| In the script                                 | Goes to                                                          |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| `load_sprite`, `paste`, the two `paste` calls | `face/effects.py`, `FaceEffects.draw`                            |
+| `measure`                                     | `face/tracker.py`, module level                                  |
+| Constants                                     | `configs/default.yaml`, `face:` section                          |
+| `new_filters`, the filter calls               | `face/tracker.py`, one set per player ID instead of per slot     |
+| Landmarker setup                              | `face/tracker.py`, one landmarker per player, run on a head crop |
+| Camera, flip, window, FPS                     | Removed: the pipeline does these                                 |
+
+This part is then something i can do later!!
