@@ -88,12 +88,65 @@ def head_box(p: Player, kpt_conf_threshold: float, crop_size: float) -> np.ndarr
     return np.array([c[0] - side / 2, c[1] - side / 2, c[0] + side / 2, c[1] + side / 2])
 
 
+def flow_points(pts: np.ndarray, cfg: dict) -> np.ndarray:
+    """Grid of points on the face (eyes to mouth) for optical flow to follow,
+    from the 4 key points; grid offsets are in face widths from the centre."""
+    left, right = pts[0], pts[1]
+    d = right - left
+    w = float(np.linalg.norm(d))
+    u = d / max(w, 1e-6)                                    # along the eye line
+    down = np.array([-u[1], u[0]])
+    c = (left + right) / 2
+    n = int(cfg["flow_grid_n"])
+    return np.array([c + (gx * u + gy * down) * w
+                     for gx in np.linspace(*cfg["flow_grid_x"], n)
+                     for gy in np.linspace(*cfg["flow_grid_y"], n)])
+
+
+def estimate_motion(prev_gray: np.ndarray, gray: np.ndarray, pts: np.ndarray, cfg: dict) -> np.ndarray | None:
+    """How the face moved between two frames: Lucas-Kanade optical flow on
+    `pts`, then a similarity transform (shift + rotation + scale) fitted with
+    RANSAC, so a few points that slid onto the background don't matter.
+    Returns the 2x3 matrix, or None when the fit is not trustworthy."""
+    p0 = pts.reshape(-1, 1, 2).astype(np.float32)
+    iters, eps = cfg["flow_criteria"]
+    p1, status, _ = cv2.calcOpticalFlowPyrLK(
+        prev_gray, gray, p0, None, winSize=(cfg["flow_win"], cfg["flow_win"]),
+        maxLevel=cfg["flow_levels"],
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, int(iters), float(eps)))
+    good = status.ravel() == 1
+    if good.sum() < cfg["flow_min_points"]:
+        return None
+    M, inliers = cv2.estimateAffinePartial2D(p0[good], p1[good], method=cv2.RANSAC,
+                                             ransacReprojThreshold=cfg["flow_ransac_px"])
+    if M is None or inliers.sum() < cfg["flow_min_inliers"]:
+        return None
+    lo, hi = cfg["flow_scale_range"]
+    if not lo < np.hypot(M[0, 0], M[1, 0]) < hi:            # implausible zoom between two frames
+        return None
+    return M
+
+
+def fade(blind_s: float, hold_s: float, lost_after_s: float) -> float:
+    """Effect opacity after blind_s seconds without an update (detection or
+    flow): fully visible for hold_s, then a linear fade to 0 at lost_after_s."""
+    if blind_s <= hold_s:
+        return 1.0
+    return max(0.0, 1.0 - (blind_s - hold_s) / (lost_after_s - hold_s))
+
+
 @dataclass
 class _FaceState:
     """One player's face state between frames."""
     filter: OneEuro                     # on the 4 key points
-    width: float = 0.0                  # last detected face width (px), for the size-jump check
-    last_seen: float = 0.0              # Frame.t of the last detection
+    kp: np.ndarray | None = None        # current 4 key points (px), unsmoothed; moved by flow
+    lk: np.ndarray | None = None        # flow points on the face (px)
+    landmarks: np.ndarray | None = None # 5 YuNet landmarks (px); moved by flow
+    geo: dict | None = None             # last geometry() output, shown while held
+    width: float = 0.0                  # current face width (px), for the size-jump check
+    last_det: float = 0.0               # Frame.t of the last detection
+    last_update: float = 0.0            # Frame.t of the last detection or flow update
+    source: str = ""                    # "detect" | "flow" | "hold", for debug and logs
     debug: dict = field(default_factory=dict)   # crop box and raw detection, for draw_debug
 
 
@@ -103,6 +156,7 @@ class FaceTracker:
         self.backend = cfg.get("backend", "yunet")
         self.kpt_conf_threshold = float(cfg["kpt_conf_threshold"])
         self._state: dict[int, _FaceState] = {}
+        self._prev_gray: np.ndarray | None = None
         if self.backend == "yunet":
             model = Path(cfg["model"])
             if not model.is_absolute():
@@ -119,12 +173,14 @@ class FaceTracker:
         if self.backend == "stub":
             return self._stub_faces(players)
         cfg, t = self.cfg, frame.t
+        gray = cv2.cvtColor(frame.image, cv2.COLOR_BGR2GRAY)   # raw frame: effects not drawn yet
+        prev_gray, self._prev_gray = self._prev_gray, gray
         for pid in [pid for pid in self._state if pid not in players]:
             del self._state[pid]
         faces: dict[int, Face] = {}
         for pid, p in players.items():
             st = self._state.get(pid)
-            if st is not None and t - st.last_seen > cfg["lost_after_s"]:
+            if st is not None and t - st.last_update > cfg["lost_after_s"]:
                 st = None                       # gone too long: start fresh, no slide-in
             if st is None:
                 st = _FaceState(OneEuro(cfg["filter_min_cutoff"], cfg["filter_beta"],
@@ -133,14 +189,32 @@ class FaceTracker:
             st.debug = {}
             box = head_box(p, self.kpt_conf_threshold, cfg["crop_size"])
             det = self._detect(frame.image, box, st) if box is not None else None
-            if det is None:
-                continue                        # filter is kept for when the face is found again
-            m = measure(det, cfg["center_drop"], cfg["forehead_rise"], cfg["lip_to_nose"])
-            st.width, st.last_seen = m["width"], t
-            g = geometry(st.filter(m["pts"], t), cfg["hat_drop"], cfg["above_head_rise"])
-            faces[pid] = Face(pid=pid, valid=True, landmarks=m["landmarks"], center=g["center"],
+            if det is not None:
+                m = measure(det, cfg["center_drop"], cfg["forehead_rise"], cfg["lip_to_nose"])
+                st.kp, st.landmarks, st.lk = m["pts"], m["landmarks"], flow_points(m["pts"], cfg)
+                st.last_det = st.last_update = t
+                st.source = "detect"
+            elif (st.lk is not None and prev_gray is not None
+                  and t - st.last_det <= cfg["flow_max_s"]):
+                # No detection: follow the face with optical flow instead of freezing
+                M = estimate_motion(prev_gray, gray, st.lk, cfg)
+                if M is not None:
+                    st.kp, st.lk, st.landmarks = (P @ M[:, :2].T + M[:, 2]
+                                                  for P in (st.kp, st.lk, st.landmarks))
+                    st.last_update = t
+                    st.source = "flow"
+            if st.kp is None:
+                continue                        # face not found yet
+            if st.last_update == t:             # new key points this frame: smooth them
+                st.width = float(np.linalg.norm(st.kp[1] - st.kp[0]))
+                st.geo = geometry(st.filter(st.kp, t), cfg["hat_drop"], cfg["above_head_rise"])
+            else:
+                st.source = "hold"              # nothing new: show the last position, fading
+            alpha = fade(t - st.last_update, cfg["hold_s"], cfg["lost_after_s"])
+            g = st.geo
+            faces[pid] = Face(pid=pid, valid=alpha > 0, landmarks=st.landmarks, center=g["center"],
                               scale=g["width"], roll=g["roll"], yaw=0.0,   # 5 landmarks give no yaw
-                              anchors=g["anchors"], alpha=1.0)
+                              anchors=g["anchors"], alpha=alpha)
         return faces
 
     def _detect(self, image: np.ndarray, box: np.ndarray, st: _FaceState) -> np.ndarray | None:
@@ -199,17 +273,29 @@ class FaceTracker:
             self._state.pop(pid, None)
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """Head crop (dashed), raw YuNet landmarks and score, face centre,
-        scale circle and every anchor with its name."""
+        """Head crop (dashed) labelled with the source (detect + YuNet score,
+        flow, hold) and alpha; landmarks; flow points while flowing; face
+        centre, scale circle and every anchor with its name."""
         for pid, st in self._state.items():
             color = player_color(pid)
             det = st.debug.get("det")
+            f = state.faces.get(pid)
+            if st.source == "detect" and det is not None:
+                label = f"P{pid} detect {det[14]:.2f}"
+            else:
+                label = f"P{pid} {st.source or 'no face'}"
+            if f is not None:
+                label += f" a={f.alpha:.2f}"
             if "box" in st.debug:
-                label = f"P{pid} {det[14]:.2f}" if det is not None else f"P{pid} no face"
                 draw_bbox(canvas, st.debug["box"], color, label, dashed=True)
-            if det is not None:
-                for x, y in det[4:14].reshape(5, 2):
-                    cv2.circle(canvas, pt((x, y)), 3, (255, 255, 255), -1, cv2.LINE_AA)
+            elif f is not None:                 # no crop (player not detected): label at the face
+                draw_text(canvas, label, pt(f.anchors["above_head"]), color, 0.5)
+            if st.source == "flow" and st.lk is not None:
+                for p in st.lk:
+                    cv2.circle(canvas, pt(p), 2, color, -1, cv2.LINE_AA)
+            if st.landmarks is not None and st.source != "hold":
+                for p in st.landmarks:
+                    cv2.circle(canvas, pt(p), 3, (255, 255, 255), -1, cv2.LINE_AA)
         for pid, f in state.faces.items():
             color = player_color(pid)
             cv2.circle(canvas, pt(f.center), int(f.scale / 2), color, 1, cv2.LINE_AA)

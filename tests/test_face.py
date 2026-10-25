@@ -1,12 +1,22 @@
-"""Face tracker geometry on synthetic YuNet detections (no model or camera needed)."""
+"""Face tracker on synthetic YuNet detections and images (no model or camera needed)."""
 
+import cv2
 import numpy as np
 import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Player, PoseDetection
-from ipcvgame.face.tracker import FaceTracker, geometry, head_box, measure
+from ipcvgame.core.types import Frame, Player, PoseDetection
+from ipcvgame.face import tracker as ft
+from ipcvgame.face.tracker import (
+    FaceTracker,
+    estimate_motion,
+    fade,
+    flow_points,
+    geometry,
+    head_box,
+    measure,
+)
 
 CFG = load_config()["face"]
 PIVOT = np.array([110.0, 110.0])
@@ -99,3 +109,87 @@ def test_unknown_backend_is_rejected():
 def test_missing_model_names_the_file(tmp_path):
     with pytest.raises(FileNotFoundError, match="README"):
         FaceTracker(CFG | {"model": str(tmp_path / "missing.onnx")})
+
+
+def test_fade_holds_then_fades_to_zero():
+    assert fade(0.05, 0.1, 1.0) == 1.0
+    assert fade(0.55, 0.1, 1.0) == pytest.approx(0.5)
+    assert fade(1.0, 0.1, 1.0) == 0.0 and fade(2.0, 0.1, 1.0) == 0.0
+
+
+def test_flow_points_cover_the_face_and_turn_with_it():
+    up, tilted = run(yunet_row()), run(yunet_row(30.0))
+    n = CFG["flow_grid_n"]
+    pts_up, pts_tilted = flow_points(up["pts"], CFG), flow_points(tilted["pts"], CFG)
+    assert pts_up.shape == (n * n, 2)
+    np.testing.assert_allclose(pts_up.mean(axis=0)[0], up["center"][0])
+    assert pts_up[:, 1].min() < 100 < pts_up[:, 1].max()       # from above the eyes (y=100) downward
+    a = np.radians(30.0)
+    R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    np.testing.assert_allclose(pts_tilted - tilted["center"], (pts_up - up["center"]) @ R.T, atol=1e-9)
+
+
+def texture(h: int = 240, w: int = 320) -> np.ndarray:
+    """Blurred noise: texture optical flow can follow."""
+    rng = np.random.default_rng(0)
+    return cv2.GaussianBlur(rng.integers(0, 256, (h, w), dtype=np.uint8), (0, 0), 2)
+
+
+def shifted(img: np.ndarray, dx: float, dy: float, scale: float = 1.0) -> np.ndarray:
+    M = cv2.getRotationMatrix2D((160, 120), 0, scale)
+    M[:, 2] += (dx, dy)
+    return cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REFLECT)
+
+
+def test_estimate_motion_finds_a_shift():
+    img, pts = texture(), flow_points(run(yunet_row())["pts"] + (50, 10), CFG)
+    M = estimate_motion(img, shifted(img, 4, -2), pts, CFG)
+    np.testing.assert_allclose(M, [[1, 0, 4], [0, 1, -2]], atol=0.1)
+
+
+def test_estimate_motion_rejects_zoom_outside_range():
+    img, pts = texture(), flow_points(run(yunet_row())["pts"] + (50, 10), CFG)
+    zoomed = shifted(img, 0, 0, scale=1.2)
+    M = estimate_motion(img, zoomed, pts, CFG)                        # inside [0.7, 1.4]
+    assert np.hypot(M[0, 0], M[1, 0]) == pytest.approx(1.2, abs=0.02)
+    assert estimate_motion(img, zoomed, pts, CFG | {"flow_scale_range": [0.9, 1.1]}) is None
+
+
+@pytest.fixture
+def scripted_tracker(tmp_path, monkeypatch):
+    """A yunet-backend FaceTracker whose detector is scripted per frame."""
+    model = tmp_path / "fake.onnx"
+    model.touch()
+    monkeypatch.setattr(cv2.FaceDetectorYN, "create", lambda *a, **k: None)
+    tr = FaceTracker(CFG | {"model": str(model)})
+    script = {}
+    monkeypatch.setattr(tr, "_detect", lambda image, box, st: script.pop(len(script) and min(script), None))
+    return tr, script
+
+
+def test_flow_follows_face_when_detection_misses(scripted_tracker):
+    tr, script = scripted_tracker
+    img = cv2.cvtColor(texture(), cv2.COLOR_GRAY2BGR)
+    script[0] = yunet_row() + np.r_[50, 10, 0, 0, [50, 10] * 5, 0]   # face around (160, 120)
+    p = {1: player()}
+    f0 = tr.update(Frame(img, 0, 0.0), p)[1]
+    kp0 = tr._state[1].kp.copy()
+    f1 = tr.update(Frame(shifted(img, 5, 3), 1, 1 / 30), p)[1]       # no detection
+    assert tr._state[1].source == "flow" and f1.alpha == 1.0 and f1.valid
+    np.testing.assert_allclose(tr._state[1].kp - kp0, np.tile([5, 3], (4, 1)), atol=0.3)
+    assert f1.center[0] > f0.center[0] and f1.center[1] > f0.center[1]
+
+
+def test_hold_then_fade_then_gone(scripted_tracker, monkeypatch):
+    tr, script = scripted_tracker
+    monkeypatch.setattr(ft, "estimate_motion", lambda *a: None)      # flow never succeeds
+    img = cv2.cvtColor(texture(), cv2.COLOR_GRAY2BGR)
+    script[0] = yunet_row() + np.r_[50, 10, 0, 0, [50, 10] * 5, 0]
+    p = {1: player()}
+    f0 = tr.update(Frame(img, 0, 0.0), p)[1]
+    f_hold = tr.update(Frame(img, 1, 0.05), p)[1]
+    assert tr._state[1].source == "hold" and f_hold.alpha == 1.0
+    np.testing.assert_allclose(f_hold.anchors["hat"], f0.anchors["hat"])   # frozen in place
+    f_fade = tr.update(Frame(img, 2, 0.55), p)[1]
+    assert f_fade.alpha == pytest.approx(0.5) and f_fade.valid
+    assert 1 not in tr.update(Frame(img, 3, 1.2), p)                  # past lost_after_s

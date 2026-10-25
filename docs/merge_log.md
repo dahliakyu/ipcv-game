@@ -235,3 +235,45 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
   - A head tilted ~10° gets a tilted hat.
   - A 29 px face of a player far from the camera is found inside its crop.
 - Face stage: 1.3 ms for a small crop, 5.8 ms for a ~350 px crop. The cost grows with crop area, so at 1280×720 with a player close to the camera, scaling the crop down before detection may be worth it. To be checked on the webcam (`face` row of the timing HUD).
+
+#### Step 5 · Optical-flow fallback, hold time and fade-out
+
+**Changed:** `src/ipcvgame/face/tracker.py`
+
+- `flow_points(pts, cfg)`: the prototype's grid of points on the face (6×6, eyes to mouth), which `measure()` used to build. It is now built from the 4 key points.
+- `estimate_motion(prev_gray, gray, pts, cfg)`: the core of the prototype's `Track.flow()`. Lucas-Kanade optical flow on the grid, then a similarity transform (shift + rotation + scale) fitted with RANSAC. It returns `None`, so the face is not moved, in any of these cases:
+  - fewer than `flow_min_points` points tracked;
+  - fewer than `flow_min_inliers` inliers;
+  - a scale outside `flow_scale_range`.
+- `fade(blind_s, hold_s, lost_after_s)`: the prototype's `Track.alpha()` in seconds. Fully visible for `hold_s` after the last update, then a linear fade to 0 at `lost_after_s`.
+- `FaceTracker.update()`, per player, each frame:
+  - **detect:** YuNet found the face. The key points, landmarks and flow points are reset from the detection.
+  - **flow:** no detection, but the last detection is under `flow_max_s` old and the fit is good. The key points, flow points and landmarks are moved by the fitted transform. The prototype moved only the key points and flow points.
+  - **hold:** neither. The last smoothed position is shown and fades out.
+- After a detect or flow update, the key points go through the One Euro filter and `geometry()`, as in the prototype's `_apply()`.
+- `Face.alpha` comes from `fade()`; `Face.valid` is `alpha > 0`. A held face is still valid, so the game can keep drawing at its anchors while it fades.
+- State is now dropped after `lost_after_s` without any update (detection or flow), not just without a detection. The size-jump check uses the current width, which flow also updates, as the prototype did.
+- The frame is converted to grayscale once per frame (the raw frame, before effects are drawn) and kept for the next frame's flow.
+- `draw_debug`: the crop label shows the source (`detect 0.91`, `flow`, `hold`) and `a=` alpha. The flow points are drawn while flowing.
+- Dropped from the prototype: `Track.vel` and `predicted()`, only used for matching (see step 4).
+
+**Changed:** `configs/default.yaml`, `face:`
+
+- `hold_s` (0.1 s), from `HOLD_FRAMES` = 3 frames.
+- `flow_max_s` (1.3 s), from `FLOW_FRAMES` = 40 frames.
+- The flow grid (`flow_grid_x`, `flow_grid_y`, `flow_grid_n`) and the Lucas-Kanade settings (`flow_win` 31, `flow_levels` 4, `flow_criteria` [20, 0.01]), as in the prototype.
+- RANSAC limits: `flow_min_points` 8, `flow_min_inliers` 6, `flow_ransac_px` 3.0, `flow_scale_range` [0.7, 1.4], as in the prototype.
+- `lost_after_s` comment updated.
+
+**Added to** `tests/test_face.py`: 6 tests.
+
+- `fade()` holds, fades and reaches 0.
+- The flow grid covers the face and turns with it.
+- `estimate_motion()` recovers a known shift on a textured image, and rejects a zoom outside the allowed range.
+- Through `FaceTracker` with a scripted detector (no model file): flow follows a shifted face when detection misses; then hold (anchors frozen, alpha 1), fade (alpha 0.5 halfway) and gone after `lost_after_s`.
+
+**Checked:**
+
+- 40 tests pass, `ruff` clean.
+- On `two_people_fitness_challenge.webm`, faces come from detection in 77.3% of player-frames and from flow in 18.8%; in step 4 those 18.8% had no hat. 3.8% are frames before a face was first found. On the 4K `two_people_jump.mp4` it is 99.2% detection, 0.8% flow.
+- Face stage: 2.6 ms per frame on the small clip (was 2.1). On the 4K clip 24.0 ms (was 19.1); grayscale conversion of a 4K frame is part of that. Still open from step 4: scaling crops down before detection.
