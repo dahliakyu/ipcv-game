@@ -288,8 +288,44 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   # one punch gives one event; punches closer together than this count as one.
   punch_hold_s: 0.5
 
-game:                     # Task 4 — stub: prints events
-  {}
+game:                     # Task 4 — Colour Clash game logic (prototype game.py)
+  # Positions are pixels. Speeds and sizes are fractions of the frame width
+  # (_w) or height (_h), so the game plays the same at any resolution.
+  # Starting health. A bolt takes 10 and a beam 12: 10 bolts or 9 beams win.
+  max_health: 100
+  # Bolt, fired by a punch. Prototype ATTACK_COOLDOWN was 1.8 s; 0 makes every
+  # punch event fire a bolt (merge decision). The gesture stage already sends
+  # at most one punch event every 0.5 s (gestures.punch_hold_s).
+  bolt_cooldown_s: 0.0
+  # Prototype PROJECTILE_SPEED: crosses the frame in ~0.7 s, fast enough to
+  # read as a hit, slow enough to see coming and shield.
+  bolt_speed_w: 1.4
+  # Prototype PROJECTILE_DAMAGE.
+  bolt_damage: 10
+  # Beam, fired by hands up. It first charges in place (a visible warning),
+  # then grows across the frame. Prototype BEAM_CHARGE_DURATION, BEAM_SPEED,
+  # BEAM_DURATION and BEAM_DAMAGE: stronger than a bolt, but slower to start.
+  beam_charge_s: 0.35
+  beam_speed_w: 2.4
+  beam_duration_s: 0.8
+  beam_damage: 12
+  # The beam hits a body box that comes within this distance of its line
+  # (prototype BEAM_HIT_RADIUS_Y): a thin line still hits a box it touches.
+  beam_hit_radius_h: 0.03
+  # Shield, raised by crossing the arms: blocks hits for this long (prototype
+  # SHIELD_DURATION), then fades out without blocking (SHIELD_FADE_DURATION).
+  shield_s: 1.0
+  shield_fade_s: 0.24
+  # Paint splats per hit: one at the impact point plus this many nearby,
+  # spread up to this fraction of the body box, and kept within this middle
+  # band of the box (fractions of its width and height) so they land on the
+  # torso, not on the background in the box corners. Prototype values.
+  splat_extra: 3
+  splat_spread: 0.08
+  splat_band: [0.38, 0.62]
+  # Longest time step the game advances in one frame (prototype: dt capped
+  # at 0.1 s). After a stall or a pause, objects do not jump far ahead.
+  max_dt_s: 0.1
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player

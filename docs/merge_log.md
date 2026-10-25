@@ -162,6 +162,20 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `CONFIRM_FRAMES`, `PUNCH_HOLD_S`, `sw > 10` | `gestures.confirm_s`, `punch_hold_s`, `min_shoulder_px` |
 | `CONF_T` (detection), `IMGSZ`, `MODEL_PATH` | `pose.det_conf`, `pose.imgsz`, `pose.weights` (already there; the pipeline runs the pose model once on the full frame) |
 
+#### Task 4: `game.py` (game logic)
+
+**Functions and classes**
+
+| In the prototype | Now in | Note |
+| --- | --- | --- |
+| `PaintSplat`, `Projectile`, `PaintBeam`, `Shield` | `interaction/game.py`, same names | Pixels; a splat stores `owner_id` instead of a colour |
+| `Player` | `interaction/game.py`, `GamePlayer` | Renamed (`Player` is the identity type) |
+| `Game.__init__()`, `get_player()`, `reset()` | `interaction/game.py`, same names | `reset(pid)` added |
+| `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
+| `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
+
+**Constants:** all in `configs/default.yaml`, `game:` section; see step 5 for the table.
+
 #### Task 3: `Project/` (identity)
 
 Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exists. To be added when the identity merge happens.
@@ -199,6 +213,12 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Punch reach is sideways (step 2b):** `arm_extended()` measures the wrist's horizontal distance from the shoulder, not the straight-line distance, so a straight hanging arm is no longer a punch.
 - **Events instead of per-frame flags (step 3):** one `GestureEvent` when a gesture turns on; `main.py`'s `hands_were_up` / `arms_were_crossed` bookkeeping moved into the gesture stage. Punches less than 0.5 s apart give one event.
 - **No usable shoulder width restarts the timers (step 3);** the prototype kept counting across such frames.
+
+#### Task 4: game logic
+
+- **One colour table (step 5):** the prototype's P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
+- **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
+- **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
 
 #### Task 3 (pre-merge)
 
@@ -681,9 +701,11 @@ On the test clips:
 
 It also lists the merge steps still needed first (gestures, game logic, renderer, identity), the technical follow-ups from Task 1, and ideas considered but not planned. No code changed.
 
-## Task 4: Gestures
+## Task 4: Gestures and game logic
 
 ### Plan
+
+#### Gestures
 
 **Source.** `Project/bodypose.py`: `KeypointTracker`, `Debounce`, the geometry helpers and the gesture functions, and how `main.py` turns their output into game actions. Its identity code (`PlayerIdentityTracker`) and its own detection loop belong to the identity merge.
 
@@ -727,6 +749,66 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Verification.** Unit tests for every step; event counts on `data/test_clips/`. The Task 5 owner checks the gestures live on the webcam.
 
+
+
+#### Game logic
+
+**Source.** `game.py` with its tests (`test_game.py`), and the part of `main.py` that turns gestures into game actions.
+
+**What the code does.**
+
+- **Coordinates:** 0–1 fractions of the camera frame.
+- **Per player (`Player`):**
+  - health (100) and a bolt cooldown;
+  - a position: `x` is the shoulder midpoint and `y` the hip level, from `bodypose.py`'s `center_x` and `torso_y`;
+  - a body box (`bounds`, the BoT-SORT person box);
+  - paint splats.
+- **Actions**, called by `main.py` when a gesture turns on. Bolts and beams go right for a player in the left half of the screen, left otherwise.
+  - **punch → `attack()`:** a bolt from the edge of the body box facing the other player, at hip height. It moves at 1.4 frame widths/s and does 10 damage; then a 1.8 s cooldown.
+  - **hands up → `beam_attack()`:** a beam from the midpoint of the hands. It charges for 0.35 s, then grows at 2.4 frame widths/s for 0.8 s. It does 12 damage, hits each player once, and hits a box within ±0.03 frame heights of the beam's line.
+  - **arms crossed → `activate_shield()`:** a shield beside the player for 1 s, fading out over 0.24 s. It blocks nothing.
+- **`update(dt, visible)`:**
+  - cooldowns and shields count down, and bolts and beams move;
+  - a bolt hits the first other visible player whose box it crosses since the last frame, so a fast bolt cannot skip a box;
+  - a hit lowers the target's health and adds 4 paint splats: one at the impact point and 3 random ones near it. They are seeded, so the same hit always gives the same splats, and kept in the middle of the box (0.38–0.62);
+  - health 0: the attacker wins and the game freezes.
+
+  `dt` comes from `time.perf_counter()`, capped at 0.1 s.
+- **`reset()`:** a new round, keeping positions; `main.py` calls it with key `r` after a win.
+- **What the renderer reads:** `players`, `projectiles`, `beams`, `shields`, `winner_id`, `MAX_HEALTH`, `BEAM_CHARGE_DURATION`, `SHIELD_FADE_DURATION`, `PLAYER_COLORS`.
+
+**Decisions (Task 5 owner, 2026-10-25).**
+
+- **One sideways punch fires one bolt.** The 1.8 s cooldown goes (`game.bolt_cooldown_s: 0`, the key stays). The gesture stage already sends one event per punch, at most one every 0.5 s. What the bolt looks like (a paint stroke) is part of the renderer merge.
+- **The shield blocks.** While it is up (1 s, not counting the fade), bolts and beams that reach the player do no damage and leave no paint. A blocked bolt disappears; a blocked beam does not try that player again.
+- **One colour table:** the prototype's colours (P1 red, P2 blue) replace `PLAYER_COLORS` in `scene/draw.py`, and the game, renderer and debug views all use it. Splats store the attacker's pid; the colour is looked up when drawing.
+- **Pixels.** Positions are pixels in the mirrored frame, like in every other module. Speeds and sizes are in the config as fractions of the frame width or height, so the game plays the same at any resolution.
+
+**Where each part goes.**
+
+| In the code | Goes to | Change |
+| --- | --- | --- |
+| Constants (`MAX_HEALTH`, `ATTACK_COOLDOWN`, …) | `game:` config | Each with a reason; cooldown 0 |
+| `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` | Replaces the current colours |
+| `PaintSplat`, `Projectile`, `PaintBeam`, `Shield` | `interaction/game.py`, same names | Pixels; a splat stores the attacker's pid instead of a colour |
+| `Player` | `interaction/game.py`, `GamePlayer` | Renamed: `Player` is the identity type in `core/types.py` |
+| `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()`, `_apply_damage()` | `interaction/game.py`, same names | No cooldown; the shield check is new |
+| `update(dt, visible)` | `Game.advance(dt, visible)` | Renamed: `update(state)` is the module interface |
+| `main.py`: actions on gesture edges, `bounds`, positions, `dt` | `Game.update(state)` | From `state.events`, `state.players` (boxes), `state.motion` (keypoints) and `Frame.t` |
+| `reset()` | `Game.reset(pid=None)` | `None` = new round; a pid = that player starts fresh |
+| `player`, `shield` (single-player shortcuts) | Removed | Not used anywhere |
+| `test_game.py` (7 tests) | `tests/test_game.py` | Same tests, pytest, pixels |
+| Key `r` after a win | `app/main.py`, key `r` | Already resets the whole pipeline, at any time |
+
+**Steps.** Numbered after the gesture steps; each gets an entry under Changes below.
+
+5. Colours, config and state: `PLAYER_COLORS` in `scene/draw.py`, the `game:` config, the dataclasses, `Game.__init__`, `get_player()`, `reset()`.
+6. Combat: `attack()`, `beam_attack()`, `activate_shield()`, `advance()`, hit tests, damage, splats, winner, shield blocking. The prototype's tests, plus tests for blocking.
+7. Pipeline: `Game.update(state)`, with `dt` from `Frame.t` (capped), positions and boxes from the state, events to actions, and only active players can be hit. Tests with fake states.
+8. Debug view and CSV: `--until game` draws bolts, beams, shields, splats, health and the winner as simple shapes until the renderer merge; `log_fields`.
+9. Check and record: run on the clips, `docs/phase-1/status.md`, Change Overviews.
+
+**Verification.** Unit tests for every step. The two clips only produce two `hands_up` events, so they check beams but not bolts or shields. The Task 5 owner checks the full game on the webcam after step 8.
 
 ### Changes
 
@@ -879,3 +961,36 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 **Change Overviews** for Task 2 and Task 4 were filled in step by step (steps 1–3).
 
 **Checked:** 102 tests pass, `ruff` clean.
+
+#### Step 5 · Colours, config and game state
+
+**Changed:** `src/ipcvgame/scene/draw.py`: `PLAYER_COLORS` now has the prototype's team colours, P1 red `(55, 55, 235)` and P2 blue `(235, 110, 40)` (BGR). It was P1 blue and P2 orange, so blue meant P1 in the debug views but P2 in the game. Every debug view uses `player_color()`, so they all change with it.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+
+- The prototype's dataclasses `PaintSplat`, `Projectile`, `PaintBeam` and `Shield` keep their names and fields, with positions in pixels.
+- `PaintSplat` stores the attacker's pid (`owner_id`) instead of a colour; the colour comes from `player_color()` when drawing.
+- The prototype's `Player` is now `GamePlayer`, because `Player` is already the identity type in `core/types.py`. `bounds` is a pixel box (`np.ndarray`), `x`/`y` are pixels.
+- `Game.__init__(cfg)` starts with no players, instead of the prototype's `{1: Player()}` for its single-player shortcuts `player` and `shield`, which are dropped (nothing used them).
+- `get_player()` is the same.
+- `reset()` is the prototype's new round (positions kept). `reset(pid)` (new, for the module interface) gives one player full health, no paint and no shield.
+- `update()` still prints events (stub) until step 7.
+
+**Changed:** `configs/default.yaml`, `game:` section, each with a comment:
+
+| Key | Value | In the prototype |
+| --- | --- | --- |
+| `max_health` | 100 | `MAX_HEALTH` |
+| `bolt_cooldown_s` | 0.0 | `ATTACK_COOLDOWN` (1.8); 0 by decision |
+| `bolt_speed_w`, `bolt_damage` | 1.4 frame widths/s, 10 | `PROJECTILE_SPEED`, `PROJECTILE_DAMAGE` |
+| `beam_charge_s`, `beam_speed_w`, `beam_duration_s`, `beam_damage` | 0.35 s, 2.4 frame widths/s, 0.8 s, 12 | `BEAM_CHARGE_DURATION`, `BEAM_SPEED`, `BEAM_DURATION`, `BEAM_DAMAGE` |
+| `beam_hit_radius_h` | 0.03 frame heights | `BEAM_HIT_RADIUS_Y` |
+| `shield_s`, `shield_fade_s` | 1.0 s, 0.24 s | `SHIELD_DURATION`, `SHIELD_FADE_DURATION` |
+| `splat_extra`, `splat_spread`, `splat_band` | 3, 0.08, [0.38, 0.62] | Numbers inside `_apply_damage()` |
+| `max_dt_s` | 0.1 s | `min(now - previous_time, 0.1)` in `main.py` |
+
+**Changed:** `docs/phase-1/status.md` (colour row: P1 red, P2 blue; it said "P1 orange, P2 blue", which was also wrong before). `docs/extra_features.md`: the "one colour table" item of feature 1 is marked done, and its follow-up row is removed.
+
+**Added:** `tests/test_game.py` (4 tests): team colours, a new player at full health, `reset()` keeps positions and clears the round (the prototype's `test_reset_starts_a_fresh_round`), `reset(pid)`.
+
+**Checked:** 106 tests pass, `ruff` clean.

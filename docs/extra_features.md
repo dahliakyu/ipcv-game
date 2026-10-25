@@ -35,7 +35,7 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 **Design.**
 
-- **One colour table.** `scene/draw.py` (`PLAYER_COLORS`) and the prototype's `game.py` (`PLAYER_COLORS`: P1 red, P2 blue) disagree today. Keep one table, in `scene/draw.py`, and use it everywhere.
+- **One colour table.** Done in the game merge: `PLAYER_COLORS` in `scene/draw.py` (P1 red, P2 blue, the prototype's colours) is the only table; use `player_color(pid)`.
 - **Hat band.** Recolour the band pixels of `hat.png` once at load, one copy per team: select the red band by hue, shift its hue to the team colour, keep the shading.
 - **Cheek anchors.** Add `left_cheek` and `right_cheek` as 3D points on the head model, about (±45, 30, −5) mm, projected like the hat. They follow tilt and turn for free.
 - **Stripes.** Draw at the cheek anchors, rotated by `roll`, squashed by cos(`yaw`) on the cheek turned away, faded by `alpha`.
@@ -189,7 +189,6 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 | Webcam check of the face stage | Steps 8–10 were tested on clips and photos; check chin up and down, turning, mouth and blink bars, and `hat_depth_mm` live | `face:` config |
 | Jitter on a still clip | The test clips are all moving; shrinking crops (step 8) and the pose (steps 9–10) may add shake that only a still clip shows | `tools/eval_face.py` on the shared `normal` clip |
 | MediaPipe GPU delegate | MediaPipe costs ~8 ms per frame on the CPU; the GPU delegate may cut that | `face/landmarker.py` |
-| One player colour table | `scene/draw.py` and the prototype's `game.py` define different colours | Task 5 |
 | Remove `garb/` | The raw prototype is ignored by git only while the merge runs; delete it and its `.gitignore` entry at the end | `.gitignore` |
 | `core/types.py` heads-up | Two fields were added during the merge: `Face.alpha` and `Face.blendshapes`; mention them in the merge PR | merge PR description |
 

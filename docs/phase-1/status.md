@@ -88,7 +88,7 @@ There are no cross-section reads: since the Colour Clash merge, `FaceTracker` re
 | --- | --- | --- |
 | Code: `Player.pid`, dict keys, `Face.pid`, `GestureEvent.pid` | int from **1** (never 0) | `state.players[1]`, `state.motion[2]` |
 | Screen | `P<pid>` | `P1`, `P2` |
-| Colour | `player_color(pid)` | P1 orange, P2 blue; grey = no pid yet |
+| Colour | `player_color(pid)` | P1 red, P2 blue (the Colour Clash team colours); grey = no pid yet |
 | CSV, built-in columns | `p<pid>_<field>` | `p1_status`, `p2_cx` |
 | CSV, your `log_fields` | `<stage>_p<pid>_<field>` | `face_p1_roll`, `identity_p2_hist_dist` |
 
@@ -165,7 +165,7 @@ pytest                                        # before every PR
 
 ### Task 2: Pose and motion — owner: ____________
 
-**Status (smoothing merged 2026-10-25 from the prototype's `KeypointTracker`; details in [merge_log.md](../merge_log.md#task-4-gestures)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as the prototype, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
+**Status (smoothing merged 2026-10-25 from the prototype's `KeypointTracker`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as the prototype, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
 
 - keypoints under confidence 0.35 count as missing, and keep their last position for 0.33 s;
 - an EMA smooths the positions (time constant 0.048 s);
@@ -194,7 +194,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 
 ### Task 4: Interaction — owner: ____________
 
-**Status (gestures merged 2026-10-25 from the prototype's `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures)):** `GestureRecognizer` runs the prototype's rules on the smoothed keypoints, with all distances in shoulder widths:
+**Status (gestures merged 2026-10-25 from the prototype's `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `GestureRecognizer` runs the prototype's rules on the smoothed keypoints, with all distances in shoulder widths:
 
 - **`hands_up`:** both wrists above the nose.
 - **`arms_crossed`:** wrists swapped left/right in front of the chest.
