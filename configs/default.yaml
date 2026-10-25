@@ -168,7 +168,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # here (1.6 above the eyes, as now).
   above_head_rise: 1.0
 
-  # Head pose (steps 9-10): forehead, hat and above_head are 3D points on a
+  # Head pose: forehead, hat and above_head are 3D points on a
   # canonical head, projected into the image with the head's rotation, so
   # they follow it when it tilts up/down or turns. The rotation comes from
   # MediaPipe (below), else from solvePnP on the YuNet landmarks and the
@@ -204,7 +204,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Ignore a pose beyond this yaw or pitch (deg): YuNet's landmarks get
   # unreliable there, so the 2D anchors are used for that frame instead.
   pose_max_deg: 60
-  # MediaPipe Face Landmarker (step 10) on a crop around the face: head
+  # MediaPipe Face Landmarker on a crop around the face: head
   # rotation for the 3D anchors, and blendshape scores (jawOpen, eyeBlink...)
   # in Face.blendshapes. false = pose from solvePnP only, no blendshapes.
   landmarker: true
@@ -272,8 +272,8 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   # hands up.
   punch_above_shoulders: 1.0
   # Punch: wrist no lower than this below its own shoulder, so a straight arm
-  # held low is not a punch (merge step 2c; bodypose.py allowed down to the
-  # hips). A level arm puts the wrist at shoulder height, give or take
+  # held low is not a punch (bodypose.py allowed down to the hips; merge_log,
+  # Task 4 modifications). A level arm puts the wrist at shoulder height, give or take
   # keypoint noise; 0.2 sw keeps those punches. 0 = strictly level or higher.
   punch_below_shoulder: 0.2
   # Punch: the other arm must be bent under this angle (guard), so two

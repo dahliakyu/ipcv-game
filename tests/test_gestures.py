@@ -153,7 +153,7 @@ def test_hanging_arm_above_hip_line_is_no_punch(cfg):
 
 def test_low_arm_is_no_punch(cfg):
     # Straight and reaching sideways, but at chest height (0.75 sw below the
-    # shoulder): the live false positive behind merge step 2c.
+    # shoulder): the webcam false positive behind this rule.
     k, v = punch_left()
     k[sk.L_ELBOW], k[sk.L_WRIST] = (420, 230), (480, 260)
     assert detect_punch(k, v, SW, cfg) is None

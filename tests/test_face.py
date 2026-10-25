@@ -250,7 +250,7 @@ def test_shrunk_crop_maps_back_to_frame_pixels(tmp_path, monkeypatch, limit):
     np.testing.assert_allclose(det[4:6], [180, 140], atol=0.5)
 
 
-# ---------- head pose (step 9) ----------
+# ---------- head pose ----------
 MODEL = np.array([CFG["head_model_mm"][k] for k in
                   ("left_eye", "right_eye", "nose", "left_mouth", "right_mouth")], dtype=float)
 K = camera_matrix(1280, 720, CFG["focal_per_width"])
@@ -328,7 +328,7 @@ def test_hat_follows_head_tilt(chin_up):
     assert (height_3d < height_2d) if chin_up > 0 else (height_3d > height_2d)
 
 
-# ---------- MediaPipe pose and blendshapes (step 10) ----------
+# ---------- MediaPipe pose and blendshapes ----------
 def mp_matrix(chin_up_deg: float = 0.0, turn_right_deg: float = 0.0) -> np.ndarray:
     """A MediaPipe facial transformation matrix (face frame: y up, z towards
     the camera). Chin up turns the face's up axis away from the camera; a

@@ -55,13 +55,6 @@ The identity code (`PlayerIdentityTracker` in `Colour Clash/Project/bodypose.py`
 
 **Changed:** `requirements.txt`: no `torchreid`, `gdown` or `tensorboard` entries.
 
-**Checked:**
-
-- On the same input with the same weights, the copied network gives the same output as upstream torchreid (max difference 0.0).
-- `OSNetEmbeddingExtractor` returns a unit-length 512-d vector on CUDA.
-- `Colour Clash/main.py` imports without `torchreid`.
-- `ruff` finds no errors in the two files.
-
 **Action for anyone who installed it:** `torchreid`, `gdown` and `tensorboard` are no longer needed and can be removed with `pip uninstall torchreid gdown tensorboard tensorboard-data-server`.
 
 ### Open issues found during the merge
@@ -87,9 +80,9 @@ A quick reference for each teammate: where your code now lives, and what was cha
 | --- | --- | --- |
 | `measure()` | `face/tracker.py`, `measure()` | Same maths; constants come from config |
 | `measure()`, the `lk` grid part | `face/tracker.py`, `flow_points()` | Built from the 4 key points |
-| `geometry()` | `face/tracker.py`, `geometry()` | Also returns `forehead` and `above_head`; since step 9 the fallback when the head pose is off or fails |
-| (new, steps 9–10) head pose | `face/head_pose.py`: `camera_matrix()`, `head_pose()`, `pose_angles()`, `rotation()`, `mediapipe_angles()`, `translation()`, `anchor_points_mm()`; used in `face/tracker.py`, `FaceTracker._smoothed_geometry()` | New |
-| (new, step 10) mouth, blinks, MediaPipe pose | `face/landmarker.py`, `FaceLandmarker`; `face/tracker.py`, `FaceTracker._landmark()` | New |
+| `geometry()` | `face/tracker.py`, `geometry()` | Also returns `forehead` and `above_head`; the fallback when the head pose is off or fails (Task 1 modifications) |
+| (new, Task 1 modifications) head pose | `face/head_pose.py`: `camera_matrix()`, `head_pose()`, `pose_angles()`, `rotation()`, `mediapipe_angles()`, `translation()`, `anchor_points_mm()`; used in `face/tracker.py`, `FaceTracker._smoothed_geometry()` | New |
+| (new, Task 1 modifications) mouth, blinks, MediaPipe pose | `face/landmarker.py`, `FaceLandmarker`; `face/tracker.py`, `FaceTracker._landmark()` | New |
 | `OneEuro` | `core/filters.py`, `OneEuro` | Shared filter, same maths |
 | `Track` (state) | `face/tracker.py`, `_FaceState` | One per player ID |
 | `Track.update()` | `face/tracker.py`, `FaceTracker.update()`, "detect" branch | |
@@ -122,7 +115,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `LK_GRID` | `flow_grid_x`, `flow_grid_y`, `flow_grid_n` |
 | `LK_PARAMS` | `flow_win`, `flow_levels`, `flow_criteria` |
 | Numbers inside `Track.flow()` (8 points, 6 inliers, 3.0 px, 0.7–1.4) | `flow_min_points`, `flow_min_inliers`, `flow_ransac_px`, `flow_scale_range` |
-| Numbers inside `measure()` / `geometry()` (0.20, 0.50, 0.35, 0.40) | `center_drop`, `forehead_rise`, `lip_to_nose`; the 0.40 became `hat_rise` (0.11) in step 10, see Modifications |
+| Numbers inside `measure()` / `geometry()` (0.20, 0.50, 0.35, 0.40) | `center_drop`, `forehead_rise`, `lip_to_nose`; the 0.40 became `hat_rise` (0.11), see Modifications |
 | Numbers inside `Track.draw()` (1.5, 0.80) | `hat_width`, `mustache_width` |
 | `OneEuro(1.5, 0.1)` | `filter_min_cutoff`, `filter_beta`, `filter_d_cutoff` |
 | `HAT`, `MUSTACHE` (`hat.png`, `mustache.png`) | `hat_sprite`, `mustache_sprite` → `assets/face/` |
@@ -147,7 +140,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer.update()` | Rising-edge `GestureEvent`s |
 | Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
 | `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Game positions (step 7) |
-| `hand_x/y` | `interaction/game.py`, `punching_hand()` | Bolts now start at the punching hand (step 8b) |
+| `hand_x/y` | `interaction/game.py`, `punching_hand()` | Bolts now start at the punching hand (Task 4 modifications) |
 | `head_x/y` | Not ported | The renderer will use face anchors |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
@@ -198,13 +191,13 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Seconds instead of frames.** Hold, flow and lost limits are in seconds (`Frame.t`), so they behave the same at any frame rate.
 - **Fade-out moved into the contract.** The opacity is now `Face.alpha`, a new `core/types.py` field, so the renderer and the game can see it.
 - **More anchors.** `forehead` and `above_head` are added next to `hat` and `mouth`.
-- **Head pose and 3D anchors (step 9, new).** `solvePnP` fits a canonical 3D head to the 5 landmarks. The forehead, hat and `above_head` anchors are then 3D points on that head, projected into the image. The script's fixed 2D offsets made the hat rise when the chin went up, and sink when it went down. `Face.yaw` is filled from the pose.
-- **Head rotation from MediaPipe (step 10, new).** YuNet's 5 landmarks stay near-frontal at strong up/down tilts (−3° measured on a 33° chin-up), so the rotation now comes from MediaPipe Face Landmarker, which runs on one player per frame, in turn. `solvePnP` on YuNet's landmarks plus the pose model's ears is the fallback.
-- **Mouth and blinks (step 10, new).** MediaPipe's blendshape scores go into `Face.blendshapes`, a new `core/types.py` field.
-- **Hat hangs from its brim (step 10).** The script's `overlay()` pinned the hat at the bottom of the PNG, which has 34% transparent padding below the hat, so the visible brim floated half a face width above the anchor. The hat now hangs from its visible brim, and `hat_drop` (0.40 below the forehead point) became `hat_rise` (0.11 above it), which keeps the frontal look the same.
-- **Smoothing order (step 9).** The One Euro filter now runs on the face sides and the anchors together, after the 3D projection, instead of on the 4 key points before `geometry()`.
+- **Head pose and 3D anchors (new).** `solvePnP` fits a canonical 3D head to the 5 landmarks. The forehead, hat and `above_head` anchors are then 3D points on that head, projected into the image. The script's fixed 2D offsets made the hat rise when the chin went up, and sink when it went down. `Face.yaw` is filled from the pose.
+- **Head rotation from MediaPipe (new).** YuNet's 5 landmarks stay near-frontal at strong up/down tilts (−3° measured on a 33° chin-up), so the rotation now comes from MediaPipe Face Landmarker, which runs on one player per frame, in turn. `solvePnP` on YuNet's landmarks plus the pose model's ears is the fallback.
+- **Mouth and blinks (new).** MediaPipe's blendshape scores go into `Face.blendshapes`, a new `core/types.py` field.
+- **Hat hangs from its brim.** The script's `overlay()` pinned the hat at the bottom of the PNG, which has 34% transparent padding below the hat, so the visible brim floated half a face width above the anchor. The hat now hangs from its visible brim, and `hat_drop` (0.40 below the forehead point) became `hat_rise` (0.11 above it), which keeps the frontal look the same.
+- **Smoothing order.** The One Euro filter now runs on the face sides and the anchors together, after the 3D projection, instead of on the 4 key points before `geometry()`.
 - **Flow also moves the 5 landmarks (new),** not just the key points and flow points.
-- **Large head crops are shrunk (step 8, new).** Crops over `crop_max_px` (192) are shrunk before YuNet, and the detection is scaled back to frame pixels: 23.4 → 9.2 ms on a 4K clip with nearly the same detections.
+- **Large head crops are shrunk (new).** Crops over `crop_max_px` (192) are shrunk before YuNet, and the detection is scaled back to frame pixels: 23.4 → 9.2 ms on a 4K clip with nearly the same detections.
 - **Faster drawing.** `paste()` warps only the sprite's box, not the whole frame. It looks the same: 2.6 ms against 85 ms for two faces at 720p.
 - **Face state dropped** after `lost_after_s` without any update, and when the player disappears or re-enters (`reset(pid)`).
 - **No model download at runtime.** The YuNet model is fetched once with the `README.md` command.
@@ -220,7 +213,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Velocities (new):** `Motion.vel` is the finite difference of the smoothed points; 0 on the frame a point jumps back.
 - **`pose_detector.py` not merged:** it is an older single-player copy of `bodypose.py` with slightly different thresholds.
 - **Punch reach is sideways (step 2b):** `arm_extended()` measures the wrist's horizontal distance from the shoulder, not the straight-line distance, so a straight hanging arm is no longer a punch.
-- **Punch wrist at least at shoulder level (step 2c):** the wrist may be at most `punch_below_shoulder` (0.2 sw) below its own shoulder; `bodypose.py` allowed it down to the hips.
+- **Punch wrist at least at shoulder level (Task 4 modifications):** the wrist may be at most `punch_below_shoulder` (0.2 sw) below its own shoulder; `bodypose.py` allowed it down to the hips.
 - **Events instead of per-frame flags (step 3):** one `GestureEvent` when a gesture turns on; `main.py`'s `hands_were_up` / `arms_were_crossed` bookkeeping moved into the gesture stage. Punches less than 0.5 s apart give one event.
 - **No usable shoulder width restarts the timers (step 3);** `bodypose.py` kept counting across such frames.
 
@@ -229,7 +222,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **One colour table (step 5):** `game.py`'s P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
 - **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
-- **Bolts start at the punching hand (step 8b)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
+- **Bolts start at the punching hand (Task 4 modifications)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
 - **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
 
 #### Task 3 (pre-merge)
@@ -294,17 +287,6 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 6. Evaluation: `log_fields` and `tools/eval_face.py`.
 7. Cleanup: remove the old root scripts and sprites, mark the update guide as history, update `docs/phase-1/status.md`.
 
-**Added after step 6 (decisions by the Task 5 owner, 2026-10-25).** These steps only touch `face/`, apart from one `Face` field:
-
-8. Speed: scale each head crop down to a maximum size before YuNet; the 4K test clip costs 24 ms in the face stage.
-9. Head pose: `cv2.solvePnP` on the 5 YuNet landmarks and a canonical 3D face, which fills `Face.yaw`.
-10. Mouth opening and blinking: MediaPipe Face Landmarker on the face box YuNet finds, alternating players frame by frame. Its blendshapes (`jawOpen`, `eyeBlinkLeft`/`Right`, …) go into a new `Face.blendshapes` field (**team heads-up: contract change**, approved). Uses:
-    - eating consumables with the mouth;
-    - a blink resets the super-charge move;
-    - taunt (smile) and cheek bulge effects.
-
-Game features that build on the face stage (team colour, hit reaction, status above the head, taunt, cheek bulge, Smash-Bros-style consumables) are written up for later in `docs/extra_features.md`.
-
 **Verification.** Steps 2 and 3 are covered by unit tests. Steps 4 and 5 are checked by the Task 5 owner on the webcam (single player). The multiplayer cases (two faces, crossing) wait for recorded clips.
 
 ### Changes
@@ -324,8 +306,6 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 **Changed:** `README.md`: download command and SHA-256 for `models/face_detection_yunet_2023mar.onnx`. The script downloaded the model at runtime; the pipeline doesn't download it, and the model stays out of git (`models/` is ignored).
 
-**Checked:** 18 tests pass, `ruff` clean.
-
 #### Step 2 · Effects: `load_sprite` and `paste`
 
 **Changed:** `src/ipcvgame/face/effects.py` (replaces the stub's dot)
@@ -340,11 +320,6 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 **Changed:** `configs/default.yaml`, `face:`: `hat_sprite`, `mustache_sprite`, `hat_width` (1.5) and `mustache_width` (0.8), from the script's `overlay()` calls.
 
 **Added:** `tests/test_effects.py`: 7 tests covering pivot placement, scaling, rotation, alpha, off-screen clipping, sprite errors, and skipping hidden faces.
-
-**Checked:** 25 tests pass, `ruff` clean.
-
-- Drawing two faces at 1280×720 takes 2.6 ms; the script's full-frame `overlay()` takes 85 ms for the same two faces.
-- A rendered check image looks right: the hat and mustache turn with a tilted head, and `alpha=0.5` draws them half-transparent.
 
 #### Step 3 · Geometry: `measure()` and `geometry()`
 
@@ -362,11 +337,6 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 - an upright face gives roll 0, the right width, and anchors in top-to-bottom order;
 - a face tilted by +10° and −25° gives that roll, the same width, and anchors rotated with the head;
 - swapping the two eyes in the detection changes nothing.
-
-**Checked:**
-
-- 29 tests pass, `ruff` clean.
-- On 1000 random detections, the ported functions give exactly the same key points, centre, width, roll, hat and lip anchors as the script's own `measure()`/`geometry()` (max difference 0.0).
 
 #### Step 4 · Detection on per-player head crops
 
@@ -401,14 +371,6 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 - there is no crop without a detection;
 - an unknown backend is rejected;
 - a missing model file gives an error that points to the README.
-
-**Checked:**
-
-- 34 tests pass, `ruff` clean.
-- On two OpenCV sample photos (not in the repo), the full chain of YOLO pose → head crop → YuNet → `Face` → hat and mustache works.
-  - A head tilted ~10° gets a tilted hat.
-  - A 29 px face of a player far from the camera is found inside its crop.
-- Face stage: 1.3 ms for a small crop, 5.8 ms for a ~350 px crop. The cost grows with crop area, so at 1280×720 with a player close to the camera, scaling the crop down before detection may be worth it. To be checked on the webcam (`face` row of the timing HUD).
 
 #### Step 5 · Optical-flow fallback, hold time and fade-out
 
@@ -446,12 +408,6 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 - `estimate_motion()` recovers a known shift on a textured image, and rejects a zoom outside the allowed range.
 - Through `FaceTracker` with a scripted detector (no model file): flow follows a shifted face when detection misses; then hold (anchors frozen, alpha 1), fade (alpha 0.5 halfway) and gone after `lost_after_s`.
 
-**Checked:**
-
-- 40 tests pass, `ruff` clean.
-- On `two_people_fitness_challenge.webm`, faces come from detection in 77.3% of player-frames and from flow in 18.8%; in step 4 those 18.8% had no hat. 3.8% are frames before a face was first found. On the 4K `two_people_jump.mp4` it is 99.2% detection, 0.8% flow.
-- Face stage: 2.6 ms per frame on the small clip (was 2.1). On the 4K clip 24.0 ms (was 19.1); grayscale conversion of a 4K frame is part of that. Still open from step 4: scaling crops down before detection.
-
 #### Step 6 · Evaluation: `log_fields` and `tools/eval_face.py`
 
 The script's `Metrics` class (jitter, alignment error, detection rate per lighting, latency) moves out of the tracker. The tracker now writes per-frame CSV columns, and a separate script computes the metrics from them.
@@ -476,11 +432,6 @@ The script's `Metrics` class (jitter, alignment error, detection rate per lighti
 
 **Added:** `tests/test_eval_face.py` (3 tests: the metrics on a synthetic log with known jitter, lag and coverage; missing frames count as "no face"; the Markdown table). Also added to `tests/test_face.py`: a test that raw mouth columns are only written on detect frames.
 
-**Checked:**
-
-- 44 tests pass, `ruff` clean.
-- Both test clips evaluate end to end. On the fitness clip the filter cuts jitter from 2.6 to 1.7 px (P1) at about 2 px of lag. A `--tag noflow --set face.flow_max_s=0` run turns the 23.8% flow frames into hold frames and saves about 0.4 ms per frame.
-
 #### Step 7 · Cleanup
 
 **Deleted** (superseded by `src/ipcvgame/face/`; still in git history):
@@ -493,7 +444,7 @@ The script's `Metrics` class (jitter, alignment error, detection rate per lighti
 - `docs/phase-1/facetracking-update-guide.md`: a "History" note at the top. It says the guide was for the standalone script, where its `paste()` now lives, and links here.
 - `docs/phase-1/status.md`:
   - the module table now shows the face stage as done;
-  - Task 1's "Stub today" became a status paragraph and a checklist: done items ticked, next steps 8–10 listed;
+  - Task 1's "Stub today" became a status paragraph and a checklist: done items ticked, the next steps listed;
   - the old cross-section read note is replaced (the face stage has its own `kpt_conf_threshold`);
   - a face row in the timing table;
   - the anchor-name decision ticked (`forehead`, `mouth`, `hat`);
@@ -503,9 +454,18 @@ The script's `Metrics` class (jitter, alignment error, detection rate per lighti
 
 **Not changed:** `.gitignore` keeps `garb/` until the whole Colour Clash merge is done, not just Task 1.
 
-**Checked:** nothing outside `garb/` and the history note refers to the deleted files. 44 tests pass, `ruff` clean.
+## Task 1: Modifications
 
-#### Step 8 · Shrink large head crops before detection
+Changes beyond the Task 1 script, decided by the Task 5 owner after step 6 (2026-10-25). They only touch `face/`, apart from one new `Face` field (`blendshapes`; team heads-up, approved):
+
+- **Speed:** shrink each head crop to a maximum size before YuNet; the 4K test clip cost 24 ms in the face stage.
+- **Head pose:** fills `Face.yaw` and places the forehead, hat and `above_head` anchors in 3D.
+- **Mouth opening and blinking** with MediaPipe Face Landmarker, for game actions:
+  - eating consumables with the mouth;
+  - a blink resets the super-charge move;
+  - taunt (smile) and cheek bulge effects.
+
+### Shrink large head crops before detection
 
 **Changed:** `src/ipcvgame/face/tracker.py`, `FaceTracker._detect()`. A crop whose longest side is over `crop_max_px` is shrunk (`cv2.resize`, `INTER_AREA`) before YuNet runs. The detection is scaled back to crop pixels and then shifted to frame pixels. Everything after that (`min_face`, the size-jump check, `measure()`) still works in frame pixels, so nothing else changes.
 
@@ -534,11 +494,9 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 
 **Changed:** `docs/phase-1/status.md` (face timing row, Task 1 checklist, test count) and the Task 1 modifications in "Change Overviews" above.
 
-**Checked:** 46 tests pass, `ruff` clean.
+### Head pose and 3D anchors
 
-#### Step 9 · Head pose and 3D anchors
-
-**Why the scope grew.** The plan was to fill `Face.yaw`. Testing step 8 on the webcam showed the hat lifting off the head when the chin goes up. The cause is the script's 2D geometry: the forehead and hat sit at fixed offsets above the eyes, whatever way the head points. When the chin goes up, the top of the head turns away from the camera and moves *down* in the image, but the hat stays put. When the chin goes down, the hat sinks onto the forehead. So step 9 estimates the full head pose and places those anchors in 3D.
+**Why the scope grew.** The plan was to fill `Face.yaw`. Testing the shrunk crops on the webcam showed the hat lifting off the head when the chin goes up. The cause is the script's 2D geometry: the forehead and hat sit at fixed offsets above the eyes, whatever way the head points. When the chin goes up, the top of the head turns away from the camera and moves *down* in the image, but the hat stays put. When the chin goes down, the hat sinks onto the forehead. So the full head pose is estimated, and those anchors are placed in 3D.
 
 **Changed:** `src/ipcvgame/face/tracker.py`
 
@@ -572,36 +530,19 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 - Swapping the eye and mouth-corner labels (a mirrored frame) gives the same pose.
 - Facing the camera, the 3D forehead and hat anchors land on the 2D ones (under 1% of a face width). `above_head` is within 6%: it is 1.5 face widths up and deeper in the head, so perspective puts it slightly lower.
 - The reported bug as a test: chin up 25°, and the hat is closer to the eyes than the 2D anchor put it. Chin down 25°, and it is higher.
-- The step 8 crop test was updated for the new filter argument.
-
-**Measured** on the two test clips, `--set face.head_pose=true/false`:
-
-| Clip | Player | pose % | hat jitter px (2D → 3D) | face ms (2D → 3D) |
-| --- | --- | --- | --- | --- |
-| `two_people_fitness_challenge` | P1 | 100 | 1.98 → 2.33 | 2.60 → 2.90 |
-| `two_people_fitness_challenge` | P2 | 100 | 2.93 → 2.92 | |
-| `two_people_jump` (4K) | P1 | 100 | 10.5 → 12.0 | 9.24 → 9.54 |
-| `two_people_jump` (4K) | P2 | 100 | 9.42 → 10.2 | |
-
-- The pose was used on every detect and flow frame.
-- Yaw ranges: fitness clip P1 +16° to +54°, P2 −45° to +12°; pitch between −31° and +3°.
-- Frame to frame, the smoothed yaw changes by a median of 0.4–0.8°.
-- The hat moves a little more (up to +18%). Part of that is the hat now following real head movement, which these moving clips are full of. The cost is 0.3 ms.
-- On a photo with the head turned (yaw +40°), the hat moves towards the middle of the head instead of staying on the face outline.
+- The crop-shrinking test was updated for the new filter argument.
 
 **Open:** check on the webcam (chin up, chin down, turning). `hat_depth_mm` is a first guess; a larger value moves the hat more with tilt. The mouth anchor is not affected by the pose.
 
-**Checked:** 55 tests pass, `ruff` clean.
+### MediaPipe: head rotation, mouth opening and blinks
 
-#### Step 10 · MediaPipe: head rotation, mouth opening and blinks
-
-**Why.** Testing step 9 on the webcam, the hat still lifted off during a strong chin-up. On that frame, YuNet's 5 landmarks were almost frontal: nose 0.49 eye distances below the eyes (frontal 0.54), mouth 0.99 (frontal 0.99). `solvePnP` therefore found −3° of pitch. MediaPipe Face Landmarker, which fits 478 landmarks, found 33°, which matches the picture. Adding the pose model's ears to `solvePnP` gave 15–21°: better, but not enough. Mouth opening and blinking need MediaPipe anyway (step 10), so its head rotation is used as well.
+**Why.** Testing the head pose on the webcam, the hat still lifted off during a strong chin-up. On that frame, YuNet's 5 landmarks were almost frontal: nose 0.49 eye distances below the eyes (frontal 0.54), mouth 0.99 (frontal 0.99). `solvePnP` therefore found −3° of pitch. MediaPipe Face Landmarker, which fits 478 landmarks, found 33°, which matches the picture. Adding the pose model's ears to `solvePnP` gave 15–21°: better, but not enough. Mouth opening and blinking need MediaPipe anyway, so its head rotation is used as well.
 
 **Contract (team heads-up):** `src/ipcvgame/core/types.py`: `Face.blendshapes: dict[str, float]`, default empty. These are MediaPipe's 52 scores from 0 to 1 (`jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `mouthSmileLeft`, `cheekPuff`, …), empty when not measured. MediaPipe names the left/right scores as if the image were not mirrored, so on our mirrored frame `eyeBlinkLeft` is the player's own right eye.
 
 **Added:** `src/ipcvgame/face/landmarker.py`, `FaceLandmarker`. A thin wrapper around MediaPipe Face Landmarker in IMAGE mode: every call stands alone, because the crops come from different players in turn. It returns the blendshape scores and the head transformation matrix for one face crop, or `None`.
 
-**Added:** `src/ipcvgame/face/head_pose.py`. The step 9 functions moved here from `tracker.py`, to keep that file readable. New in this step:
+**Added:** `src/ipcvgame/face/head_pose.py`. The head-pose functions moved here from `tracker.py`, to keep that file readable. New in this change:
 
 - `head_pose(..., ears, ears_mm)`: optional ear keypoints from the pose model as two more points.
 - `mediapipe_angles(matrix)`: yaw and pitch from MediaPipe's matrix. Its face frame has y up and z towards the camera, so both axes are flipped (`C R C`, `C = diag(1, −1, −1)`).
@@ -619,7 +560,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
   - Only yaw and pitch are taken from either source, and they go through the pose One Euro filter.
   - Roll comes from the eye line, as before.
   - The position comes from `translation()`.
-  - The 3D anchors are then projected as in step 9.
+  - The 3D anchors are then projected as with the YuNet pose.
   - Both pose sources go through the same steps, so switching between them does not make the hat jump.
 - `geometry(pts, hat_rise, above_head_rise)`: the hat brim is now `hat_rise` above the forehead point (see the effects change below).
 - `log_fields`:
@@ -639,7 +580,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 
 **Changed:** `README.md`: download command and SHA-256 for `models/face_landmarker.task`. `tools/eval_face.py`: `pose %` now counts both pose sources, plus a new `mediapipe pose %`; `docs/evaluation.md` explains them.
 
-**Tests:** 67 pass, `ruff` clean.
+**Tests:**
 
 - `tests/test_face.py`:
   - MediaPipe's matrix gives our yaw and pitch for 5 poses, including the 33° chin-up;
@@ -651,37 +592,13 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 - `tests/test_effects.py`: the hat hangs from its brim on a padded sprite.
 - Existing tests: imports moved to `head_pose.py`, `hat_rise`, and `landmarker: False` where YuNet is replaced.
 
-**Measured**
-
-On the chin-up screenshot:
-
-| | Pose | Pitch | Brim above the eyes |
-| --- | --- | --- | --- |
-| Step 9 | YuNet `solvePnP` | −3° | 61 px (the floating hat) |
-| Step 10 | MediaPipe | +33° | 8 px; the hat sits on the head |
-
-On the test clips:
-
-| Clip | Player | pose % | mediapipe pose % | hat jitter px | face ms (mean / p95) |
-| --- | --- | --- | --- | --- | --- |
-| `two_people_fitness_challenge` | P1 | 100 | 83.8 | 1.95 | 10.5 / 13.0 |
-| `two_people_fitness_challenge` | P2 | 100 | 99.6 | 3.43 | |
-| `two_people_jump` (4K) | P1 | 100 | 99.2 | 11.2 | 19.2 / 20.2 |
-| `two_people_jump` (4K) | P2 | 100 | 99.7 | 10.0 | |
-
-- MediaPipe costs ~8 ms per frame for one player (CPU), so the face stage went from ~3 to ~10.5 ms. With pose (~10 ms) and render that is ~23 ms per frame at 720p, enough for 30 FPS.
-- Pitch now spans ±30° on the fitness clip; with YuNet `solvePnP` (step 9) it was −31° to +3°.
-- Hat jitter: P1 is lower than with the step 9 pose (2.33). P2 is higher than in step 9 (2.92), probably from switching between the two pose sources on hard frames.
-- Blendshapes are present on 84–100% of frames. `jawOpen` reaches 0.61 on the fitness clip.
-- `blink` goes over 0.5 in up to 26% of the frames of the jump clip: eyelids also drop when people look down. A blink event (for the super charge) needs hysteresis, a per-player baseline, and probably a pitch check. This is noted for `docs/extra_features.md`.
-
 **Open:**
 
 - Check on the webcam: chin up and down, blinking, mouth opening (the `jaw` and `blink` bars in the debug view).
 - MediaPipe's GPU delegate may cut its ~8 ms; not tried yet.
 - With `landmarker_per_frame: 1`, two players are measured at ~15 Hz each. Set it to 2 if short blinks are missed.
 
-#### Step 10 fix · Crash in `solvePnP` on degenerate points
+### Fix: crash in `solvePnP` on degenerate points
 
 **What happened.** The live game crashed with `cv2.error ... sqpnp.cpp:236: (-215:Assertion failed) point_coordinate_variance >= POINT_VARIANCE_THRESHOLD`, raised from the `solvePnP` fallback in `head_pose()`.
 
@@ -697,9 +614,7 @@ On the test clips:
 - `head_pose()` returns `None` for NaN and for collapsed points (the crash case);
 - flow that shrinks the face by 25% per frame stops (→ hold) before the face drops below `min_face`.
 
-**Checked:** 70 tests pass, `ruff` clean.
-
-#### After step 10 · Backlog: `docs/extra_features.md`
+### Backlog: `docs/extra_features.md`
 
 **Added:** `docs/extra_features.md`. The game features agreed during the merge, written up for after it, each with owners, inputs from the face stage, a starting design with thresholds, and how to check it:
 
@@ -736,7 +651,6 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 - **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
 - **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
 - **Punch reach measured sideways (after step 2).** Step 2 showed that the punch rule from `bodypose.py` fires on a straight hanging arm; step 2b fixes it.
-- **Punch wrist at least at shoulder level (after the live test).** Straight arms held low still fired on the webcam; step 2c fixes it.
 
 **Where each part goes.**
 
@@ -757,7 +671,6 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 1. Motion smoothing: `KeypointTracker` into `MotionFilter`; the pass-through stays as `motion.backend: stub`.
 2. Gesture rules: the six functions, `angle_at()` in `core/geometry.py`, thresholds in the `gestures:` config, tests on synthetic skeletons.
 2b. Punch rule fix: sideways reach in `arm_extended()`.
-2c. Punch rule fix: the wrist at least level with its shoulder.
 3. `GestureRecognizer`: timers in seconds, rising-edge events `punch`, `hands_up`, `arms_crossed`, reset on loss and re-entry, `draw_debug`, `log_fields`.
 4. Check and record: event counts on the two test clips, Change Overviews, `docs/phase-1/status.md`.
 
@@ -855,15 +768,6 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Changed:** `tests/test_pipeline.py`, `test_velocity_uses_frame_time`: runs with `motion.tau=0` (no smoothing), so it still checks the plain finite difference.
 
-**Checked:** 78 tests pass, `ruff` clean. On the first 300 frames of each test clip (jitter = median second difference of valid keypoints, which includes real motion):
-
-| Clip | Backend | Jitter | Valid keypoints | Motion stage |
-| --- | --- | --- | --- | --- |
-| `two_people_fitness_challenge.webm` | stub | 3.25 px | 95.9% | 0.04 ms |
-| | ema | 0.89 px | 98.5% | 0.08 ms |
-| `two_people_jump.mp4` (4K) | stub | 12.34 px | 99.3% | 0.06 ms |
-| | ema | 8.27 px | 100.0% | 0.11 ms |
-
 #### Step 2 · Gesture rules
 
 **Changed:** `src/ipcvgame/interaction/gestures.py`
@@ -892,13 +796,6 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 
 **Added:** `tests/test_gestures.py` (15 tests on synthetic skeletons): `angle_at`, the hip fallback, standing (no gesture), hands up with and without the nose, crossed (also mirrored, too far apart, overhead), punch left and right, T-pose, unknown guard arm, short reach, raised arm, hanging arm with a guard.
 
-**Checked:** 93 tests pass, `ruff` clean. How often each rule is true per player-frame on the two test clips (smoothed keypoints from step 1, no hold time or events yet). Neither clip has real punches, crossed arms or hands up as gestures, so every hit is a false positive:
-
-| Clip | Player-frames | Hands up | Crossed | Punch |
-| --- | --- | --- | --- | --- |
-| `two_people_fitness_challenge.webm` | 495 | 3.6% | 0.0% | 4.8% |
-| `two_people_jump.mp4` | 730 | 0.0% | 0.0% | 33.4% |
-
 **Found: a hanging arm reads as a punch.** In the jump clip, the runners' arms hang straight (elbow 159–177°), so they pass the straightness check. The wrist is 1.0–1.4 sw from the shoulder, so it passes the reach check. The wrist is just above the hip keypoint, so it passes the height check. Meanwhile the other arm swings bent. `arm_extended()` checks the distance from the shoulder but not the direction, and the lowest allowed wrist position is the hip line. On all 268 false punch frames across both clips, the wrist is at most 0.96 sw to the side of its shoulder (median 0.19–0.23); a sideways punch at the other player reaches at least `punch_min_reach` (1 sw) sideways. Not changed in this step; the decision is for the Task 5 owner.
 
 #### Step 2b · Punch reach measured sideways
@@ -910,8 +807,6 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 **Changed:** `configs/default.yaml`: the `punch_min_reach` comment says it is a sideways distance, and why.
 
 **Added:** `tests/test_gestures.py`, `test_hanging_arm_above_hip_line_is_no_punch`: the jump-clip pose (1.9 sw from the shoulder, 0.2 sw to the side), which the old check accepted.
-
-**Checked:** 94 tests pass, `ruff` clean. Punch is now true on 0.0% of player-frames on both test clips (was 4.8% and 33.4%); hands up and crossed are unchanged (3.6% / 0.0% and 0.0% / 0.0%). Neither clip has real punches, so whether real sideways punches still pass needs the webcam check (Task 5 owner).
 
 #### Step 3 · `GestureRecognizer`: events with hold times
 
@@ -952,15 +847,6 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 - shoulders under 10 px;
 - `log_fields()`.
 
-**Checked:** 102 tests pass, `ruff` clean. Run up to the gesture stage on the test clips:
-
-| Clip | Events | Gesture stage |
-| --- | --- | --- |
-| `two_people_fitness_challenge.webm` (260 frames) | 2 × `hands_up`, P2 | 0.09 ms |
-| `two_people_jump.mp4` (365 frames) | none | 0.09 ms |
-
-Both `hands_up` events come from player 2 raising both fists above the head during the exercise, which the rule rightly counts.
-
 #### Step 4 · Check and record
 
 **Changed:** `docs/phase-1/status.md`
@@ -973,8 +859,6 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 - Known limitations: no more "skeletons jitter" or "no gestures fire"; gestures fire, but the game only prints them.
 
 **Change Overviews** for Task 2 and Task 4 were filled in step by step (steps 1–3).
-
-**Checked:** 102 tests pass, `ruff` clean.
 
 #### Step 5 · Colours, config and game state
 
@@ -1007,8 +891,6 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 
 **Added:** `tests/test_game.py` (4 tests): team colours, a new player at full health, `reset()` keeps positions and clears the round (`test_reset_starts_a_fresh_round` from `test_game.py`), `reset(pid)`.
 
-**Checked:** 106 tests pass, `ruff` clean.
-
 #### Step 6 · Combat
 
 **Changed:** `src/ipcvgame/interaction/game.py`
@@ -1032,8 +914,6 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
   - a fully painted player loses;
   - a bolt never hurts its owner.
 - New: every punch fires with cooldown 0, a shield blocks a bolt, a shield blocks a beam for the rest of the beam, a fading shield does not block and then disappears, an invisible player is not hit, a bolt leaves the frame, and the same hit gives the same splats.
-
-**Checked:** 119 tests pass, `ruff` clean.
 
 #### Step 7 · Pipeline: `Game.update(state)`
 
@@ -1064,13 +944,6 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 - a lost player is not hit and their events are ignored;
 - an event without shoulders is ignored.
 
-**Checked:** 127 tests pass, `ruff` clean. Full pipeline up to the game stage:
-
-| Clip | Actions | Result | Game stage |
-| --- | --- | --- | --- |
-| `two_people_fitness_challenge.webm` | 2 beams from P2 (2.2 s, 3.4 s) | Both hit P1: health 100 → 76, 8 splats | 0.03 ms |
-| `two_people_jump.mp4` | none | No change | 0.03 ms |
-
 #### Step 8 · Debug view and CSV columns
 
 **Changed:** `src/ipcvgame/interaction/game.py`
@@ -1093,17 +966,13 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 
 **Added:** 2 tests in `tests/test_game.py`: the debug view draws a bolt, a beam, a shield, splats and the winner without errors; the CSV columns.
 
-**Checked:** 129 tests pass, `ruff` clean.
-- **Clip run:** `python -m ipcvgame.app.main --headless --until game` on `two_people_fitness_challenge.webm` writes all game columns. P2's beams are at frames 130 and 205; P1 ends at health 76.
-- **Debug frames from the same clip:**
-  - the charging circle at P2's hands;
-  - the beam line flying left;
-  - P1 with P2's blue splats on the torso and the red health bar at 76.
-- **To do:** live check by the Task 5 owner (all three actions, the shield blocking, the winner and `r`).
+## Task 4: Modifications
 
-#### Step 8b · Bolt from the hand, fixed-length health bar below the body (live test)
+Game-design changes by the Task 5 owner after the merge steps above, starting from the webcam tests (2026-10-26). Each entry names the files it touched.
 
-Two changes after the Task 5 owner's first webcam test (single player).
+### Bolt from the hand, health bar below the body
+
+Two changes after the first webcam test (single player).
 
 **Changed:** `src/ipcvgame/interaction/game.py`
 
@@ -1122,11 +991,9 @@ Two changes after the Task 5 owner's first webcam test (single player).
 
 **Changed:** `tests/test_game.py`: the box-edge punch test became "a punch fires from the punching hand" and "without wrists, from the box edge". The time test starts from the hand. 2 new tests: the bar's length and position ignore a wider box (arm out), and the shoulder-width fallback.
 
-**Checked:** 132 tests pass, `ruff` clean. On the fitness clip the bars sit below each player at about shoulder width, clear of the beams and the timing text; a raised or extended arm no longer changes them.
+### Punch: wrist at least level with the shoulder
 
-#### Step 2c · Punch: wrist at least level with the shoulder (live test)
-
-The Task 5 owner's webcam test still fired punches with a straight arm held low, at chest or belly height, reaching sideways. `arm_extended()` from `bodypose.py` accepted any wrist height between 1 sw above the shoulder line and the hips.
+The webcam test still fired punches with a straight arm held low, at chest or belly height, reaching sideways. `arm_extended()` from `bodypose.py` accepted any wrist height between 1 sw above the shoulder line and the hips.
 
 **Changed:** `src/ipcvgame/interaction/gestures.py`, `arm_extended()`:
 - **Lower limit:** the wrist may be at most `punch_below_shoulder` × sw below that arm's own shoulder, instead of above the hip level. The arm's own shoulder is used because the shoulders tilt during a punch.
@@ -1137,8 +1004,6 @@ The Task 5 owner's webcam test still fired punches with a straight arm held low,
 - new `punch_below_shoulder: 0.2`, with a comment. The request was "at least level with the shoulder". A level arm puts the wrist at shoulder height give or take keypoint noise, so 0.2 sw keeps those punches; 0 makes the rule strict.
 - The `punch_above_shoulders` comment no longer mentions the hips.
 
-**Changed:** `docs/phase-1/status.md`: the punch description says "at shoulder height".
+**Changed:** `docs/phase-1/status.md`: the punch description says the wrist must be at least level with its shoulder.
 
 **Added:** 2 tests in `tests/test_gestures.py`: a straight sideways arm at chest height (0.75 sw below the shoulder) is no punch; a punch 0.125 sw below the shoulder still counts.
-
-**Checked:** 134 tests pass, `ruff` clean. The test clips had no punches before this step (step 2b), so their rates are unchanged.

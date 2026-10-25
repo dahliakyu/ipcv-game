@@ -186,8 +186,8 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 | Item | Why | Where |
 | --- | --- | --- |
-| Webcam check of the face stage | Steps 8–10 were tested on clips and photos; check chin up and down, turning, mouth and blink bars, and `hat_depth_mm` live | `face:` config |
-| Jitter on a still clip | The test clips are all moving; shrinking crops (step 8) and the pose (steps 9–10) may add shake that only a still clip shows | `tools/eval_face.py` on the shared `normal` clip |
+| Webcam check of the face stage | The crop shrinking, head pose and MediaPipe changes (merge log, Task 1 modifications) were tested on clips and photos; check chin up and down, turning, mouth and blink bars, and `hat_depth_mm` live | `face:` config |
+| Jitter on a still clip | The test clips are all moving; shrinking crops and the head pose may add shake that only a still clip shows | `tools/eval_face.py` on the shared `normal` clip |
 | MediaPipe GPU delegate | MediaPipe costs ~8 ms per frame on the CPU; the GPU delegate may cut that | `face/landmarker.py` |
 | Remove `garb/` | The teammates' original code is ignored by git only while the merge runs; delete it and its `.gitignore` entry at the end | `.gitignore` |
 | `core/types.py` heads-up | Two fields were added during the merge: `Face.alpha` and `Face.blendshapes`; mention them in the merge PR | merge PR description |
