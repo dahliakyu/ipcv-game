@@ -16,6 +16,45 @@ from ipcvgame.core.types import Face, Frame, FrameState, Player
 from ipcvgame.scene.draw import draw_text, player_color, pt
 
 
+def measure(row: np.ndarray, center_drop: float, forehead_rise: float, lip_to_nose: float) -> dict:
+    """One YuNet detection -> 4 key points (left side, right side, forehead,
+    upper lip) in pixels, plus the face centre and the raw landmarks.
+
+    row: [x, y, w, h, right eye (x, y), left eye, nose, right mouth corner,
+    left mouth corner, score]. Distances are in face widths (YuNet box width).
+    """
+    bw = float(row[2])
+    e1, e2 = row[4:6].astype(float), row[6:8].astype(float)
+    if e1[0] > e2[0]:                                       # e1 = eye on the image left
+        e1, e2 = e2, e1
+    nose, mouth = row[8:10].astype(float), (row[10:12] + row[12:14]).astype(float) / 2
+    u = e2 - e1
+    u = u / max(np.linalg.norm(u), 1e-6)                    # along the eye line
+    down = np.array([-u[1], u[0]])                          # face's "down" in image coords
+    m = (e1 + e2) / 2
+    c = m + center_drop * bw * down                         # face centre at cheek level
+    pts = np.array([c - 0.5 * bw * u, c + 0.5 * bw * u,     # left / right side: one face width apart
+                    m - forehead_rise * bw * down,          # forehead
+                    mouth + lip_to_nose * (nose - mouth)])  # upper lip
+    return {"pts": pts, "center": c, "width": bw,
+            "landmarks": row[4:14].reshape(5, 2).astype(float)}
+
+
+def geometry(pts: np.ndarray, hat_drop: float, above_head_rise: float) -> dict:
+    """4 key points (left, right, forehead, lip) -> face width, head roll
+    and the anchors effects draw at. Offsets are in face widths along the
+    face's own "down", so they follow a tilted head."""
+    left, right, top, lip = pts
+    d = right - left
+    w = float(np.linalg.norm(d))
+    roll = float(np.arctan2(d[1], d[0]))                    # 0 = upright, positive = clockwise on screen
+    down = np.array([-np.sin(roll), np.cos(roll)])
+    hat = top + hat_drop * w * down                         # hat brim
+    return {"width": w, "roll": roll, "center": (left + right) / 2,
+            "anchors": {"forehead": top, "hat": hat, "mouth": lip,
+                        "above_head": hat - above_head_rise * w * down}}
+
+
 class FaceTracker:
     def __init__(self, cfg: dict, kpt_conf_threshold: float = 0.5):
         self.cfg = cfg

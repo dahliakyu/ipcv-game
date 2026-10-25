@@ -137,7 +137,7 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 
 #### Step 1 · Contract, config and model
 
-**Changed:** `src/ipcvgame/core/types.py` (**team heads-up: contract change**)
+**Changed:** `src/ipcvgame/core/types.py`
 
 - `Face` has a new last field, `alpha: float = 1.0`: the effect's opacity, 1 while the face is tracked, fading to 0 once it is lost. It keeps the prototype's fade-out.
 - It has a default, so existing code that builds a `Face` without it keeps working.
@@ -171,3 +171,25 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 
 - Drawing two faces at 1280×720 takes 2.6 ms; the script's full-frame `overlay()` takes 85 ms for the same two faces.
 - A rendered check image looks right: the hat and mustache turn with a tilted head, and `alpha=0.5` draws them half-transparent.
+
+#### Step 3 · Geometry: `measure()` and `geometry()`
+
+**Changed:** `src/ipcvgame/face/tracker.py`: two module-level functions above the (still stub) `FaceTracker`; the class itself is unchanged until step 4.
+
+- `measure(row, center_drop, forehead_rise, lip_to_nose)`: the prototype's `measure()`. It turns one YuNet detection into the 4 key points (left side, right side, forehead, upper lip), the face centre at cheek level, and the 5 raw landmarks (which become `Face.landmarks`). Same maths; the constants are passed in from config instead of hard-coded.
+- `geometry(pts, hat_drop, above_head_rise)`: the prototype's `geometry()`. It gives face width (`Face.scale`), head roll (`Face.roll`) and the anchors effects draw at, offset along the face's own "down" so they follow a tilted head. The prototype returned only the hat and lip points; it now returns all of `forehead`, `hat`, `mouth` and `above_head`.
+- New anchor `above_head`: above the hat, where the prototype drew the player name. The game UI (HP bar, name) should draw there.
+- Not ported: the flow-point grid (`lk`) the prototype built in `measure()`. It belongs to the optical-flow fallback and comes in step 5.
+
+**Changed:** `configs/default.yaml`, `face:`: `center_drop` (0.20), `forehead_rise` (0.50), `lip_to_nose` (0.35) and `hat_drop` (0.40), all from the prototype, plus `above_head_rise` (1.5, the hat's height in face widths).
+
+**Added:** `tests/test_face.py`, 4 tests on synthetic YuNet rows:
+
+- an upright face gives roll 0, the right width, and anchors in top-to-bottom order;
+- a face tilted by +10° and −25° gives that roll, the same width, and anchors rotated with the head;
+- swapping the two eyes in the detection changes nothing.
+
+**Checked:**
+
+- 29 tests pass, `ruff` clean.
+- On 1000 random detections, the ported functions give exactly the same key points, centre, width, roll, hat and lip anchors as the prototype's own `measure()`/`geometry()` (max difference 0.0).

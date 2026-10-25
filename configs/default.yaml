@@ -73,6 +73,24 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # is plenty (OpenCV default 5000).
   top_k: 50
 
+  # Face geometry from YuNet's 5 landmarks, in face widths (YuNet box
+  # width); prototype values, tuned by eye.
+  # Face centre this far below the eye midpoint (cheek level).
+  center_drop: 0.20
+  # Forehead point this far above the eye midpoint.
+  forehead_rise: 0.50
+  # Upper-lip point: this fraction of the way from the mouth centre to the
+  # nose, where a mustache sits.
+  lip_to_nose: 0.35
+  # Hat brim this far below the forehead point. The hat sprite has
+  # transparent padding at its bottom, so this puts the visible brim on the
+  # forehead instead of floating above it.
+  hat_drop: 0.40
+  # above_head anchor this far above the hat brim. The hat sprite is square
+  # and hat_width (1.5) wide, so this clears its top; the prototype drew the
+  # player name here.
+  above_head_rise: 1.5
+
   # Effect sprites: RGBA PNGs, relative to the repo root.
   hat_sprite: assets/face/hat.png
   mustache_sprite: assets/face/mustache.png
