@@ -37,7 +37,7 @@ class Pipeline:
         self.pose = PoseEstimator(cfg["pose"])
         self.identity = IdentityTracker(cfg["identity"])
         self.motion = MotionFilter(cfg["motion"])
-        self.face = FaceTracker(cfg["face"], cfg["motion"].get("kpt_conf_threshold", 0.5))
+        self.face = FaceTracker(cfg["face"])
         self.gestures = GestureRecognizer(cfg["gestures"])
         self.game = Game(cfg["game"])
         self.renderer = Renderer(cfg["render"], FaceEffects(cfg["face"]))

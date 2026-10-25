@@ -9,6 +9,8 @@ from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Frame, FrameState, PoseDetection
 
 W, H = 640, 480
+# Stub face backend: the tests feed black frames and need no YuNet model file.
+NO_MODELS = ["pose.backend=none", "face.backend=stub"]
 
 
 def fake_det(cx: float) -> PoseDetection:
@@ -22,7 +24,7 @@ def fake_det(cx: float) -> PoseDetection:
 
 @pytest.fixture
 def pipeline():
-    cfg = load_config(overrides=["pose.backend=none"])
+    cfg = load_config(overrides=NO_MODELS)
     return Pipeline(cfg)
 
 
@@ -64,7 +66,7 @@ def test_lost_and_reentered(pipeline, monkeypatch):
 
 @pytest.mark.parametrize("until", STAGES)
 def test_until_each_stage(until, monkeypatch):
-    p = Pipeline(load_config(overrides=["pose.backend=none"]), until=until)
+    p = Pipeline(load_config(overrides=NO_MODELS), until=until)
     monkeypatch.setattr(p.pose, "detect", lambda f: [fake_det(150)])
     state, canvas = p.step(frame(0))
     assert canvas.shape == (H, W, 3)

@@ -39,6 +39,7 @@ models/
 *.avi
 *.mov
 *.mkv
+*.webm
 
 # Shared clips come from the drive
 data/clips/

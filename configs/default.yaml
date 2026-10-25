@@ -72,6 +72,33 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Candidates kept before NMS. A head crop holds one or two faces, so 50
   # is plenty (OpenCV default 5000).
   top_k: 50
+  # Ignore detections narrower than this (px): too small to place effects.
+  # Prototype value at 640x480; re-check at 1280x720.
+  min_face: 20
+  # Reject a detection whose width differs from the player's last face width
+  # by more than this fraction: a jump that large in one frame is a wrong
+  # detection, not the same face (prototype MAX_SIZE_JUMP).
+  max_size_jump: 0.5
+
+  # Head crop per player, from the pose keypoints. Keypoints under this
+  # confidence are not used to place it; 0.5 matches motion.kpt_conf_threshold.
+  kpt_conf_threshold: 0.5
+  # Crop side in shoulder widths (person-box widths when a shoulder is not
+  # visible). A face is roughly 0.4 shoulder widths wide, so 1.5 leaves room
+  # for keypoint error and head tilt; YuNet's cost grows with the crop area.
+  crop_size: 1.5
+
+  # One Euro filter on the 4 face key points (prototype values).
+  # min_cutoff (Hz): lower = steadier hat when the head is still.
+  filter_min_cutoff: 1.5
+  # beta: higher = less lag when the head moves fast.
+  filter_beta: 0.1
+  # d_cutoff (Hz): smoothing of the speed estimate (One Euro default).
+  filter_d_cutoff: 1.0
+  # Forget a player's face state (filter, last width) after this long
+  # without a detection, so a returning face starts fresh instead of sliding
+  # in. Prototype MAX_MISSED = 30 frames at 30 FPS.
+  lost_after_s: 1.0
 
   # Face geometry from YuNet's 5 landmarks, in face widths (YuNet box
   # width); prototype values, tuned by eye.

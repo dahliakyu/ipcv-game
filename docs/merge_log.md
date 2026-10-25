@@ -193,3 +193,45 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 
 - 29 tests pass, `ruff` clean.
 - On 1000 random detections, the ported functions give exactly the same key points, centre, width, roll, hat and lip anchors as the prototype's own `measure()`/`geometry()` (max difference 0.0).
+
+#### Step 4 · Detection on per-player head crops
+
+**Changed:** `src/ipcvgame/face/tracker.py`: `FaceTracker` now runs YuNet; the old stub is kept as backend `stub`.
+
+- `head_box(player, kpt_conf_threshold, crop_size)`: a square crop around each player's head from that player's pose keypoints. The centre is the mean of the visible nose, eye and ear keypoints, or else the top of the person box. The side is `crop_size` shoulder widths, or person-box widths when a shoulder is not visible.
+- `_detect()`: YuNet on the crop. Detections are shifted back to full-frame pixels, and then filtered in this order:
+  - narrower than `min_face` (prototype `MIN_FACE`): dropped;
+  - width changed by more than `max_size_jump` since the last frame (prototype `MAX_SIZE_JUMP`): dropped;
+  - of the rest, the one closest to the crop centre (the head keypoints) is used, so another player's face that falls into the same crop is skipped.
+- `update()`: per player, `measure()`, then the One Euro filter on the 4 key points (`core.filters.OneEuro`, same maths and values as the prototype's own filter), then `geometry()`, then `Face`:
+  - `landmarks` = the 5 raw YuNet points;
+  - `center`, `scale` (face width) and `roll` from the smoothed key points;
+  - `yaw = 0.0`, since 5 landmarks give no yaw;
+  - `anchors` = `forehead`, `hat`, `mouth`, `above_head`;
+  - `alpha = 1.0`.
+- Per-player state (`_FaceState`: filter, last width, last detection time) is kept between frames. It is dropped by `reset(pid)` (called when a player re-enters), when the player disappears from `players`, or after `lost_after_s` without a detection (prototype `MAX_MISSED`, now in seconds). A returning face then starts fresh instead of sliding in.
+- `draw_debug`: per player, the head crop (dashed) labelled with the YuNet score or "no face", plus the 5 raw landmarks, face centre and scale circle, and every anchor with its name.
+- Replaced from the prototype: full-frame detection, de-duplication, `update_tracks()` (greedy matching), `Track.predicted()`, the velocity and `MAX_PLAYERS`. Identity now comes from Task 3 through the head crop.
+- Not yet: when YuNet misses a frame, that player has no face that frame (the hat flickers). The optical-flow fallback, hold time and fade-out come in step 5.
+
+**Changed:** `configs/default.yaml`, `face:`: `min_face` (20 px), `max_size_jump` (0.5), `kpt_conf_threshold` (0.5), `crop_size` (1.5 shoulder widths), `filter_min_cutoff` (1.5), `filter_beta` (0.1), `filter_d_cutoff` (1.0), `lost_after_s` (1.0).
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: `FaceTracker(cfg["face"])`. The face stage now reads its own `face.kpt_conf_threshold` instead of borrowing `motion.kpt_conf_threshold`.
+
+**Changed:** `tests/test_pipeline.py`: runs with `face.backend=stub`, because the tests feed black frames and need no model file.
+
+**Added to** `tests/test_face.py`: 5 tests:
+
+- the head crop is centred on the head keypoints and 1.5 shoulder widths wide;
+- it falls back to the person box when shoulders or keypoints are not trusted;
+- there is no crop without a detection;
+- an unknown backend is rejected;
+- a missing model file gives an error that points to the README.
+
+**Checked:**
+
+- 34 tests pass, `ruff` clean.
+- On two OpenCV sample photos (not in the repo), the full chain of YOLO pose → head crop → YuNet → `Face` → hat and mustache works.
+  - A head tilted ~10° gets a tilted hat.
+  - A 29 px face of a player far from the camera is found inside its crop.
+- Face stage: 1.3 ms for a small crop, 5.8 ms for a ~350 px crop. The cost grows with crop area, so at 1280×720 with a player close to the camera, scaling the crop down before detection may be worth it. To be checked on the webcam (`face` row of the timing HUD).
