@@ -1,4 +1,4 @@
-"""Gesture rules from the Colour Clash prototype, on synthetic skeletons.
+"""Gesture rules from the Colour Clash bodypose.py, on synthetic skeletons.
 
 The base pose: shoulders 80 px apart at y = 200 (sw = 80), hips at y = 360,
 arms hanging down with the wrists below the hips. Image y grows downwards.

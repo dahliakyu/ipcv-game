@@ -8,7 +8,7 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 
 # BGR colours per player id; index 0 is for "no identity". P1 red and P2 blue
-# are the Colour Clash prototype's team colours (garb game.py), the one table
+# are the Colour Clash team colours from game.py (Task 4), the one table
 # for paint, renderer and debug views.
 PLAYER_COLORS = [(200, 200, 200), (55, 55, 235), (235, 110, 40), (0, 200, 0), (200, 0, 200)]
 

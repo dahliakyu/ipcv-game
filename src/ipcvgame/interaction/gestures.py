@@ -1,13 +1,13 @@
 """Task 4 — gesture recognition: motion signals -> GestureEvent.
 
-The rules are the Colour Clash prototype's (``Project/bodypose.py``), moved
+The rules are from the Colour Clash code (``Project/bodypose.py``), moved
 here in the gesture merge (docs/merge_log.md, Task 4). They read the smoothed
 keypoints and validity from ``Motion``; all distances are in shoulder widths
 (``sw``), so they work at any distance from the camera. Every number comes
 from the ``gestures:`` config.
 
 ``GestureRecognizer`` turns the rules into events: hands up and arms crossed
-must hold for ``confirm_s`` (the prototype's ``Debounce``), and a punch stays on
+must hold for ``confirm_s`` (``Debounce`` in bodypose.py), and a punch stays on
 for ``punch_hold_s`` after its last detection (``punch_until``). One event is
 sent when a gesture turns on (the rising edge), so one punch gives one ``punch``
 event; punches less than ``punch_hold_s`` apart count as one.
@@ -140,7 +140,7 @@ def detect_all(kpts: np.ndarray, valid: np.ndarray, cfg: dict) -> dict[str, bool
 
 
 class _PlayerState:
-    """One player's timers (the prototype's ``Debounce`` and ``punch_until``)."""
+    """One player's timers (``Debounce`` and ``punch_until`` in bodypose.py)."""
 
     def __init__(self):
         # Start of the current run of frames where the rule holds; None = not holding.
@@ -157,7 +157,7 @@ class GestureRecognizer:
         self._state: dict[int, _PlayerState] = {}
 
     def update(self, motion: dict[int, Motion], t: float) -> list[GestureEvent]:
-        # As in the prototype: a player without keypoints starts over.
+        # As in bodypose.py: a player without keypoints starts over.
         for pid in [pid for pid in self._state if pid not in motion]:
             del self._state[pid]
 
@@ -188,7 +188,7 @@ class GestureRecognizer:
             self._state.pop(pid, None)
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """Skeleton per player, the prototype's H/C/P line under the body box
+        """Skeleton per player, the H/C/P line from bodypose.py under the body box
         (1 = gesture on), and this frame's events."""
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))

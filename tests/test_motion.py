@@ -1,4 +1,4 @@
-"""MotionFilter: the prototype's KeypointTracker (gate, hold, EMA, snap back)."""
+"""MotionFilter: KeypointTracker from bodypose.py (gate, hold, EMA, snap back)."""
 
 import math
 

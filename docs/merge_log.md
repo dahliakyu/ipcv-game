@@ -1,8 +1,8 @@
 Oct 25, 2026 · @el created with help of Claude Opus 5.5
 
-# Merge log: Colour Clash prototype into the shared codebase
+# Merge log: the teammates' Colour Clash code into the shared codebase
 
-This log records every change made while merging the Colour Clash prototype (the `Colour Clash/` folder) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline` and goes to `main` in a single PR when it is complete.
+This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline` and goes to `main` in a single PR when it is complete.
 
 Each entry names the files it touched, so owners can check what changed in their own code.
 
@@ -31,7 +31,7 @@ The folder arrived as a Windows zip of 1.4 GB and ~33,800 files; after the clean
 **Changed:** `requirements.txt`
 
 - Added `lap==0.5.13`. Ultralytics' BoT-SORT tracker (`person_detector.track(...)` in `Colour Clash/main.py`) imports it, and if it is missing Ultralytics pip-installs it silently at runtime.
-- Every other import in the prototype (`ultralytics`, `torch`, `torchvision`, `cv2`, `numpy`) was already pinned.
+- Every other import in the teammates' code (`ultralytics`, `torch`, `torchvision`, `cv2`, `numpy`) was already pinned.
 
 **Action for everyone:** run `pip install -r requirements.txt` in the `ipcvgame` env.
 
@@ -75,7 +75,7 @@ These are not fixed yet; each belongs to the owner of the code.
 
 ## Change Overviews
 
-A quick reference for each teammate: where your prototype code now lives, and what was changed beyond moving it. The task sections below have the step-by-step details and the reasons.
+A quick reference for each teammate: where your code now lives, and what was changed beyond moving it. The task sections below have the step-by-step details and the reasons.
 
 ### Refactor: where to find your code
 
@@ -83,13 +83,13 @@ A quick reference for each teammate: where your prototype code now lives, and wh
 
 **Functions and classes**
 
-| In the prototype | Now in | Note |
+| In your code | Now in | Note |
 | --- | --- | --- |
 | `measure()` | `face/tracker.py`, `measure()` | Same maths; constants come from config |
 | `measure()`, the `lk` grid part | `face/tracker.py`, `flow_points()` | Built from the 4 key points |
 | `geometry()` | `face/tracker.py`, `geometry()` | Also returns `forehead` and `above_head`; since step 9 the fallback when the head pose is off or fails |
-| (new, steps 9–10) head pose | `face/head_pose.py`: `camera_matrix()`, `head_pose()`, `pose_angles()`, `rotation()`, `mediapipe_angles()`, `translation()`, `anchor_points_mm()`; used in `face/tracker.py`, `FaceTracker._smoothed_geometry()` | Not in the prototype |
-| (new, step 10) mouth, blinks, MediaPipe pose | `face/landmarker.py`, `FaceLandmarker`; `face/tracker.py`, `FaceTracker._landmark()` | Not in the prototype |
+| (new, steps 9–10) head pose | `face/head_pose.py`: `camera_matrix()`, `head_pose()`, `pose_angles()`, `rotation()`, `mediapipe_angles()`, `translation()`, `anchor_points_mm()`; used in `face/tracker.py`, `FaceTracker._smoothed_geometry()` | New |
+| (new, step 10) mouth, blinks, MediaPipe pose | `face/landmarker.py`, `FaceLandmarker`; `face/tracker.py`, `FaceTracker._landmark()` | New |
 | `OneEuro` | `core/filters.py`, `OneEuro` | Shared filter, same maths |
 | `Track` (state) | `face/tracker.py`, `_FaceState` | One per player ID |
 | `Track.update()` | `face/tracker.py`, `FaceTracker.update()`, "detect" branch | |
@@ -112,7 +112,7 @@ A quick reference for each teammate: where your prototype code now lives, and wh
 
 All of these are in `configs/default.yaml`, `face:` section, unless another section is named.
 
-| In the prototype | Now |
+| In your code | Now |
 | --- | --- |
 | `MODEL`, `MODEL_URL` | `model` (download command in `README.md`) |
 | `SCORE_THRESH` | `score_threshold` |
@@ -135,7 +135,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Functions and classes**
 
-| In the prototype | Now in | Note |
+| In your code | Now in | Note |
 | --- | --- | --- |
 | `KeypointTracker` | `pose/motion.py`, `MotionFilter._smooth()` + `_PlayerState` | Task 2; same rules, in seconds |
 | `KeypointTracker.reset()` | `pose/motion.py`, `MotionFilter.reset(pid)` | Also on re-entry |
@@ -146,12 +146,13 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `BodyPoseProcessor.reset_player()` | `MotionFilter.reset(pid)` + `GestureRecognizer.reset(pid)` | Also on re-entry |
 | `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer.update()` | Rising-edge `GestureEvent`s |
 | Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
-| `center_x`, `torso_y`, `head_x/y`, `hands_center_x/y`, `hand_x/y` | Not ported yet | Game positions; game merge |
+| `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Game positions (step 7) |
+| `head_x/y`, `hand_x/y` | Not ported | `head_x/y`: the renderer will use face anchors; `hand_x/y` was unused |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
 **Constants** (`configs/default.yaml`)
 
-| In the prototype | Now |
+| In your code | Now |
 | --- | --- |
 | `CONF_T` (keypoints) | `motion.kpt_conf_threshold` |
 | `ALPHA` | `motion.tau` (seconds) |
@@ -166,7 +167,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Functions and classes**
 
-| In the prototype | Now in | Note |
+| In your code | Now in | Note |
 | --- | --- | --- |
 | `PaintSplat`, `Projectile`, `PaintBeam`, `Shield` | `interaction/game.py`, same names | Pixels; a splat stores `owner_id` instead of a colour |
 | `Player` | `interaction/game.py`, `GamePlayer` | Renamed (`Player` is the identity type) |
@@ -174,6 +175,8 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()`, `_apply_damage()` | `interaction/game.py`, same names | Pixels; shield check added |
 | `Game.update(dt, visible)` | `interaction/game.py`, `Game.advance(dt, visible)` | Renamed; `update(state)` is the module interface |
 | (new) shield check | `interaction/game.py`, `Game.shielded(pid)` | |
+| `main.py`: game loop part (bounds, positions, gesture edges → `attack()` / `beam_attack()` / `activate_shield()`, `dt`, `game.update()`) | `interaction/game.py`, `Game.update(state)` + `_act()` | Events instead of per-frame flags; `dt` from `Frame.t` |
+| `bodypose.py`: `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Pixels, from the smoothed keypoints |
 | `test_game.py` | `tests/test_game.py` | Same tests in px, plus new ones |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
@@ -193,10 +196,10 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Seconds instead of frames.** Hold, flow and lost limits are in seconds (`Frame.t`), so they behave the same at any frame rate.
 - **Fade-out moved into the contract.** The opacity is now `Face.alpha`, a new `core/types.py` field, so the renderer and the game can see it.
 - **More anchors.** `forehead` and `above_head` are added next to `hat` and `mouth`.
-- **Head pose and 3D anchors (step 9, new).** `solvePnP` fits a canonical 3D head to the 5 landmarks. The forehead, hat and `above_head` anchors are then 3D points on that head, projected into the image. The prototype's fixed 2D offsets made the hat rise when the chin went up, and sink when it went down. `Face.yaw` is filled from the pose.
+- **Head pose and 3D anchors (step 9, new).** `solvePnP` fits a canonical 3D head to the 5 landmarks. The forehead, hat and `above_head` anchors are then 3D points on that head, projected into the image. The script's fixed 2D offsets made the hat rise when the chin went up, and sink when it went down. `Face.yaw` is filled from the pose.
 - **Head rotation from MediaPipe (step 10, new).** YuNet's 5 landmarks stay near-frontal at strong up/down tilts (−3° measured on a 33° chin-up), so the rotation now comes from MediaPipe Face Landmarker, which runs on one player per frame, in turn. `solvePnP` on YuNet's landmarks plus the pose model's ears is the fallback.
 - **Mouth and blinks (step 10, new).** MediaPipe's blendshape scores go into `Face.blendshapes`, a new `core/types.py` field.
-- **Hat hangs from its brim (step 10).** The prototype's `overlay()` pinned the hat at the bottom of the PNG, which has 34% transparent padding below the hat, so the visible brim floated half a face width above the anchor. The hat now hangs from its visible brim, and `hat_drop` (0.40 below the forehead point) became `hat_rise` (0.11 above it), which keeps the frontal look the same.
+- **Hat hangs from its brim (step 10).** The script's `overlay()` pinned the hat at the bottom of the PNG, which has 34% transparent padding below the hat, so the visible brim floated half a face width above the anchor. The hat now hangs from its visible brim, and `hat_drop` (0.40 below the forehead point) became `hat_rise` (0.11 above it), which keeps the frontal look the same.
 - **Smoothing order (step 9).** The One Euro filter now runs on the face sides and the anchors together, after the 3D projection, instead of on the 4 key points before `geometry()`.
 - **Flow also moves the 5 landmarks (new),** not just the key points and flow points.
 - **Large head crops are shrunk (step 8, new).** Crops over `crop_max_px` (192) are shrunk before YuNet, and the detection is scaled back to frame pixels: 23.4 → 9.2 ms on a 4K clip with nearly the same detections.
@@ -216,14 +219,14 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **`pose_detector.py` not merged:** it is an older single-player copy of `bodypose.py` with slightly different thresholds.
 - **Punch reach is sideways (step 2b):** `arm_extended()` measures the wrist's horizontal distance from the shoulder, not the straight-line distance, so a straight hanging arm is no longer a punch.
 - **Events instead of per-frame flags (step 3):** one `GestureEvent` when a gesture turns on; `main.py`'s `hands_were_up` / `arms_were_crossed` bookkeeping moved into the gesture stage. Punches less than 0.5 s apart give one event.
-- **No usable shoulder width restarts the timers (step 3);** the prototype kept counting across such frames.
+- **No usable shoulder width restarts the timers (step 3);** `bodypose.py` kept counting across such frames.
 
 #### Task 4: game logic
 
-- **One colour table (step 5):** the prototype's P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
+- **One colour table (step 5):** `game.py`'s P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
 - **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
-- **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; the prototype's shield was only drawn.
+- **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
 
 #### Task 3 (pre-merge)
 
@@ -306,13 +309,13 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 **Changed:** `src/ipcvgame/core/types.py`
 
-- `Face` has a new last field, `alpha: float = 1.0`: the effect's opacity, 1 while the face is tracked, fading to 0 once it is lost. It keeps the prototype's fade-out.
+- `Face` has a new last field, `alpha: float = 1.0`: the effect's opacity, 1 while the face is tracked, fading to 0 once it is lost. It keeps the script's fade-out.
 - It has a default, so existing code that builds a `Face` without it keeps working.
 
 **Changed:** `configs/default.yaml`, `face:` section
 
 - `backend`: `yunet` (real detector) or `stub` (the old nose-keypoint anchor, no model file needed; used by the tests).
-- `model`, `score_threshold` (0.6, prototype `SCORE_THRESH`), `nms_threshold` (0.3) and `top_k` (50) for YuNet.
+- `model`, `score_threshold` (0.6, the script's `SCORE_THRESH`), `nms_threshold` (0.3) and `top_k` (50) for YuNet.
 - The stub keys `above_head_factor` and `default_scale` stay, marked "stub backend only".
 
 **Changed:** `README.md`: download command and SHA-256 for `models/face_detection_yunet_2023mar.onnx`. The script downloaded the model at runtime; the pipeline doesn't download it, and the model stays out of git (`models/` is ignored).
@@ -324,7 +327,7 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 **Changed:** `src/ipcvgame/face/effects.py` (replaces the stub's dot)
 
 - `load_sprite(path)`: loads an RGBA PNG (a relative path is taken from the repo root) and fails with a clear error if it is missing or has no transparency.
-- `paste(img, sprite, at, pivot, angle, width, alpha)`: the version from `docs/phase-1/facetracking-update-guide.md` (step 1), plus the prototype's `alpha` fade. It replaces the script's `overlay()`. The geometry is the same: the pivot lands on the anchor, the sprite is rotated by the head roll and scaled to a multiple of the face width. The difference is that only the sprite's box is warped and blended, and a sprite partly off-screen is clipped instead of crashing.
+- `paste(img, sprite, at, pivot, angle, width, alpha)`: the version from `docs/phase-1/facetracking-update-guide.md` (step 1), plus the script's `alpha` fade. It replaces the script's `overlay()`. The geometry is the same: the pivot lands on the anchor, the sprite is rotated by the head roll and scaled to a multiple of the face width. The difference is that only the sprite's box is warped and blended, and a sprite partly off-screen is clipped instead of crashing.
 - `FaceEffects.draw`: hat at `anchors["hat"]` (pivot bottom-middle), mustache at `anchors["mouth"]` (pivot centre), both faded by `Face.alpha`. Faces with `valid=False` or `alpha=0` are skipped. The stub tracker has neither anchor, so until step 4 nothing is drawn on faces in the game view.
 - The script's `draw_status()` (name + HP bar) is not ported: it is game UI.
 
@@ -343,12 +346,12 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 **Changed:** `src/ipcvgame/face/tracker.py`: two module-level functions above the (still stub) `FaceTracker`; the class itself is unchanged until step 4.
 
-- `measure(row, center_drop, forehead_rise, lip_to_nose)`: the prototype's `measure()`. It turns one YuNet detection into the 4 key points (left side, right side, forehead, upper lip), the face centre at cheek level, and the 5 raw landmarks (which become `Face.landmarks`). Same maths; the constants are passed in from config instead of hard-coded.
-- `geometry(pts, hat_drop, above_head_rise)`: the prototype's `geometry()`. It gives face width (`Face.scale`), head roll (`Face.roll`) and the anchors effects draw at, offset along the face's own "down" so they follow a tilted head. The prototype returned only the hat and lip points; it now returns all of `forehead`, `hat`, `mouth` and `above_head`.
-- New anchor `above_head`: above the hat, where the prototype drew the player name. The game UI (HP bar, name) should draw there.
-- Not ported: the flow-point grid (`lk`) the prototype built in `measure()`. It belongs to the optical-flow fallback and comes in step 5.
+- `measure(row, center_drop, forehead_rise, lip_to_nose)`: the script's `measure()`. It turns one YuNet detection into the 4 key points (left side, right side, forehead, upper lip), the face centre at cheek level, and the 5 raw landmarks (which become `Face.landmarks`). Same maths; the constants are passed in from config instead of hard-coded.
+- `geometry(pts, hat_drop, above_head_rise)`: the script's `geometry()`. It gives face width (`Face.scale`), head roll (`Face.roll`) and the anchors effects draw at, offset along the face's own "down" so they follow a tilted head. The script returned only the hat and lip points; it now returns all of `forehead`, `hat`, `mouth` and `above_head`.
+- New anchor `above_head`: above the hat, where the script drew the player name. The game UI (HP bar, name) should draw there.
+- Not ported: the flow-point grid (`lk`) the script built in `measure()`. It belongs to the optical-flow fallback and comes in step 5.
 
-**Changed:** `configs/default.yaml`, `face:`: `center_drop` (0.20), `forehead_rise` (0.50), `lip_to_nose` (0.35) and `hat_drop` (0.40), all from the prototype, plus `above_head_rise` (1.5, the hat's height in face widths).
+**Changed:** `configs/default.yaml`, `face:`: `center_drop` (0.20), `forehead_rise` (0.50), `lip_to_nose` (0.35) and `hat_drop` (0.40), all from the script, plus `above_head_rise` (1.5, the hat's height in face widths).
 
 **Added:** `tests/test_face.py`, 4 tests on synthetic YuNet rows:
 
@@ -359,7 +362,7 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 **Checked:**
 
 - 29 tests pass, `ruff` clean.
-- On 1000 random detections, the ported functions give exactly the same key points, centre, width, roll, hat and lip anchors as the prototype's own `measure()`/`geometry()` (max difference 0.0).
+- On 1000 random detections, the ported functions give exactly the same key points, centre, width, roll, hat and lip anchors as the script's own `measure()`/`geometry()` (max difference 0.0).
 
 #### Step 4 · Detection on per-player head crops
 
@@ -367,18 +370,18 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 - `head_box(player, kpt_conf_threshold, crop_size)`: a square crop around each player's head from that player's pose keypoints. The centre is the mean of the visible nose, eye and ear keypoints, or else the top of the person box. The side is `crop_size` shoulder widths, or person-box widths when a shoulder is not visible.
 - `_detect()`: YuNet on the crop. Detections are shifted back to full-frame pixels, and then filtered in this order:
-  - narrower than `min_face` (prototype `MIN_FACE`): dropped;
-  - width changed by more than `max_size_jump` since the last frame (prototype `MAX_SIZE_JUMP`): dropped;
+  - narrower than `min_face` (the script's `MIN_FACE`): dropped;
+  - width changed by more than `max_size_jump` since the last frame (the script's `MAX_SIZE_JUMP`): dropped;
   - of the rest, the one closest to the crop centre (the head keypoints) is used, so another player's face that falls into the same crop is skipped.
-- `update()`: per player, `measure()`, then the One Euro filter on the 4 key points (`core.filters.OneEuro`, same maths and values as the prototype's own filter), then `geometry()`, then `Face`:
+- `update()`: per player, `measure()`, then the One Euro filter on the 4 key points (`core.filters.OneEuro`, same maths and values as the script's own filter), then `geometry()`, then `Face`:
   - `landmarks` = the 5 raw YuNet points;
   - `center`, `scale` (face width) and `roll` from the smoothed key points;
   - `yaw = 0.0`, since 5 landmarks give no yaw;
   - `anchors` = `forehead`, `hat`, `mouth`, `above_head`;
   - `alpha = 1.0`.
-- Per-player state (`_FaceState`: filter, last width, last detection time) is kept between frames. It is dropped by `reset(pid)` (called when a player re-enters), when the player disappears from `players`, or after `lost_after_s` without a detection (prototype `MAX_MISSED`, now in seconds). A returning face then starts fresh instead of sliding in.
+- Per-player state (`_FaceState`: filter, last width, last detection time) is kept between frames. It is dropped by `reset(pid)` (called when a player re-enters), when the player disappears from `players`, or after `lost_after_s` without a detection (the script's `MAX_MISSED`, now in seconds). A returning face then starts fresh instead of sliding in.
 - `draw_debug`: per player, the head crop (dashed) labelled with the YuNet score or "no face", plus the 5 raw landmarks, face centre and scale circle, and every anchor with its name.
-- Replaced from the prototype: full-frame detection, de-duplication, `update_tracks()` (greedy matching), `Track.predicted()`, the velocity and `MAX_PLAYERS`. Identity now comes from Task 3 through the head crop.
+- Replaced from the script: full-frame detection, de-duplication, `update_tracks()` (greedy matching), `Track.predicted()`, the velocity and `MAX_PLAYERS`. Identity now comes from Task 3 through the head crop.
 - Not yet: when YuNet misses a frame, that player has no face that frame (the hat flickers). The optical-flow fallback, hold time and fade-out come in step 5.
 
 **Changed:** `configs/default.yaml`, `face:`: `min_face` (20 px), `max_size_jump` (0.5), `kpt_conf_threshold` (0.5), `crop_size` (1.5 shoulder widths), `filter_min_cutoff` (1.5), `filter_beta` (0.1), `filter_d_cutoff` (1.0), `lost_after_s` (1.0).
@@ -407,29 +410,29 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 **Changed:** `src/ipcvgame/face/tracker.py`
 
-- `flow_points(pts, cfg)`: the prototype's grid of points on the face (6×6, eyes to mouth), which `measure()` used to build. It is now built from the 4 key points.
-- `estimate_motion(prev_gray, gray, pts, cfg)`: the core of the prototype's `Track.flow()`. Lucas-Kanade optical flow on the grid, then a similarity transform (shift + rotation + scale) fitted with RANSAC. It returns `None`, so the face is not moved, in any of these cases:
+- `flow_points(pts, cfg)`: the script's grid of points on the face (6×6, eyes to mouth), which `measure()` used to build. It is now built from the 4 key points.
+- `estimate_motion(prev_gray, gray, pts, cfg)`: the core of the script's `Track.flow()`. Lucas-Kanade optical flow on the grid, then a similarity transform (shift + rotation + scale) fitted with RANSAC. It returns `None`, so the face is not moved, in any of these cases:
   - fewer than `flow_min_points` points tracked;
   - fewer than `flow_min_inliers` inliers;
   - a scale outside `flow_scale_range`.
-- `fade(blind_s, hold_s, lost_after_s)`: the prototype's `Track.alpha()` in seconds. Fully visible for `hold_s` after the last update, then a linear fade to 0 at `lost_after_s`.
+- `fade(blind_s, hold_s, lost_after_s)`: the script's `Track.alpha()` in seconds. Fully visible for `hold_s` after the last update, then a linear fade to 0 at `lost_after_s`.
 - `FaceTracker.update()`, per player, each frame:
   - **detect:** YuNet found the face. The key points, landmarks and flow points are reset from the detection.
-  - **flow:** no detection, but the last detection is under `flow_max_s` old and the fit is good. The key points, flow points and landmarks are moved by the fitted transform. The prototype moved only the key points and flow points.
+  - **flow:** no detection, but the last detection is under `flow_max_s` old and the fit is good. The key points, flow points and landmarks are moved by the fitted transform. The script moved only the key points and flow points.
   - **hold:** neither. The last smoothed position is shown and fades out.
-- After a detect or flow update, the key points go through the One Euro filter and `geometry()`, as in the prototype's `_apply()`.
+- After a detect or flow update, the key points go through the One Euro filter and `geometry()`, as in the script's `_apply()`.
 - `Face.alpha` comes from `fade()`; `Face.valid` is `alpha > 0`. A held face is still valid, so the game can keep drawing at its anchors while it fades.
-- State is now dropped after `lost_after_s` without any update (detection or flow), not just without a detection. The size-jump check uses the current width, which flow also updates, as the prototype did.
+- State is now dropped after `lost_after_s` without any update (detection or flow), not just without a detection. The size-jump check uses the current width, which flow also updates, as the script did.
 - The frame is converted to grayscale once per frame (the raw frame, before effects are drawn) and kept for the next frame's flow.
 - `draw_debug`: the crop label shows the source (`detect 0.91`, `flow`, `hold`) and `a=` alpha. The flow points are drawn while flowing.
-- Dropped from the prototype: `Track.vel` and `predicted()`, only used for matching (see step 4).
+- Dropped from the script: `Track.vel` and `predicted()`, only used for matching (see step 4).
 
 **Changed:** `configs/default.yaml`, `face:`
 
 - `hold_s` (0.1 s), from `HOLD_FRAMES` = 3 frames.
 - `flow_max_s` (1.3 s), from `FLOW_FRAMES` = 40 frames.
-- The flow grid (`flow_grid_x`, `flow_grid_y`, `flow_grid_n`) and the Lucas-Kanade settings (`flow_win` 31, `flow_levels` 4, `flow_criteria` [20, 0.01]), as in the prototype.
-- RANSAC limits: `flow_min_points` 8, `flow_min_inliers` 6, `flow_ransac_px` 3.0, `flow_scale_range` [0.7, 1.4], as in the prototype.
+- The flow grid (`flow_grid_x`, `flow_grid_y`, `flow_grid_n`) and the Lucas-Kanade settings (`flow_win` 31, `flow_levels` 4, `flow_criteria` [20, 0.01]), as in the script.
+- RANSAC limits: `flow_min_points` 8, `flow_min_inliers` 6, `flow_ransac_px` 3.0, `flow_scale_range` [0.7, 1.4], as in the script.
 - `lost_after_s` comment updated.
 
 **Added to** `tests/test_face.py`: 6 tests.
@@ -447,11 +450,11 @@ Game features that build on the face stage (team colour, hit reaction, status ab
 
 #### Step 6 · Evaluation: `log_fields` and `tools/eval_face.py`
 
-The prototype's `Metrics` class (jitter, alignment error, detection rate per lighting, latency) moves out of the tracker. The tracker now writes per-frame CSV columns, and a separate script computes the metrics from them.
+The script's `Metrics` class (jitter, alignment error, detection rate per lighting, latency) moves out of the tracker. The tracker now writes per-frame CSV columns, and a separate script computes the metrics from them.
 
 **Changed:** `src/ipcvgame/face/tracker.py`
 
-- `log_fields(state)`: per player, the columns `face_p<pid>_source` (detect/flow/hold, empty while no face), `_score` (YuNet score on detect frames), `_alpha`, `_scale`, `_roll_deg`, `_mouth_x/_y` (smoothed anchor), `_mouth_raw_x/_y` (unsmoothed upper-lip point, on detect frames only) and `_crop_px`. The prototype logged the same raw-versus-smoothed lip pair.
+- `log_fields(state)`: per player, the columns `face_p<pid>_source` (detect/flow/hold, empty while no face), `_score` (YuNet score on detect frames), `_alpha`, `_scale`, `_roll_deg`, `_mouth_x/_y` (smoothed anchor), `_mouth_raw_x/_y` (unsmoothed upper-lip point, on detect frames only) and `_crop_px`. The script logged the same raw-versus-smoothed lip pair.
 - The raw detection and crop box are now recorded in `update()` instead of `_detect()`, so they are also there when the detector is replaced in tests.
 
 **Added:** `tools/eval_face.py`
@@ -459,11 +462,11 @@ The prototype's `Metrics` class (jitter, alignment error, detection rate per lig
 - Takes clips, which it runs headless up to the face stage, writing `logs/eval/face-<clip>[-<tag>].csv`; or it takes existing logs.
 - Prints one Markdown row per clip and player:
   - coverage: detect / flow / hold / no face %;
-  - jitter: the prototype's second-difference RMS, raw versus smoothed, in px and % of face width;
-  - lag: the prototype's alignment error (mean, p95, % face width);
+  - jitter: the script's second-difference RMS, raw versus smoothed, in px and % of face width;
+  - lag: the script's alignment error (mean, p95, % face width);
   - crop size and face-stage time.
 - `--set` and `--tag` run parameter experiments; `--markdown` saves the table.
-- Differences from the prototype: conditions come from clip names instead of `s`/`d`/`l` key presses. Latency is the face-stage time from the profiler (`ms_face`). Identity switches are no longer counted here: faces cannot swap with head crops, and switches are Task 3's metric.
+- Differences from the script: conditions come from clip names instead of `s`/`d`/`l` key presses. Latency is the face-stage time from the profiler (`ms_face`). Identity switches are no longer counted here: faces cannot swap with head crops, and switches are Task 3's metric.
 
 **Added:** `docs/evaluation.md`: how to evaluate on the clips for the report. The workflow and run-log columns are for all tasks; the face section has commands, column definitions, how to read the numbers, and an example. It ends with how to add an `eval_<stage>.py`.
 
@@ -531,7 +534,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 
 #### Step 9 · Head pose and 3D anchors
 
-**Why the scope grew.** The plan was to fill `Face.yaw`. Testing step 8 on the webcam showed the hat lifting off the head when the chin goes up. The cause is the prototype's 2D geometry: the forehead and hat sit at fixed offsets above the eyes, whatever way the head points. When the chin goes up, the top of the head turns away from the camera and moves *down* in the image, but the hat stays put. When the chin goes down, the hat sinks onto the forehead. So step 9 estimates the full head pose and places those anchors in 3D.
+**Why the scope grew.** The plan was to fill `Face.yaw`. Testing step 8 on the webcam showed the hat lifting off the head when the chin goes up. The cause is the script's 2D geometry: the forehead and hat sit at fixed offsets above the eyes, whatever way the head points. When the chin goes up, the top of the head turns away from the camera and moves *down* in the image, but the hat stays put. When the chin goes down, the hat sinks onto the forehead. So step 9 estimates the full head pose and places those anchors in 3D.
 
 **Changed:** `src/ipcvgame/face/tracker.py`
 
@@ -621,7 +624,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
   - new `_mp` (1 = MediaPipe result this frame).
 - `draw_debug`: the pose source in the label, and `jaw` and `blink` bars next to the face.
 
-**Changed:** `src/ipcvgame/face/effects.py`. The hat now hangs from its visible brim: the lowest row of `hat.png` that is not transparent. `hat.png` has 34% transparent padding below the hat, so with the prototype's pivot at the bottom of the image, the visible brim floated half a face width above the anchor. Any pitch error made that look worse.
+**Changed:** `src/ipcvgame/face/effects.py`. The hat now hangs from its visible brim: the lowest row of `hat.png` that is not transparent. `hat.png` has 34% transparent padding below the hat, so with the script's pivot at the bottom of the image, the visible brim floated half a face width above the anchor. Any pitch error made that look worse.
 
 **Changed:** `configs/default.yaml`, `face:`
 
@@ -728,7 +731,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 - **Smoothing goes to `pose/motion.py` (Task 2),** where the architecture puts it. Gestures, the face stage and the game then all read the same held and smoothed keypoints.
 - **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
 - **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
-- **Punch reach measured sideways (after step 2).** Step 2 showed the prototype's rule fires on a straight hanging arm; step 2b fixes it.
+- **Punch reach measured sideways (after step 2).** Step 2 showed that the punch rule from `bodypose.py` fires on a straight hanging arm; step 2b fixes it.
 
 **Where each part goes.**
 
@@ -786,7 +789,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 - **One sideways punch fires one bolt.** The 1.8 s cooldown goes (`game.bolt_cooldown_s: 0`, the key stays). The gesture stage already sends one event per punch, at most one every 0.5 s. What the bolt looks like (a paint stroke) is part of the renderer merge.
 - **The shield blocks.** While it is up (1 s, not counting the fade), bolts and beams that reach the player do no damage and leave no paint. A blocked bolt disappears; a blocked beam does not try that player again.
-- **One colour table:** the prototype's colours (P1 red, P2 blue) replace `PLAYER_COLORS` in `scene/draw.py`, and the game, renderer and debug views all use it. Splats store the attacker's pid; the colour is looked up when drawing.
+- **One colour table:** the colours from `game.py` (P1 red, P2 blue) replace `PLAYER_COLORS` in `scene/draw.py`, and the game, renderer and debug views all use it. Splats store the attacker's pid; the colour is looked up when drawing.
 - **Pixels.** Positions are pixels in the mirrored frame, like in every other module. Speeds and sizes are in the config as fractions of the frame width or height, so the game plays the same at any resolution.
 
 **Where each part goes.**
@@ -808,7 +811,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 **Steps.** Numbered after the gesture steps; each gets an entry under Changes below.
 
 5. Colours, config and state: `PLAYER_COLORS` in `scene/draw.py`, the `game:` config, the dataclasses, `Game.__init__`, `get_player()`, `reset()`.
-6. Combat: `attack()`, `beam_attack()`, `activate_shield()`, `advance()`, hit tests, damage, splats, winner, shield blocking. The prototype's tests, plus tests for blocking.
+6. Combat: `attack()`, `beam_attack()`, `activate_shield()`, `advance()`, hit tests, damage, splats, winner, shield blocking. The tests from `test_game.py`, plus tests for blocking.
 7. Pipeline: `Game.update(state)`, with `dt` from `Frame.t` (capped), positions and boxes from the state, events to actions, and only active players can be hit. Tests with fake states.
 8. Debug view and CSV: `--until game` draws bolts, beams, shields, splats, health and the winner as simple shapes until the renderer merge; `log_fields`.
 9. Check and record: run on the clips, `docs/phase-1/status.md`, Change Overviews.
@@ -821,12 +824,12 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Changed:** `src/ipcvgame/pose/motion.py`
 
-- `MotionFilter` now does the prototype's `KeypointTracker.update()` per player (`_smooth()`, state in `_PlayerState`), with the same five rules:
+- `MotionFilter` now does `KeypointTracker.update()` from `bodypose.py` per player (`_smooth()`, state in `_PlayerState`), with the same five rules:
   - keypoints under the confidence threshold count as missing;
   - a missing point keeps its last position and stays valid for `hold_s`;
   - an EMA smooths the positions;
   - a point that comes back after more than `hold_s` jumps to the detection;
-  - a frame without a detection resets the player (the prototype reset when the pose model found nobody in the crop).
+  - a frame without a detection resets the player (`bodypose.py` reset when the pose model found nobody in the crop).
 - The missing-frame counter became the time each keypoint was last seen (`last_good`, from `Frame.t`), so the hold is the same at any frame rate.
 - Velocities are still the finite difference on `Frame.t`, now of the smoothed points. A point that jumps back gets velocity 0 on that frame, so the jump doesn't count as motion.
 - The phase-1 pass-through stays as `backend: stub`, unchanged except for the new confidence threshold.
@@ -835,7 +838,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Changed:** `configs/default.yaml`, `motion:` section
 
-| Key | Value | From the prototype |
+| Key | Value | In `bodypose.py` |
 | --- | --- | --- |
 | `backend` | `ema` | (new; `stub` = pass-through) |
 | `kpt_conf_threshold` | 0.35 (was 0.5) | `CONF_T`; the gesture thresholds were tuned with it |
@@ -859,16 +862,16 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Changed:** `src/ipcvgame/interaction/gestures.py`
 
-- The prototype's `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()` and `detect_punch()` are module-level functions here, with the same names, logic and comments.
+- `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()` and `detect_punch()` from `bodypose.py` are module-level functions here, with the same names, logic and comments.
 - They take `(kpts, valid, sw, cfg)`: the keypoints and validity from `Motion`, the shoulder width in pixels, and the `gestures:` config. Keypoints are indexed by name through `core/skeleton.py` instead of the file's own index constants.
 - `detect_punch()` still returns `"L"`, `"R"` or `None`; its docstring notes that the model's `L` is the player's own right arm on our mirrored frame. The event will drop the side (step 3).
 - `GestureRecognizer` is still the stub; step 3 connects it.
 
-**Changed:** `src/ipcvgame/core/geometry.py`: new `angle_at(a, b, c)`, the prototype's helper, so other tasks can use it too.
+**Changed:** `src/ipcvgame/core/geometry.py`: new `angle_at(a, b, c)`, the helper from `bodypose.py`, so other tasks can use it too.
 
 **Changed:** `configs/default.yaml`, `gestures:` section, each with a comment:
 
-| Key | Value | In the prototype |
+| Key | Value | In `bodypose.py` |
 | --- | --- | --- |
 | `head_above_shoulders` | 0.3 | `0.3 * sw` in `detect_hands_up()` |
 | `hip_below_shoulders` | 2.0 | `2.0 * sw` in `lower_body_y()` |
@@ -908,29 +911,29 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 
 **Changed:** `src/ipcvgame/interaction/gestures.py`
 
-- `shoulder_width()` and `detect_all()` (new helpers): the prototype's shoulder-width check from `BodyPoseProcessor.process()` (`sw > 10`), then all three rules on one frame. Without a usable shoulder width every rule is false.
+- `shoulder_width()` and `detect_all()` (new helpers): the shoulder-width check from `BodyPoseProcessor.process()` (`sw > 10`), then all three rules on one frame. Without a usable shoulder width every rule is false.
 - `GestureRecognizer.update()` keeps per-player timers in `_PlayerState`:
-  - **hands up and arms crossed** must hold for `confirm_s`. This is the prototype's `Debounce` in seconds: the start time of the current run of frames instead of a frame count.
-  - **punch** stays on for `punch_hold_s` after its last detected frame (the prototype's `punch_until`, from `Frame.t` instead of `time.perf_counter()`).
+  - **hands up and arms crossed** must hold for `confirm_s`. This is `Debounce` from `bodypose.py`, in seconds: the start time of the current run of frames instead of a frame count.
+  - **punch** stays on for `punch_hold_s` after its last detected frame (`punch_until` in `bodypose.py`, now from `Frame.t` instead of `time.perf_counter()`).
   - **one `GestureEvent` when a gesture turns on**, named `hands_up`, `arms_crossed` or `punch`, with `conf` 1.0. This replaces `hands_were_up` / `arms_were_crossed` in `main.py`, and gives one `punch` event per punch.
-  - a player missing from `Motion` starts over, as the prototype did when the pose model found nobody.
+  - a player missing from `Motion` starts over, as `bodypose.py` did when the pose model found nobody.
 - `reset(pid)` clears one player (`reset_player()`).
-- `draw_debug()`: the skeleton, the prototype's `H:C:P` line under each body box (1 = on), and this frame's events.
+- `draw_debug()`: the skeleton, the `H:C:P` line from `bodypose.py` under each body box (1 = on), and this frame's events.
 - `log_fields()`: CSV columns `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch` (1 while on) and `gest_p<pid>_events`.
 
 **Changed:** `src/ipcvgame/app/pipeline.py`: a re-entering player also resets the gesture stage (`gestures.reset(pid)`).
 
 **Changed:** `configs/default.yaml`, `gestures:` section, each with a comment:
 
-| Key | Value | In the prototype |
+| Key | Value | In `bodypose.py` |
 | --- | --- | --- |
 | `min_shoulder_px` | 10 | `sw > 10` in `process()` |
 | `confirm_s` | 0.03 s | `CONFIRM_FRAMES = 2`: at 30 FPS the 2nd frame comes 0.033 s after the 1st |
 | `punch_hold_s` | 0.5 s | `PUNCH_HOLD_S` |
 
-**Behaviour differences from the prototype:**
+**Behaviour differences from `bodypose.py`:**
 
-- A frame without a usable shoulder width restarts the hands-up and crossed timers. The prototype skipped the frame and kept counting.
+- A frame without a usable shoulder width restarts the hands-up and crossed timers. `bodypose.py` skipped the frame and kept counting.
 - Punches less than 0.5 s apart give one event; a fast double punch counts once.
 
 **Added:** 8 tests in `tests/test_gestures.py`:
@@ -969,21 +972,21 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 
 #### Step 5 · Colours, config and game state
 
-**Changed:** `src/ipcvgame/scene/draw.py`: `PLAYER_COLORS` now has the prototype's team colours, P1 red `(55, 55, 235)` and P2 blue `(235, 110, 40)` (BGR). It was P1 blue and P2 orange, so blue meant P1 in the debug views but P2 in the game. Every debug view uses `player_color()`, so they all change with it.
+**Changed:** `src/ipcvgame/scene/draw.py`: `PLAYER_COLORS` now has the team colours from `game.py`, P1 red `(55, 55, 235)` and P2 blue `(235, 110, 40)` (BGR). It was P1 blue and P2 orange, so blue meant P1 in the debug views but P2 in the game. Every debug view uses `player_color()`, so they all change with it.
 
 **Changed:** `src/ipcvgame/interaction/game.py`
 
-- The prototype's dataclasses `PaintSplat`, `Projectile`, `PaintBeam` and `Shield` keep their names and fields, with positions in pixels.
+- The dataclasses `PaintSplat`, `Projectile`, `PaintBeam` and `Shield` from `game.py` keep their names and fields, with positions in pixels.
 - `PaintSplat` stores the attacker's pid (`owner_id`) instead of a colour; the colour comes from `player_color()` when drawing.
-- The prototype's `Player` is now `GamePlayer`, because `Player` is already the identity type in `core/types.py`. `bounds` is a pixel box (`np.ndarray`), `x`/`y` are pixels.
-- `Game.__init__(cfg)` starts with no players, instead of the prototype's `{1: Player()}` for its single-player shortcuts `player` and `shield`, which are dropped (nothing used them).
+- `Player` from `game.py` is now `GamePlayer`, because `Player` is already the identity type in `core/types.py`. `bounds` is a pixel box (`np.ndarray`), `x`/`y` are pixels.
+- `Game.__init__(cfg)` starts with no players, instead of `{1: Player()}` for the single-player shortcuts `player` and `shield`, which are dropped (nothing used them).
 - `get_player()` is the same.
-- `reset()` is the prototype's new round (positions kept). `reset(pid)` (new, for the module interface) gives one player full health, no paint and no shield.
+- `reset()` is the same new round as in `game.py` (positions kept). `reset(pid)` (new, for the module interface) gives one player full health, no paint and no shield.
 - `update()` still prints events (stub) until step 7.
 
 **Changed:** `configs/default.yaml`, `game:` section, each with a comment:
 
-| Key | Value | In the prototype |
+| Key | Value | In `game.py` |
 | --- | --- | --- |
 | `max_health` | 100 | `MAX_HEALTH` |
 | `bolt_cooldown_s` | 0.0 | `ATTACK_COOLDOWN` (1.8); 0 by decision |
@@ -996,7 +999,7 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 
 **Changed:** `docs/phase-1/status.md` (colour row: P1 red, P2 blue; it said "P1 orange, P2 blue", which was also wrong before). `docs/extra_features.md`: the "one colour table" item of feature 1 is marked done, and its follow-up row is removed.
 
-**Added:** `tests/test_game.py` (4 tests): team colours, a new player at full health, `reset()` keeps positions and clears the round (the prototype's `test_reset_starts_a_fresh_round`), `reset(pid)`.
+**Added:** `tests/test_game.py` (4 tests): team colours, a new player at full health, `reset()` keeps positions and clears the round (`test_reset_starts_a_fresh_round` from `test_game.py`), `reset(pid)`.
 
 **Checked:** 106 tests pass, `ruff` clean.
 
@@ -1004,9 +1007,9 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 
 **Changed:** `src/ipcvgame/interaction/game.py`
 
-- `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()` and `_apply_damage()` keep the prototype's names, logic and order, in pixels. The prototype's `update(dt, visible)` is now `advance(dt, visible)`, because `update(state)` is the module interface (step 7).
+- `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()` and `_apply_damage()` keep their names, logic and order from `game.py`, in pixels. `update(dt, visible)` is now `advance(dt, visible)`, because `update(state)` is the module interface (step 7).
 - Speeds and the beam's hit radius are config fractions times the frame size (`frame_w`, `frame_h`, set from each frame in step 7). Bolts and beams leave the game at the frame edge (`0 … frame_w`), as at 0 … 1 before.
-- `player_id` has no default any more (the prototype defaulted to 1 for its single-player version).
+- `player_id` has no default any more (`game.py` defaulted to 1 for its single-player version).
 - `attack()` sets the cooldown from `bolt_cooldown_s` (0, so every punch fires).
 - A splat stores `owner_id`. The minimum box size in `_apply_damage()` is 1 px (was 0.001 of the frame).
 - **Shield blocking (new):**
@@ -1015,13 +1018,49 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
   - a beam that reaches a shielded player adds them to `hit_player_ids` without damage, so it does not hit them later in its life, after the shield is gone.
 
 **Added:** 13 tests in `tests/test_game.py`.
-- The prototype's 6 combat tests, same names and numbers, in a 1000 × 1000 px frame so 0–1 coordinates become pixels:
+- The 6 combat tests from `test_game.py`, same names and numbers, in a 1000 × 1000 px frame so 0–1 coordinates become pixels:
   - red bolt hits blue;
   - blue bolt hits red;
   - a beam hits a target only once;
-  - the cooldown, with the prototype's 1.8 s set in the config;
+  - the cooldown, with `game.py`'s 1.8 s set in the config;
   - a fully painted player loses;
   - a bolt never hurts its owner.
 - New: every punch fires with cooldown 0, a shield blocks a bolt, a shield blocks a beam for the rest of the beam, a fading shield does not block and then disappears, an invisible player is not hit, a bolt leaves the frame, and the same hit gives the same splats.
 
 **Checked:** 119 tests pass, `ruff` clean.
+
+#### Step 7 · Pipeline: `Game.update(state)`
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+
+- `update(state)` replaces the stub that printed events. It does the game part of the `main.py` loop, in the same order:
+  1. **Frame size and time:** from `state.frame`. `dt` is the time since the last frame from `Frame.t`, capped at `max_dt_s` (`main.py` used `time.perf_counter()`, also capped at 0.1 s); 0 on the first frame.
+  2. **Players:** every `active` player gets their body box from `Player.bbox` (was the BoT-SORT box) and their position from `body_position()`. Only `active` players can be hit (`main.py`: players identified this frame).
+  3. **Actions:** each gesture event becomes an action through `_act()`:
+     - **`punch` → `attack()`:** from the edge of the body box that faces the other player, at hip height;
+     - **`hands_up` → `beam_attack()`:** from the midpoint of the wrists;
+     - **`arms_crossed` → `activate_shield()`:** at the body.
+
+     Direction: right for a player in the left half of the frame, as in `main.py`. An event is skipped if the player has no position this frame, as `main.py` skipped actions when `center_x` was `None`.
+  4. **`advance(dt, visible)`.**
+- `body_position(motion)` is `center_x` / `torso_y` from `bodypose.py`: the shoulder midpoint and the hip level, from the smoothed keypoints. It reuses `shoulder_width()` and `lower_body_y()` from `interaction/gestures.py`, and returns `None` without a usable shoulder width.
+- `actions` lists this frame's actions as `(pid, "bolt" | "beam" | "shield")`, for the CSV in step 8.
+
+**Changed:** `configs/default.yaml`, `game:` section: `min_shoulder_px` (10) and `hip_below_shoulders` (2.0), the same values as in `gestures:`. `bodypose.py` computed the position with those numbers; the game has its own copy because each module reads only its own config section.
+
+**Added:** 8 tests in `tests/test_game.py`, with fake frame states:
+- boxes and positions are read from the state;
+- a punch fires from the box edge facing the other player, for both players;
+- a beam starts between the wrists;
+- a shield is raised at the body;
+- time comes from `Frame.t`, with dt 0 on the first frame and capped after a stall;
+- a bolt hits through `update()`;
+- a lost player is not hit and their events are ignored;
+- an event without shoulders is ignored.
+
+**Checked:** 127 tests pass, `ruff` clean. Full pipeline up to the game stage:
+
+| Clip | Actions | Result | Game stage |
+| --- | --- | --- | --- |
+| `two_people_fitness_challenge.webm` | 2 beams from P2 (2.2 s, 3.4 s) | Both hit P1: health 100 → 76, 8 splats | 0.03 ms |
+| `two_people_jump.mp4` | none | No change | 0.03 ms |

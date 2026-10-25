@@ -1,13 +1,17 @@
 """Task 4 — game logic: Colour Clash.
 
-Moved from the prototype's ``game.py`` in the game merge (docs/merge_log.md,
+Moved from the Colour Clash ``game.py`` in the game merge (docs/merge_log.md,
 Task 4). Positions are pixels in the mirrored frame; every number comes from
 the ``game:`` config.
 
 Combat (``advance()``): bolts and beams fly across the frame and damage the
 first other player whose body box they reach, adding paint splats; a raised
 shield blocks them. At 0 health the attacker wins and the game freezes.
-``update()`` still only prints events until the pipeline wiring (merge step 7).
+
+``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
+body box and position from the frame state, turns gesture events into actions
+(punch -> bolt, hands up -> beam, arms crossed -> shield), then advances the
+game by the real time since the last frame.
 """
 
 from __future__ import annotations
@@ -17,7 +21,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ipcvgame.core.types import FrameState
+from ipcvgame.core import skeleton as sk
+from ipcvgame.core.types import FrameState, Motion
+from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
 
 
 @dataclass
@@ -29,7 +35,7 @@ class PaintSplat:
 
 @dataclass
 class GamePlayer:
-    """One player's game state (the prototype's ``Player``; renamed because
+    """One player's game state (``Player`` in game.py; renamed because
     ``Player`` is the identity type in core/types.py)."""
     health: int
     cooldown: float = 0.0
@@ -81,6 +87,9 @@ class Game:
         self.beams: list[PaintBeam] = []
         self.shields: dict[int, Shield] = {}
         self.winner_id: int | None = None
+        self._t: float | None = None  # Frame.t of the previous update
+        # Actions this frame as (pid, "bolt" | "beam" | "shield"), for the CSV.
+        self.actions: list[tuple[int, str]] = []
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:
@@ -114,7 +123,7 @@ class Game:
         return shield is not None and shield.remaining > 0
 
     def advance(self, dt: float, visible_player_ids: set[int] | None = None) -> None:
-        """Move the game on by dt seconds (the prototype's ``update()``). Only
+        """Move the game on by dt seconds (``update()`` in game.py). Only
         visible players can be hit."""
         if self.winner_id is not None:
             return
@@ -229,8 +238,64 @@ class Game:
             self.winner_id = owner_id
 
     def update(self, state: FrameState) -> None:
+        """One frame (the game part of the ``main.py`` loop)."""
+        self.frame_h, self.frame_w = state.frame.image.shape[:2]
+        t = state.frame.t
+        # Real time since the last frame, capped so a stall or pause does not
+        # make bolts and beams jump ahead.
+        dt = 0.0 if self._t is None else min(max(t - self._t, 0.0), self.cfg["max_dt_s"])
+        self._t = t
+
+        # Only players the identity stage sees this frame can be hit.
+        visible = {pid for pid, p in state.players.items() if p.status == "active"}
+        positions = {}
+        for pid in visible:
+            player = self.get_player(pid)
+            player.bounds = state.players[pid].bbox.astype(float)
+            if pid in state.motion:
+                pos = self.body_position(state.motion[pid])
+                if pos is not None:
+                    player.x, player.y = pos
+                    positions[pid] = pos
+
+        self.actions = []
         for e in state.events:
-            print(f"[game] t={e.t:.3f} P{e.pid} {e.name} conf={e.conf:.2f}")
+            if e.pid in positions:
+                self._act(e.pid, e.name, state.motion[e.pid])
+
+        self.advance(dt, visible)
+
+    def body_position(self, m: Motion) -> tuple[float, float] | None:
+        """Shoulder midpoint x and hip level y in px (``center_x`` and
+        ``torso_y`` in bodypose.py), or None without a usable shoulder width."""
+        k, v = m.kpts, m.valid
+        sw = shoulder_width(k, v, self.cfg["min_shoulder_px"])
+        if sw is None:
+            return None
+        shoulder_y = (k[sk.L_SHOULDER][1] + k[sk.R_SHOULDER][1]) / 2.0
+        center_x = (k[sk.L_SHOULDER][0] + k[sk.R_SHOULDER][0]) / 2.0
+        return float(center_x), float(lower_body_y(k, v, shoulder_y, sw, self.cfg))
+
+    def _act(self, pid: int, gesture: str, m: Motion) -> None:
+        """Turn one gesture event into a game action, as ``main.py`` did."""
+        player = self.get_player(pid)
+        # Towards the middle: a player on the left half fires to the right.
+        direction = 1 if player.x < self.frame_w / 2 else -1
+        if gesture == "punch":
+            # The bolt starts at the edge of the body box facing the other player.
+            left, _, right, _ = player.bounds
+            if self.attack(right if direction > 0 else left, player.y, direction, pid):
+                self.actions.append((pid, "bolt"))
+        elif gesture == "hands_up":
+            if not (m.valid[sk.L_WRIST] and m.valid[sk.R_WRIST]):
+                return
+            hx, hy = (m.kpts[sk.L_WRIST] + m.kpts[sk.R_WRIST]) / 2.0
+            if self.winner_id is None:
+                self.beam_attack(float(hx), float(hy), direction, pid)
+                self.actions.append((pid, "beam"))
+        elif gesture == "arms_crossed":
+            self.activate_shield(player.x, player.y, direction, pid)
+            self.actions.append((pid, "shield"))
 
     def reset(self, pid: int | None = None) -> None:
         """None: start a fresh round while preserving current player positions.

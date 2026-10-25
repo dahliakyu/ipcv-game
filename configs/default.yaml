@@ -52,18 +52,18 @@ identity:                 # Task 3 — phase-1 stub: left half = P1, right half 
   num_players: 2
 
 motion:                   # Task 2 — keypoint smoothing (Colour Clash KeypointTracker)
-  # "ema" = the prototype's smoothing: confidence gate, hold, EMA, snap back.
+  # "ema" = the smoothing from bodypose.py: confidence gate, hold, EMA, snap back.
   # "stub" = phase-1 pass-through (no smoothing, no hold).
   backend: ema
-  # Keypoints under this confidence count as missing this frame. 0.35 is the
-  # prototype's CONF_T, which the gesture thresholds were tuned with.
+  # Keypoints under this confidence count as missing this frame. 0.35 is
+  # CONF_T in bodypose.py, which the gesture thresholds were tuned with.
   kpt_conf_threshold: 0.35
-  # EMA time constant (s). The prototype used alpha = 0.5 per frame at about
+  # EMA time constant (s). bodypose.py used alpha = 0.5 per frame at about
   # 30 FPS; tau = -dt / ln(1 - alpha) = 0.033 / 0.693 = 0.048 s. Light
   # smoothing, so a punch still reads within a frame or two.
   tau: 0.048
   # A missing keypoint keeps its last position, and stays valid, this long
-  # (prototype MISSING_FRAMES = 10 at 30 FPS). Rides out one-frame dropouts
+  # (bodypose.py: MISSING_FRAMES = 10 at 30 FPS). Rides out one-frame dropouts
   # in fast arm moves; after that the point is invalid and snaps back to the
   # detection when it returns.
   hold_s: 0.33
@@ -76,7 +76,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # README has the download command.
   model: models/face_detection_yunet_2023mar.onnx
   # Detection score threshold. Lower than OpenCV's 0.9 default so blurry or
-  # distant faces are still found (prototype value).
+  # distant faces are still found (Task 1 script value).
   score_threshold: 0.6
   # YuNet's own non-maximum suppression: overlapping boxes above this IoU
   # count as one face (OpenCV default 0.3).
@@ -85,11 +85,11 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # is plenty (OpenCV default 5000).
   top_k: 50
   # Ignore detections narrower than this (px): too small to place effects.
-  # Prototype value at 640x480; re-check at 1280x720.
+  # Task 1 script value at 640x480; re-check at 1280x720.
   min_face: 20
   # Reject a detection whose width differs from the player's last face width
   # by more than this fraction: a jump that large in one frame is a wrong
-  # detection, not the same face (prototype MAX_SIZE_JUMP).
+  # detection, not the same face (Task 1 script: MAX_SIZE_JUMP).
   max_size_jump: 0.5
 
   # Head crop per player, from the pose keypoints. Keypoints under this
@@ -105,7 +105,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # 23.4 -> 9.2 ms, detections 99.2% -> 98.9%; below 192 the gain flattens.
   crop_max_px: 192
 
-  # One Euro filter on the 4 face key points (prototype values).
+  # One Euro filter on the 4 face key points (Task 1 script values).
   # min_cutoff (Hz): lower = steadier hat when the head is still.
   filter_min_cutoff: 1.5
   # beta: higher = less lag when the head moves fast.
@@ -114,17 +114,17 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   filter_d_cutoff: 1.0
   # Forget a player's face state (filter, last width) after this long
   # without any update (detection or flow), so a returning face starts fresh
-  # instead of sliding in. The effect has faded to 0 by then. Prototype
-  # MAX_MISSED = 30 frames at 30 FPS.
+  # instead of sliding in. The effect has faded to 0 by then. Task 1
+  # script: MAX_MISSED = 30 frames at 30 FPS.
   lost_after_s: 1.0
   # Keep the effect fully visible this long after the last update, then fade
   # it out until lost_after_s. Covers single missed frames without a visible
-  # flicker. Prototype HOLD_FRAMES = 3 frames at 30 FPS.
+  # flicker. Task 1 script: HOLD_FRAMES = 3 frames at 30 FPS.
   hold_s: 0.1
 
-  # Optical-flow fallback when YuNet misses a face (prototype values).
+  # Optical-flow fallback when YuNet misses a face (Task 1 script values).
   # Follow a face with flow for at most this long after its last detection;
-  # longer and the points drift off the face. Prototype FLOW_FRAMES = 40
+  # longer and the points drift off the face. Task 1 script: FLOW_FRAMES = 40
   # frames at 30 FPS.
   flow_max_s: 1.3
   # Flow points: an n x n grid on the face, in face widths from the face
@@ -150,7 +150,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   flow_scale_range: [0.7, 1.4]
 
   # Face geometry from YuNet's 5 landmarks, in face widths (YuNet box
-  # width); prototype values, tuned by eye.
+  # width); Task 1 script values, tuned by eye.
   # Face centre this far below the eye midpoint (cheek level).
   center_drop: 0.20
   # Forehead point this far above the eye midpoint.
@@ -159,12 +159,12 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # nose, where a mustache sits.
   lip_to_nose: 0.35
   # Hat brim this far above the forehead point (the effect hangs the hat
-  # from its visible brim). 0.11 keeps the prototype's look: it placed the
+  # from its visible brim). 0.11 keeps the Task 1 script's look: it placed the
   # sprite's bottom 0.40 below the forehead point, and the sprite has 34%
   # transparent padding below the brim at 1.5 face widths: -0.40 + 0.51.
   hat_rise: 0.11
   # above_head anchor this far above the hat brim. The visible hat is ~0.6
-  # face widths tall, so this clears it; the prototype drew the player name
+  # face widths tall, so this clears it; the Task 1 script drew the player name
   # here (1.6 above the eyes, as now).
   above_head_rise: 1.0
 
@@ -233,9 +233,9 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Effect sprites: RGBA PNGs, relative to the repo root.
   hat_sprite: assets/face/hat.png
   mustache_sprite: assets/face/mustache.png
-  # Hat width in face widths; tuned by eye in the prototype.
+  # Hat width in face widths; tuned by eye in the Task 1 script.
   hat_width: 1.5
-  # Mustache width in face widths; tuned by eye in the prototype.
+  # Mustache width in face widths; tuned by eye in the Task 1 script.
   mustache_width: 0.8
 
   # Stub backend only: above_head sits this many shoulder-widths above the
@@ -246,7 +246,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
 
 gestures:                 # Task 4 — Colour Clash rules -> events
   # All distances are in shoulder widths (sw), so the rules hold at any
-  # distance from the camera. Values are the prototype's (Project/bodypose.py).
+  # distance from the camera. Values are from bodypose.py.
   # Hands up without a visible nose: the head is taken this far above the
   # shoulder line, roughly chin height.
   head_above_shoulders: 0.3
@@ -265,7 +265,7 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   punch_elbow_angle: 150.0
   # Punch: wrist at least this far to the side of its shoulder (horizontal
   # distance), so an arm pointed at the camera, held close, or hanging
-  # straight down is not a punch. The prototype measured the straight-line
+  # straight down is not a punch. bodypose.py measured the straight-line
   # distance, which let a hanging arm through (merge step 2b).
   punch_min_reach: 1.0
   # Punch: wrist no higher than this above the shoulders (and not below the
@@ -276,56 +276,62 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   punch_bent_angle: 120.0
   # No gesture while the shoulders are closer than this (px): the shoulder
   # width is the unit of every rule, and below 10 px a few pixels of keypoint
-  # noise change it by tens of percent. Prototype value.
+  # noise change it by tens of percent. Value from bodypose.py.
   min_shoulder_px: 10.0
-  # Hands up and arms crossed must hold this long before their event (the
-  # prototype's CONFIRM_FRAMES = 2: at 30 FPS the 2nd frame comes 0.033 s
+  # Hands up and arms crossed must hold this long before their event
+  # (bodypose.py: CONFIRM_FRAMES = 2; at 30 FPS the 2nd frame comes 0.033 s
   # after the 1st; 0.03 leaves room for timestamp jitter). Filters out
   # one-frame keypoint glitches.
   confirm_s: 0.03
-  # A punch stays on this long after its last detected frame (prototype
+  # A punch stays on this long after its last detected frame (bodypose.py:
   # PUNCH_HOLD_S). It bridges frames where the arm briefly fails the rule, so
   # one punch gives one event; punches closer together than this count as one.
   punch_hold_s: 0.5
 
-game:                     # Task 4 — Colour Clash game logic (prototype game.py)
+game:                     # Task 4 — Colour Clash game logic (game.py)
   # Positions are pixels. Speeds and sizes are fractions of the frame width
   # (_w) or height (_h), so the game plays the same at any resolution.
   # Starting health. A bolt takes 10 and a beam 12: 10 bolts or 9 beams win.
   max_health: 100
-  # Bolt, fired by a punch. Prototype ATTACK_COOLDOWN was 1.8 s; 0 makes every
+  # Bolt, fired by a punch. game.py: ATTACK_COOLDOWN was 1.8 s; 0 makes every
   # punch event fire a bolt (merge decision). The gesture stage already sends
   # at most one punch event every 0.5 s (gestures.punch_hold_s).
   bolt_cooldown_s: 0.0
-  # Prototype PROJECTILE_SPEED: crosses the frame in ~0.7 s, fast enough to
+  # game.py PROJECTILE_SPEED: crosses the frame in ~0.7 s, fast enough to
   # read as a hit, slow enough to see coming and shield.
   bolt_speed_w: 1.4
-  # Prototype PROJECTILE_DAMAGE.
+  # game.py PROJECTILE_DAMAGE.
   bolt_damage: 10
   # Beam, fired by hands up. It first charges in place (a visible warning),
-  # then grows across the frame. Prototype BEAM_CHARGE_DURATION, BEAM_SPEED,
+  # then grows across the frame. game.py BEAM_CHARGE_DURATION, BEAM_SPEED,
   # BEAM_DURATION and BEAM_DAMAGE: stronger than a bolt, but slower to start.
   beam_charge_s: 0.35
   beam_speed_w: 2.4
   beam_duration_s: 0.8
   beam_damage: 12
   # The beam hits a body box that comes within this distance of its line
-  # (prototype BEAM_HIT_RADIUS_Y): a thin line still hits a box it touches.
+  # (game.py BEAM_HIT_RADIUS_Y): a thin line still hits a box it touches.
   beam_hit_radius_h: 0.03
-  # Shield, raised by crossing the arms: blocks hits for this long (prototype
+  # Shield, raised by crossing the arms: blocks hits for this long (game.py
   # SHIELD_DURATION), then fades out without blocking (SHIELD_FADE_DURATION).
   shield_s: 1.0
   shield_fade_s: 0.24
   # Paint splats per hit: one at the impact point plus this many nearby,
   # spread up to this fraction of the body box, and kept within this middle
   # band of the box (fractions of its width and height) so they land on the
-  # torso, not on the background in the box corners. Prototype values.
+  # torso, not on the background in the box corners. Values from game.py.
   splat_extra: 3
   splat_spread: 0.08
   splat_band: [0.38, 0.62]
-  # Longest time step the game advances in one frame (prototype: dt capped
+  # Longest time step the game advances in one frame (main.py: dt capped
   # at 0.1 s). After a stall or a pause, objects do not jump far ahead.
   max_dt_s: 0.1
+  # Player position for bolts and the shield: shoulder midpoint and hip level
+  # (center_x, torso_y in bodypose.py). Same values as the gestures: section (each
+  # module reads only its own section): no position below 10 px shoulder
+  # width, and hips not visible = 2 shoulder widths below the shoulders.
+  min_shoulder_px: 10.0
+  hip_below_shoulders: 2.0
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player

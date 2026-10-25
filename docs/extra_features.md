@@ -35,7 +35,7 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 **Design.**
 
-- **One colour table.** Done in the game merge: `PLAYER_COLORS` in `scene/draw.py` (P1 red, P2 blue, the prototype's colours) is the only table; use `player_color(pid)`.
+- **One colour table.** Done in the game merge: `PLAYER_COLORS` in `scene/draw.py` (P1 red, P2 blue, the colours from `game.py`) is the only table; use `player_color(pid)`.
 - **Hat band.** Recolour the band pixels of `hat.png` once at load, one copy per team: select the red band by hue, shift its hue to the team colour, keep the shading.
 - **Cheek anchors.** Add `left_cheek` and `right_cheek` as 3D points on the head model, about (±45, 30, −5) mm, projected like the hat. They follow tilt and turn for free.
 - **Stripes.** Draw at the cheek anchors, rotated by `roll`, squashed by cos(`yaw`) on the cheek turned away, faded by `alpha`.
@@ -59,7 +59,7 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 ### 3. Status above the head
 
-**What.** Name, HP bar and status icons above each player's head, replacing the prototype's `draw_status()` and `renderer._draw_player_health()`.
+**What.** Name, HP bar and status icons above each player's head, replacing `draw_status()` from the Task 1 script and `_draw_player_health()` from `renderer.py`.
 
 **Owners.** Task 5: the renderer, reading game state. Task 1 provides `anchors["above_head"]`.
 
@@ -166,7 +166,7 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 **What.** A small trained classifier decides "punch or not" per player and frame, instead of the hand-written rule.
 
-**Why.** The prototype's rule (`detect_punch()` in `interaction/gestures.py`) checks poses one frame at a time. It reads a straight hanging arm next to a bent arm as a punch: 33% of player-frames on the jump clip, none of them real punches (`merge_log.md`, Task 4, step 2). The rule also ignores speed. A punch is fast and a hanging arm is still, and a classifier can learn that from examples instead of us adding one rule after another.
+**Why.** The punch rule from `bodypose.py` (`detect_punch()` in `interaction/gestures.py`) checks poses one frame at a time. It reads a straight hanging arm next to a bent arm as a punch: 33% of player-frames on the jump clip, none of them real punches (`merge_log.md`, Task 4, step 2). The rule also ignores speed. A punch is fast and a hanging arm is still, and a classifier can learn that from examples instead of us adding one rule after another.
 
 **Owners.** Task 4: the classifier, labelling and evaluation. Task 2: the inputs from `Motion` (smoothed keypoints, `valid`, `vel`).
 
@@ -189,7 +189,7 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 | Webcam check of the face stage | Steps 8–10 were tested on clips and photos; check chin up and down, turning, mouth and blink bars, and `hat_depth_mm` live | `face:` config |
 | Jitter on a still clip | The test clips are all moving; shrinking crops (step 8) and the pose (steps 9–10) may add shake that only a still clip shows | `tools/eval_face.py` on the shared `normal` clip |
 | MediaPipe GPU delegate | MediaPipe costs ~8 ms per frame on the CPU; the GPU delegate may cut that | `face/landmarker.py` |
-| Remove `garb/` | The raw prototype is ignored by git only while the merge runs; delete it and its `.gitignore` entry at the end | `.gitignore` |
+| Remove `garb/` | The teammates' original code is ignored by git only while the merge runs; delete it and its `.gitignore` entry at the end | `.gitignore` |
 | `core/types.py` heads-up | Two fields were added during the merge: `Face.alpha` and `Face.blendshapes`; mention them in the merge PR | merge PR description |
 
 ## Considered, not planned

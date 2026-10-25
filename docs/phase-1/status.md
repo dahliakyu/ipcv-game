@@ -2,7 +2,7 @@ Sep 28, 2026 · @el created with help of Claude Opus 5.5
 
 # Phase 1 status: what exists, what each of us does next
 
-The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module started as a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone. The Colour Clash merge is now replacing the stubs with the teammates' prototype code (see the table and [merge_log.md](../merge_log.md)).
+The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module started as a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone. The Colour Clash merge is now replacing the stubs with the teammates' code (see the table and [merge_log.md](../merge_log.md)).
 
 This document covers what the pipeline looks like right now, what your stub does and what you need to deliver, and the open items the team still has to fill in.
 
@@ -165,7 +165,7 @@ pytest                                        # before every PR
 
 ### Task 2: Pose and motion — owner: ____________
 
-**Status (smoothing merged 2026-10-25 from the prototype's `KeypointTracker`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as the prototype, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
+**Status (smoothing merged 2026-10-25 from `KeypointTracker` in `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as `bodypose.py`, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
 
 - keypoints under confidence 0.35 count as missing, and keep their last position for 0.33 s;
 - an EMA smooths the positions (time constant 0.048 s);
@@ -194,7 +194,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 
 ### Task 4: Interaction — owner: ____________
 
-**Status (gestures merged 2026-10-25 from the prototype's `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `GestureRecognizer` runs the prototype's rules on the smoothed keypoints, with all distances in shoulder widths:
+**Status (gestures merged 2026-10-25 from `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `GestureRecognizer` runs the rules from `bodypose.py` on the smoothed keypoints, with all distances in shoulder widths:
 
 - **`hands_up`:** both wrists above the nose.
 - **`arms_crossed`:** wrists swapped left/right in front of the chest.
@@ -203,7 +203,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 Hands up and crossed must hold for 0.03 s; a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. `Game.update` still prints events to the console.
 
 - [x] Rule-based gestures on `Motion`, using only `valid` keypoints; thresholds in `gestures:`.
-- [x] Hold times per player; one event per gesture. Cooldowns belong to the game (the prototype's bolt has 1.8 s).
+- [x] Hold times per player; one event per gesture. Cooldowns belong to the game (`game.py`'s bolt had 1.8 s; now 0).
 - [x] `log_fields`: `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch`, `_events`.
 - [ ] `tools/eval_gestures.py`: needs clips with real, labelled gestures (the two test clips have none).
 - [ ] `game.py`: the Colour Clash game logic (next merge).

@@ -1,6 +1,6 @@
 """Task 2 — per-player motion filtering and signals.
 
-Backend "ema" is the Colour Clash prototype's ``KeypointTracker``
+Backend "ema" is ``KeypointTracker`` from the Colour Clash code
 (``Project/bodypose.py``), moved here in the gesture merge (docs/merge_log.md,
 Task 4). Per player:
 
@@ -27,7 +27,7 @@ from ipcvgame.scene.draw import draw_skeleton, player_color, pt
 
 
 class _PlayerState:
-    """One player's smoothing state (the prototype's ``KeypointTracker``)."""
+    """One player's smoothing state (``KeypointTracker`` in bodypose.py)."""
 
     def __init__(self, tau: float):
         self.ema = EMA(tau)
@@ -74,7 +74,7 @@ class MotionFilter:
 
     def _smooth(self, st: _PlayerState, raw: np.ndarray, good: np.ndarray,
                 t: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """The prototype's ``KeypointTracker.update()``, in seconds."""
+        """``KeypointTracker.update()`` from bodypose.py, in seconds."""
         snap = good & (t - st.last_good > self.hold_s)
         st.last_good[good] = t
         # Missing points hold their last position (never blended with a bad guess).
