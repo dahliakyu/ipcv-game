@@ -198,7 +198,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 
 - **`hands_up`:** both wrists above the nose.
 - **`arms_crossed`:** wrists swapped left/right in front of the chest.
-- **`punch`:** one arm straight and reaching at least 1 shoulder width to the side at chest height, the other arm bent. The reach is measured sideways since the merge, so a hanging arm is not a punch.
+- **`punch`:** one arm straight, reaching at least 1 shoulder width to the side, with the wrist at least level with its shoulder (0.2 shoulder widths of slack); the other arm bent. Since the merge, reach is measured sideways and low arms are excluded, so neither a hanging arm nor an arm held low is a punch.
 
 Hands up and crossed must hold for 0.03 s; a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. `Game.update` still prints events to the console.
 

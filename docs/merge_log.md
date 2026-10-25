@@ -147,7 +147,8 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer.update()` | Rising-edge `GestureEvent`s |
 | Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
 | `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Game positions (step 7) |
-| `head_x/y`, `hand_x/y` | Not ported | `head_x/y`: the renderer will use face anchors; `hand_x/y` was unused |
+| `hand_x/y` | `interaction/game.py`, `punching_hand()` | Bolts now start at the punching hand (step 8b) |
+| `head_x/y` | Not ported | The renderer will use face anchors |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
 **Constants** (`configs/default.yaml`)
@@ -178,6 +179,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `main.py`: game loop part (bounds, positions, gesture edges → `attack()` / `beam_attack()` / `activate_shield()`, `dt`, `game.update()`) | `interaction/game.py`, `Game.update(state)` + `_act()` | Events instead of per-frame flags; `dt` from `Frame.t` |
 | `bodypose.py`: `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Pixels, from the smoothed keypoints |
 | `test_game.py` | `tests/test_game.py` | Same tests in px, plus new ones |
+| (new) debug view, CSV columns | `interaction/game.py`, `Game.draw_debug()` + `log_fields()` | `--until game`; the full drawing is the renderer merge |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
 
@@ -218,6 +220,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Velocities (new):** `Motion.vel` is the finite difference of the smoothed points; 0 on the frame a point jumps back.
 - **`pose_detector.py` not merged:** it is an older single-player copy of `bodypose.py` with slightly different thresholds.
 - **Punch reach is sideways (step 2b):** `arm_extended()` measures the wrist's horizontal distance from the shoulder, not the straight-line distance, so a straight hanging arm is no longer a punch.
+- **Punch wrist at least at shoulder level (step 2c):** the wrist may be at most `punch_below_shoulder` (0.2 sw) below its own shoulder; `bodypose.py` allowed it down to the hips.
 - **Events instead of per-frame flags (step 3):** one `GestureEvent` when a gesture turns on; `main.py`'s `hands_were_up` / `arms_were_crossed` bookkeeping moved into the gesture stage. Punches less than 0.5 s apart give one event.
 - **No usable shoulder width restarts the timers (step 3);** `bodypose.py` kept counting across such frames.
 
@@ -226,6 +229,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **One colour table (step 5):** `game.py`'s P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
 - **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
+- **Bolts start at the punching hand (step 8b)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
 - **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
 
 #### Task 3 (pre-merge)
@@ -732,6 +736,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 - **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
 - **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
 - **Punch reach measured sideways (after step 2).** Step 2 showed that the punch rule from `bodypose.py` fires on a straight hanging arm; step 2b fixes it.
+- **Punch wrist at least at shoulder level (after the live test).** Straight arms held low still fired on the webcam; step 2c fixes it.
 
 **Where each part goes.**
 
@@ -752,6 +757,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 1. Motion smoothing: `KeypointTracker` into `MotionFilter`; the pass-through stays as `motion.backend: stub`.
 2. Gesture rules: the six functions, `angle_at()` in `core/geometry.py`, thresholds in the `gestures:` config, tests on synthetic skeletons.
 2b. Punch rule fix: sideways reach in `arm_extended()`.
+2c. Punch rule fix: the wrist at least level with its shoulder.
 3. `GestureRecognizer`: timers in seconds, rising-edge events `punch`, `hands_up`, `arms_crossed`, reset on loss and re-entry, `draw_debug`, `log_fields`.
 4. Check and record: event counts on the two test clips, Change Overviews, `docs/phase-1/status.md`.
 
@@ -1064,3 +1070,75 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 | --- | --- | --- | --- |
 | `two_people_fitness_challenge.webm` | 2 beams from P2 (2.2 s, 3.4 s) | Both hit P1: health 100 → 76, 8 splats | 0.03 ms |
 | `two_people_jump.mp4` | none | No change | 0.03 ms |
+
+#### Step 8 · Debug view and CSV columns
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+
+- `draw_debug()` (`--until game`) draws the game state as plain shapes, until the renderer merge draws it properly. Everything is in the owner's or attacker's colour, and sizes scale with the frame width.
+  - the skeleton (thin);
+  - on each body box: the paint splats, and a health bar with `P<pid> <health>` (plus `shield` while it blocks), kept inside the frame;
+  - bolts: a dot with a short trail;
+  - beams: a growing circle while charging, then a line as thick as the hit band (2 × `beam_hit_radius_h`);
+  - shields: an ellipse beside the player, thin while fading;
+  - this frame's actions, bottom left, and `P<pid> wins - press r for a new round`.
+- `log_fields()`: CSV columns
+  - `game_p<pid>_health`;
+  - `game_p<pid>_shield` (1 while it blocks);
+  - `game_p<pid>_actions` (this frame's actions joined by `+`);
+  - `game_bolts` and `game_beams` (in flight);
+  - `game_winner`.
+
+  `game.py` and `main.py` had no logging.
+
+**Added:** 2 tests in `tests/test_game.py`: the debug view draws a bolt, a beam, a shield, splats and the winner without errors; the CSV columns.
+
+**Checked:** 129 tests pass, `ruff` clean.
+- **Clip run:** `python -m ipcvgame.app.main --headless --until game` on `two_people_fitness_challenge.webm` writes all game columns. P2's beams are at frames 130 and 205; P1 ends at health 76.
+- **Debug frames from the same clip:**
+  - the charging circle at P2's hands;
+  - the beam line flying left;
+  - P1 with P2's blue splats on the torso and the red health bar at 76.
+- **To do:** live check by the Task 5 owner (all three actions, the shield blocking, the winner and `r`).
+
+#### Step 8b · Bolt from the hand, fixed-length health bar below the body (live test)
+
+Two changes after the Task 5 owner's first webcam test (single player).
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+
+- **Bolt from the hand.**
+  - A punch now fires the bolt from the punching wrist, at its height, instead of from the body box edge at hip height.
+  - `punching_hand(motion)` (new) picks the wrist that reaches furthest to the side of its shoulder. The punch event has no side, so the arm is found again from the keypoints.
+  - This is `hand_x` / `hand_y` from `bodypose.py`, which computed the point but never used it.
+  - Without a valid wrist, the bolt starts at the box edge at hip height, as in `main.py`.
+  - The direction is unchanged: towards the middle of the frame.
+- **Health bar in the debug view.** It was the width of the body box, along its top edge, so it grew when an arm was extended and jumped up with raised hands.
+  - **Length:** depends only on the player's distance to the camera: `debug_bar_face_widths` (2.5) × `Face.scale`. Without a face, `debug_bar_shoulder_widths` (1.3) × the shoulder width; without either, the box width as before.
+  - **Position:** at the bottom of the body box, centred under the shoulders, kept inside the frame. With a webcam the box usually ends at the bottom of the frame, so the bars sit along the bottom edge. Above the head (tried first) it overlapped the beams, which start between the raised hands.
+  - The new `bar_geometry()` computes both.
+
+**Changed:** `configs/default.yaml`, `game:` section: `debug_bar_face_widths` 2.5 and `debug_bar_shoulder_widths` 1.3. The two give the same length: on the test clips the shoulder keypoints are 1.8–2.0 face widths apart (median per clip).
+
+**Changed:** `tests/test_game.py`: the box-edge punch test became "a punch fires from the punching hand" and "without wrists, from the box edge". The time test starts from the hand. 2 new tests: the bar's length and position ignore a wider box (arm out), and the shoulder-width fallback.
+
+**Checked:** 132 tests pass, `ruff` clean. On the fitness clip the bars sit below each player at about shoulder width, clear of the beams and the timing text; a raised or extended arm no longer changes them.
+
+#### Step 2c · Punch: wrist at least level with the shoulder (live test)
+
+The Task 5 owner's webcam test still fired punches with a straight arm held low, at chest or belly height, reaching sideways. `arm_extended()` from `bodypose.py` accepted any wrist height between 1 sw above the shoulder line and the hips.
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`, `arm_extended()`:
+- **Lower limit:** the wrist may be at most `punch_below_shoulder` × sw below that arm's own shoulder, instead of above the hip level. The arm's own shoulder is used because the shoulders tilt during a punch.
+- **Upper limit:** unchanged; it still excludes hands up.
+- `lower_body_y()` is still used by `detect_crossed()` and the game.
+
+**Changed:** `configs/default.yaml`, `gestures:` section:
+- new `punch_below_shoulder: 0.2`, with a comment. The request was "at least level with the shoulder". A level arm puts the wrist at shoulder height give or take keypoint noise, so 0.2 sw keeps those punches; 0 makes the rule strict.
+- The `punch_above_shoulders` comment no longer mentions the hips.
+
+**Changed:** `docs/phase-1/status.md`: the punch description says "at shoulder height".
+
+**Added:** 2 tests in `tests/test_gestures.py`: a straight sideways arm at chest height (0.75 sw below the shoulder) is no punch; a punch 0.125 sw below the shoulder still counts.
+
+**Checked:** 134 tests pass, `ruff` clean. The test clips had no punches before this step (step 2b), so their rates are unchanged.

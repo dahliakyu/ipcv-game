@@ -5,7 +5,7 @@ import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
+from ipcvgame.core.types import Face, Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
 from ipcvgame.interaction.game import Game, PaintSplat, Shield
 from ipcvgame.scene.draw import player_color
 
@@ -226,12 +226,25 @@ def test_update_reads_boxes_and_positions(game):
     assert (game.frame_w, game.frame_h) == (W, H)
 
 
-def test_punch_fires_from_the_box_edge_facing_the_other_player(game):
-    game.update(frame_state(0.0, events=[(1, "punch"), (2, "punch")]))
+def test_punch_fires_from_the_punching_hand(game):
+    s = frame_state(0.0, events=[(1, "punch"), (2, "punch")])
+    s.motion[1].kpts[sk.L_WRIST] = (390, 310)   # P1 punches right: 1.4 sw to the side
+    s.motion[2].kpts[sk.R_WRIST] = (610, 320)   # P2 punches left
+    game.update(s)
     b1, b2 = sorted(game.projectiles, key=lambda b: b.owner_id)
-    assert (b1.x, b1.y, b1.direction) == (300.0, 600.0, 1)    # P1 left: right edge
-    assert (b2.x, b2.y, b2.direction) == (700.0, 600.0, -1)   # P2 right: left edge
+    assert (b1.x, b1.y, b1.direction) == (390.0, 310.0, 1)
+    assert (b2.x, b2.y, b2.direction) == (610.0, 320.0, -1)
     assert game.actions == [(1, "bolt"), (2, "bolt")]
+
+
+def test_punch_without_wrists_fires_from_the_box_edge(game):
+    s = frame_state(0.0, events=[(1, "punch"), (2, "punch")])
+    for pid in (1, 2):
+        s.motion[pid].valid[[sk.L_WRIST, sk.R_WRIST]] = False
+    game.update(s)
+    b1, b2 = sorted(game.projectiles, key=lambda b: b.owner_id)
+    assert (b1.x, b1.y) == (300.0, 600.0)    # P1 left: right edge, hip height
+    assert (b2.x, b2.y) == (700.0, 600.0)    # P2 right: left edge
 
 
 def test_hands_up_beam_starts_between_the_wrists(game):
@@ -248,12 +261,14 @@ def test_arms_crossed_raises_shield_at_the_body(game):
 
 def test_time_comes_from_frame_t_and_is_capped(game):
     game.update(frame_state(0.0, events=[(1, "punch")]))
-    assert game.projectiles[0].x == 300.0          # first frame: dt = 0
+    x0 = game.projectiles[0].x                     # P1's punching wrist, x 260
+    game.update(frame_state(0.0))
+    assert game.projectiles[0].x == x0             # dt = 0: no movement
     game.update(frame_state(0.05))
-    assert game.projectiles[0].x == pytest.approx(300 + 1.4 * W * 0.05)
+    assert game.projectiles[0].x == pytest.approx(x0 + 1.4 * W * 0.05)
     game.update(frame_state(5.0))                  # long stall: capped at 0.1 s
-    # 300 + 70 + 140 = 510, short of P2's box at 700: still flying.
-    assert game.projectiles[0].x == pytest.approx(510.0)
+    # 260 + 70 + 140 = 470, short of P2's box at 700: still flying.
+    assert game.projectiles[0].x == pytest.approx(x0 + 1.4 * W * 0.15)
 
 
 def test_bolt_hits_through_update(game):
@@ -276,3 +291,57 @@ def test_event_without_shoulders_is_ignored(game):
     s.motion[1].valid[sk.R_SHOULDER] = False
     game.update(s)
     assert game.projectiles == [] and game.actions == []
+
+
+# --- Debug view and CSV columns --------------------------------------------
+
+def busy_game(game) -> Game:
+    """Every kind of object on screen at once."""
+    game.update(frame_state(0.0, events=[(1, "punch"), (1, "hands_up"), (2, "arms_crossed")]))
+    game.update(frame_state(0.1))
+    game.get_player(2).paint_splats.append(PaintSplat(0.5, 0.5, owner_id=1))
+    return game
+
+
+def test_draw_debug_draws_every_object(game):
+    busy_game(game)
+    state = frame_state(0.1)
+    canvas = state.frame.image.copy()
+    game.draw_debug(canvas, state)
+    assert canvas.any()
+    game.winner_id = 1
+    game.draw_debug(canvas, state)        # winner text too, no errors
+
+
+def test_log_fields(game):
+    busy_game(game)
+    row = game.log_fields(frame_state(0.1))
+    assert row["game_p1_health"] == 100 and row["game_p2_health"] == 100
+    assert row["game_p2_shield"] == 1 and row["game_p1_shield"] == 0
+    assert row["game_bolts"] == 1 and row["game_beams"] == 1
+    assert row["game_winner"] == ""
+    game.update(frame_state(0.2, events=[(1, "punch")]))
+    assert game.log_fields(frame_state(0.2))["game_p1_actions"] == "bolt"
+
+
+def face_at(x: float, y: float, scale: float) -> Face:
+    return Face(pid=1, valid=True, landmarks=None, center=np.array([x, y + scale]),
+                scale=scale, roll=0.0, yaw=0.0, anchors={"above_head": np.array([x, y])})
+
+
+def test_health_bar_length_ignores_the_arms(game):
+    game.update(frame_state(0.0))
+    s = frame_state(0.0)
+    s.faces[1] = face_at(200.0, 120.0, 40.0)
+    (c, length) = game.bar_geometry(1, s)
+    # Under the shoulder midpoint, at the bottom of the body box.
+    assert c == (200.0, 900.0) and length == pytest.approx(2.5 * 40)
+    game.get_player(1).bounds = np.array([100.0, 50, 600, 900])   # arm out: wide box
+    assert game.bar_geometry(1, s) == (c, length)
+
+
+def test_health_bar_without_face_uses_shoulder_width(game):
+    game.update(frame_state(0.0))
+    (cx, cy), length = game.bar_geometry(1, frame_state(0.0))
+    # Shoulders 100 px apart, centred at x 200; box bottom at y 900.
+    assert (cx, cy) == (200.0, 900.0) and length == pytest.approx(1.3 * 100)

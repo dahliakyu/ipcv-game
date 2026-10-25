@@ -151,6 +151,20 @@ def test_hanging_arm_above_hip_line_is_no_punch(cfg):
     assert detect_punch(k, v, SW, cfg) is None
 
 
+def test_low_arm_is_no_punch(cfg):
+    # Straight and reaching sideways, but at chest height (0.75 sw below the
+    # shoulder): the live false positive behind merge step 2c.
+    k, v = punch_left()
+    k[sk.L_ELBOW], k[sk.L_WRIST] = (420, 230), (480, 260)
+    assert detect_punch(k, v, SW, cfg) is None
+
+
+def test_punch_slightly_below_shoulder_still_counts(cfg):
+    k, v = punch_left()
+    k[sk.L_ELBOW], k[sk.L_WRIST] = (420, 205), (480, 210)  # 0.125 sw below
+    assert detect_punch(k, v, SW, cfg) == "L"
+
+
 def test_two_straight_arms_are_no_punch(cfg):
     k, v = punch_left()
     k[sk.R_ELBOW], k[sk.R_WRIST] = (220, 200), (160, 200)  # T-pose

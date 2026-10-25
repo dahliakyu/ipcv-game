@@ -19,11 +19,13 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
+from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, player_color, pt
 
 
 @dataclass
@@ -71,6 +73,19 @@ class Shield:
     direction: int
     remaining: float  # s left; below 0 it fades out for shield_fade_s
     age: float = 0.0
+
+
+def punching_hand(m: Motion) -> tuple[float, float] | None:
+    """The wrist of the arm that reaches furthest to the side of its shoulder
+    (the punching arm), in px; None if no arm has a valid shoulder and wrist.
+    ``hand_x`` / ``hand_y`` in bodypose.py, which picked the arm by punch side."""
+    best, reach = None, -1.0
+    for shoulder, wrist in ((sk.L_SHOULDER, sk.L_WRIST), (sk.R_SHOULDER, sk.R_WRIST)):
+        if m.valid[shoulder] and m.valid[wrist]:
+            r = abs(m.kpts[wrist][0] - m.kpts[shoulder][0])
+            if r > reach:
+                best, reach = m.kpts[wrist], r
+    return None if best is None else (float(best[0]), float(best[1]))
 
 
 class Game:
@@ -282,9 +297,15 @@ class Game:
         # Towards the middle: a player on the left half fires to the right.
         direction = 1 if player.x < self.frame_w / 2 else -1
         if gesture == "punch":
-            # The bolt starts at the edge of the body box facing the other player.
-            left, _, right, _ = player.bounds
-            if self.attack(right if direction > 0 else left, player.y, direction, pid):
+            # The bolt starts at the punching hand; without a visible wrist, at
+            # the edge of the body box facing the other player, at hip height.
+            hand = punching_hand(m)
+            if hand is not None:
+                x, y = hand
+            else:
+                left, _, right, _ = player.bounds
+                x, y = (right if direction > 0 else left), player.y
+            if self.attack(x, y, direction, pid):
                 self.actions.append((pid, "bolt"))
         elif gesture == "hands_up":
             if not (m.valid[sk.L_WRIST] and m.valid[sk.R_WRIST]):
@@ -318,4 +339,101 @@ class Game:
         player.paint_splats.clear()
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        pass
+        """The game state as plain shapes, in the attacker's or owner's colour,
+        until the renderer draws it properly: skeleton (thin), health bar and
+        paint splats on each body box, bolts (dot), beams (line; a growing
+        dot while charging), shields (ellipse beside the player; thin while
+        fading), this frame's actions, and the winner."""
+        unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
+        for pid, m in state.motion.items():
+            draw_skeleton(canvas, m.kpts, m.valid, player_color(pid), 1)
+
+        for pid, player in sorted(self.players.items()):
+            if player.bounds is None:
+                continue
+            left, top, right, bottom = player.bounds
+            w, h = right - left, bottom - top
+            for splat in player.paint_splats:
+                c = (left + splat.x * w, top + splat.y * h)
+                cv2.circle(canvas, pt(c), max(2, int(0.06 * w)), player_color(splat.owner_id), -1,
+                           cv2.LINE_AA)
+            # Health bar below the body, kept inside the frame.
+            (cx, cy), length = self.bar_geometry(pid, state)
+            x0, x1 = int(cx - length / 2), int(cx + length / 2)
+            y0 = min(int(cy + 2 * unit), canvas.shape[0] - 10)
+            cv2.rectangle(canvas, (x0, y0 - int(unit)), (x1, y0), (40, 40, 40), -1)
+            fill = x0 + int((x1 - x0) * player.health / self.max_health)
+            cv2.rectangle(canvas, (x0, y0 - int(unit)), (fill, y0), player_color(pid), -1)
+            label = f"P{pid} {player.health}"
+            if self.shielded(pid):
+                label += " shield"
+            draw_text(canvas, label, (x0, y0 - int(unit) - 6), player_color(pid))
+
+        for b in self.projectiles:
+            c = player_color(b.owner_id)
+            cv2.circle(canvas, pt((b.x, b.y)), int(unit), c, -1, cv2.LINE_AA)
+            cv2.line(canvas, pt((b.x, b.y)), pt((b.x - b.direction * 4 * unit, b.y)), c, 2, cv2.LINE_AA)
+
+        charge = self.cfg["beam_charge_s"]
+        thickness = max(2, int(2 * self.cfg["beam_hit_radius_h"] * canvas.shape[0]))
+        for beam in self.beams:
+            c = player_color(beam.owner_id)
+            if beam.age < charge:
+                r = int(unit * (1 + 2 * beam.age / charge))
+                cv2.circle(canvas, pt((beam.start_x, beam.y)), r, c, 2, cv2.LINE_AA)
+            else:
+                cv2.line(canvas, pt((beam.start_x, beam.y)), pt((beam.x, beam.y)), c, thickness,
+                         cv2.LINE_AA)
+
+        for pid, shield in self.shields.items():
+            player = self.players.get(pid)
+            h = (player.bounds[3] - player.bounds[1]) if player and player.bounds is not None else 40 * unit
+            center = pt((shield.x + shield.direction * 6 * unit, shield.y - 0.25 * h))
+            axes = (int(1.5 * unit), int(0.3 * h))
+            cv2.ellipse(canvas, center, axes, 0, 0, 360, player_color(pid),
+                        3 if shield.remaining > 0 else 1, cv2.LINE_AA)
+
+        lines = [f"P{pid} {action}" for pid, action in self.actions]
+        draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
+        if self.winner_id is not None:
+            draw_text(canvas, f"P{self.winner_id} wins - press r for a new round",
+                      (int(canvas.shape[1] * 0.3), canvas.shape[0] // 2),
+                      player_color(self.winner_id), 1.0)
+
+    def bar_geometry(self, pid: int, state: FrameState) -> tuple[tuple[float, float], float]:
+        """Centre (px) and length (px) of the debug health bar.
+
+        It sits at the bottom of the body box, centred under the shoulders,
+        out of the way of beams fired from raised hands. Its length depends
+        only on the player's distance to the camera, not on their arms (the
+        body box grows with an extended arm): debug_bar_face_widths face
+        widths; without a face, debug_bar_shoulder_widths shoulder widths;
+        without either, the body box width."""
+        player = self.players[pid]
+        left, _, right, bottom = player.bounds
+        m = state.motion.get(pid)
+        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"]) if m is not None else None
+        x = player.x if sw is not None else (left + right) / 2.0
+        face = state.faces.get(pid)
+        if face is not None and face.scale > 0:
+            length = self.cfg["debug_bar_face_widths"] * face.scale
+        elif sw is not None:
+            length = self.cfg["debug_bar_shoulder_widths"] * sw
+        else:
+            length = float(right - left)
+        return (float(x), float(bottom)), length
+
+    def log_fields(self, state: FrameState) -> dict:
+        """CSV columns: game_p<pid>_health, game_p<pid>_shield (1 while it
+        blocks), game_p<pid>_actions (this frame's actions joined by '+'),
+        game_bolts and game_beams (in flight), game_winner (pid or empty)."""
+        row: dict = {}
+        for pid, player in sorted(self.players.items()):
+            pre = f"game_p{pid}_"
+            row[pre + "health"] = player.health
+            row[pre + "shield"] = int(self.shielded(pid))
+            row[pre + "actions"] = "+".join(a for p, a in self.actions if p == pid)
+        row["game_bolts"] = len(self.projectiles)
+        row["game_beams"] = len(self.beams)
+        row["game_winner"] = self.winner_id if self.winner_id is not None else ""
+        return row

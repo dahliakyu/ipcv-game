@@ -83,10 +83,13 @@ def arm_extended(kpts: np.ndarray, valid: np.ndarray, sw: float, shoulder: int,
     # reaches 1 sw from the shoulder, but not to the side.
     reach = abs(kpts[wrist][0] - kpts[shoulder][0]) / sw > cfg["punch_min_reach"]
 
-    # Wrist roughly between head and hip height (excludes hands up)
+    # Wrist at about shoulder height: below the head (excludes hands up), and
+    # at least level with its own shoulder (excludes low arms; was: above the
+    # hips, merge step 2c). Image y grows downwards.
     shoulder_y = (kpts[sk.L_SHOULDER][1] + kpts[sk.R_SHOULDER][1]) / 2.0
-    hip_y = lower_body_y(kpts, valid, shoulder_y, sw, cfg)
-    at_height = shoulder_y - cfg["punch_above_shoulders"] * sw < kpts[wrist][1] < hip_y
+    top = shoulder_y - cfg["punch_above_shoulders"] * sw
+    bottom = kpts[shoulder][1] + cfg["punch_below_shoulder"] * sw
+    at_height = top < kpts[wrist][1] < bottom
 
     return bool(straight and reach and at_height)
 
