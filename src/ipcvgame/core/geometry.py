@@ -33,3 +33,14 @@ def crop(image: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     h, w = image.shape[:2]
     x1, y1, x2, y2 = clip_bbox(b, w, h).astype(int)
     return image[y1:y2, x1:x2], np.array([x1, y1], dtype=np.float64)
+
+
+def angle_at(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Angle ABC in degrees (e.g. the elbow angle from shoulder, elbow, wrist);
+    0 when a or c coincides with b."""
+    ba, bc = a - b, c - b
+    denom = np.linalg.norm(ba) * np.linalg.norm(bc)
+    if denom < 1e-6:
+        return 0.0
+    cos = np.clip(np.dot(ba, bc) / denom, -1.0, 1.0)
+    return float(np.degrees(np.arccos(cos)))

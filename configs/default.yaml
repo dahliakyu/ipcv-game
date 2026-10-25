@@ -244,8 +244,34 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Stub backend only: fallback head scale (px) when shoulders are not visible.
   default_scale: 80.0
 
-gestures:                 # Task 4 — stub: no events
-  {}
+gestures:                 # Task 4 — Colour Clash rules (recognizer still a stub)
+  # All distances are in shoulder widths (sw), so the rules hold at any
+  # distance from the camera. Values are the prototype's (Project/bodypose.py).
+  # Hands up without a visible nose: the head is taken this far above the
+  # shoulder line, roughly chin height.
+  head_above_shoulders: 0.3
+  # Hips not visible: hip level is taken this far below the shoulders. On
+  # the generous side, so the chest zone and punch height are not cut short.
+  hip_below_shoulders: 2.0
+  # Arms crossed: both wrists between this far above the shoulders and the
+  # hips, so crossing at the chest counts but crossing overhead does not.
+  chest_above_shoulders: 0.5
+  # Arms crossed: wrists closer than this, so wrists that only just pass
+  # each other far apart do not count. The older single-player
+  # pose_detector.py used 1.2; to check on the clips (merge step 4).
+  cross_max_wrist_dist: 1.5
+  # Punch: elbow angle above this (degrees) counts as a straight arm; 180 is
+  # fully straight, and 150 tolerates keypoint noise at the elbow.
+  punch_elbow_angle: 150.0
+  # Punch: wrist at least this far from its shoulder, so an arm pointed at
+  # the camera (foreshortened, looks short) or held close is not a punch.
+  punch_min_reach: 1.0
+  # Punch: wrist no higher than this above the shoulders (and not below the
+  # hips), which excludes hands up.
+  punch_above_shoulders: 1.0
+  # Punch: the other arm must be bent under this angle (guard), so two
+  # straight arms (e.g. a T-pose) are not a punch.
+  punch_bent_angle: 120.0
 
 game:                     # Task 4 — stub: prints events
   {}

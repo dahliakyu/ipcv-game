@@ -131,6 +131,30 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `COLORS` | `scene/draw.py`, `PLAYER_COLORS`, Task 5 |
 | `MATCH_FACTOR`, `LIGHTS`, `EXPOSURE` | Removed (matching replaced; conditions from clip names; exposure not ported) |
 
+#### Task 2 and Task 4: `Project/bodypose.py` (smoothing and gestures)
+
+**Functions and classes**
+
+| In the prototype | Now in | Note |
+| --- | --- | --- |
+| `KeypointTracker` | `pose/motion.py`, `MotionFilter._smooth()` + `_PlayerState` | Task 2; same rules, in seconds |
+| `KeypointTracker.reset()` | `pose/motion.py`, `MotionFilter.reset(pid)` | Also on re-entry |
+| `draw_pose()` | `pose/motion.py`, `MotionFilter.draw_debug()` | Shared `draw_skeleton()` |
+| `angle_at()` | `core/geometry.py`, `angle_at()` | Shared helper |
+| `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
+
+**Constants** (`configs/default.yaml`)
+
+| In the prototype | Now |
+| --- | --- |
+| `CONF_T` (keypoints) | `motion.kpt_conf_threshold` |
+| `ALPHA` | `motion.tau` (seconds) |
+| `MISSING_FRAMES` | `motion.hold_s` (seconds) |
+| `CROSS_MAX_WRIST_DIST`, `PUNCH_ELBOW_ANGLE`, `PUNCH_MIN_REACH`, `PUNCH_BENT_ANGLE` | `gestures.cross_max_wrist_dist`, `punch_elbow_angle`, `punch_min_reach`, `punch_bent_angle` |
+| Numbers inside the functions (0.3, 2.0, 0.5, 1.0 sw) | `gestures.head_above_shoulders`, `hip_below_shoulders`, `chest_above_shoulders`, `punch_above_shoulders` |
+| `NOSE`, `L_SHOULDER`, …, `SKELETON` | `core/skeleton.py` (names and `EDGES`) |
+| `CONF_T` (detection), `IMGSZ`, `MODEL_PATH` | `pose.det_conf`, `pose.imgsz`, `pose.weights` (already there; the pipeline runs the pose model once on the full frame) |
+
 #### Task 3: `Project/` (identity)
 
 Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exists. To be added when the identity merge happens.
@@ -158,6 +182,13 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Evaluation** is per clip, with conditions from clip names instead of key presses. Latency is the face-stage time (`ms_face`). The identity-switch count moved to Task 3.
 - **Name and HP bar** are not drawn by the face stage any more; they are game UI.
 - **One Euro filter:** the shared one in `core/filters.py`. The only difference is the minimum time step (1 µs instead of 1 ms), which is negligible.
+
+#### Task 2 and Task 4
+
+- **Smoothing moved out of the gesture code** into the motion stage (`pose/motion.py`), so the face stage and the game read the same smoothed keypoints.
+- **Seconds instead of frames.** `ALPHA` became a time constant and `MISSING_FRAMES` a hold time, so smoothing and hold behave the same at any frame rate.
+- **Velocities (new):** `Motion.vel` is the finite difference of the smoothed points; 0 on the frame a point jumps back.
+- **`pose_detector.py` not merged:** it is an older single-player copy of `bodypose.py` with slightly different thresholds.
 
 #### Task 3 (pre-merge)
 
@@ -723,3 +754,40 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 | | ema | 0.89 px | 98.5% | 0.08 ms |
 | `two_people_jump.mp4` (4K) | stub | 12.34 px | 99.3% | 0.06 ms |
 | | ema | 8.27 px | 100.0% | 0.11 ms |
+
+#### Step 2 · Gesture rules
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`
+
+- The prototype's `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()` and `detect_punch()` are module-level functions here, with the same names, logic and comments.
+- They take `(kpts, valid, sw, cfg)`: the keypoints and validity from `Motion`, the shoulder width in pixels, and the `gestures:` config. Keypoints are indexed by name through `core/skeleton.py` instead of the file's own index constants.
+- `detect_punch()` still returns `"L"`, `"R"` or `None`; its docstring notes that the model's `L` is the player's own right arm on our mirrored frame. The event will drop the side (step 3).
+- `GestureRecognizer` is still the stub; step 3 connects it.
+
+**Changed:** `src/ipcvgame/core/geometry.py`: new `angle_at(a, b, c)`, the prototype's helper, so other tasks can use it too.
+
+**Changed:** `configs/default.yaml`, `gestures:` section, each with a comment:
+
+| Key | Value | In the prototype |
+| --- | --- | --- |
+| `head_above_shoulders` | 0.3 | `0.3 * sw` in `detect_hands_up()` |
+| `hip_below_shoulders` | 2.0 | `2.0 * sw` in `lower_body_y()` |
+| `chest_above_shoulders` | 0.5 | `0.5 * sw` in `detect_crossed()` |
+| `cross_max_wrist_dist` | 1.5 | `CROSS_MAX_WRIST_DIST` |
+| `punch_elbow_angle` | 150° | `PUNCH_ELBOW_ANGLE` |
+| `punch_min_reach` | 1.0 | `PUNCH_MIN_REACH` |
+| `punch_above_shoulders` | 1.0 | `1.0 * sw` in `arm_extended()` |
+| `punch_bent_angle` | 120° | `PUNCH_BENT_ANGLE` |
+
+Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_detector.py` is an older single-player copy of the same code (`CROSS_MAX_WRIST_DIST` 1.2, `CONFIRM_FRAMES` 3); it is not merged.
+
+**Added:** `tests/test_gestures.py` (15 tests on synthetic skeletons): `angle_at`, the hip fallback, standing (no gesture), hands up with and without the nose, crossed (also mirrored, too far apart, overhead), punch left and right, T-pose, unknown guard arm, short reach, raised arm, hanging arm with a guard.
+
+**Checked:** 93 tests pass, `ruff` clean. How often each rule is true per player-frame on the two test clips (smoothed keypoints from step 1, no hold time or events yet). Neither clip has real punches, crossed arms or hands up as gestures, so every hit is a false positive:
+
+| Clip | Player-frames | Hands up | Crossed | Punch |
+| --- | --- | --- | --- | --- |
+| `two_people_fitness_challenge.webm` | 495 | 3.6% | 0.0% | 4.8% |
+| `two_people_jump.mp4` | 730 | 0.0% | 0.0% | 33.4% |
+
+**Found: a hanging arm reads as a punch.** In the jump clip, the runners' arms hang straight (elbow 159–177°), so they pass the straightness check. The wrist is 1.0–1.4 sw from the shoulder, so it passes the reach check. The wrist is just above the hip keypoint, so it passes the height check. Meanwhile the other arm swings bent. `arm_extended()` checks the distance from the shoulder but not the direction, and the lowest allowed wrist position is the hip line. On all 268 false punch frames across both clips, the wrist is at most 0.96 sw to the side of its shoulder (median 0.19–0.23); a sideways punch at the other player reaches at least `punch_min_reach` (1 sw) sideways. Not changed in this step; the decision is for the Task 5 owner.
