@@ -28,7 +28,9 @@ class EMA:
         self.x = None
         self.t = None
 
-    def __call__(self, x: np.ndarray, t: float) -> np.ndarray:
+    def __call__(self, x: np.ndarray, t: float, snap: np.ndarray | None = None) -> np.ndarray:
+        """snap: optional bool mask over the first axis; those entries jump to x
+        instead of being smoothed (e.g. a keypoint that comes back after a loss)."""
         x = np.asarray(x, dtype=np.float64)
         if self.x is None or self.t is None:
             self.x, self.t = x.copy(), t
@@ -36,6 +38,8 @@ class EMA:
         dt = max(t - self.t, 1e-6)
         alpha = 1.0 - math.exp(-dt / self.tau) if self.tau > 0 else 1.0
         self.x = self.x + alpha * (x - self.x)
+        if snap is not None:
+            self.x[snap] = x[snap]
         self.t = t
         return self.x.copy()
 

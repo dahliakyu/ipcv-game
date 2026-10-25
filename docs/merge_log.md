@@ -639,3 +639,87 @@ On the test clips:
 7. cheek bulge.
 
 It also lists the merge steps still needed first (gestures, game logic, renderer, identity), the technical follow-ups from Task 1, and ideas considered but not planned. No code changed.
+
+## Task 4: Gestures
+
+### Plan
+
+**Source.** `Project/bodypose.py`: `KeypointTracker`, `Debounce`, the geometry helpers and the gesture functions, and how `main.py` turns their output into game actions. Its identity code (`PlayerIdentityTracker`) and its own detection loop belong to the identity merge.
+
+**What the code does.**
+
+- **Smoothing:** `KeypointTracker` treats keypoints under confidence 0.35 (`CONF_T`) as missing. A missing point keeps its last position for 10 frames (`MISSING_FRAMES`), and the rest are smoothed with an EMA (α = 0.5). A point that comes back after being lost jumps to the detection instead of sliding in from a stale spot.
+- **Gestures,** all in shoulder widths and only when the shoulders are more than 10 px apart:
+  - `hands_up`: both wrists above the nose, or above a point 0.3 shoulder widths above the shoulders when the nose isn't seen. Must hold for 2 frames (`CONFIRM_FRAMES`).
+  - `crossed`: wrists in the opposite left/right order to the shoulders (independent of mirroring), both between chest and hips, and closer than 1.5 shoulder widths. Must hold for 2 frames.
+  - `punch`: one arm straight (elbow > 150°), reaching more than 1 shoulder width, at chest height, with the other arm bent (< 120°). Stays on for 0.5 s after the last detection (`PUNCH_HOLD_S`).
+- **Use in `main.py`:** shield and beam fire on the frame `crossed` / `hands_up` turns on. `game.attack()` is called on every frame the punch is on; the game's 1.8 s cooldown limits how often that fires. `punch_side`, `hand_x` and `hand_y` are computed but not used by the game or renderer.
+
+**Decisions (Task 5 owner, 2026-10-25).**
+
+- **Smoothing goes to `pose/motion.py` (Task 2),** where the architecture puts it. Gestures, the face stage and the game then all read the same held and smoothed keypoints.
+- **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
+- **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
+
+**Where each part goes.**
+
+| In the code | Goes to | Change |
+| --- | --- | --- |
+| `KeypointTracker` | `pose/motion.py`, `MotionFilter` | Frames to seconds; EMA from `core.filters` |
+| `angle_at()` | `core/geometry.py` | Shared helper |
+| `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, module level | Same rules; numbers from config |
+| `Debounce`, `punch_until`, `BodyPoseProcessor.process()` (gesture part) | `interaction/gestures.py`, `GestureRecognizer` | Seconds instead of frames; rising-edge `GestureEvent`s |
+| `BodyPoseProcessor.reset_player()` | `MotionFilter.reset(pid)`, `GestureRecognizer.reset(pid)` | Also called when a player re-enters |
+| `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer` | The rising edge is detected in the gesture stage |
+| `draw_pose()`, gesture text under the box | `MotionFilter.draw_debug()`, `GestureRecognizer.draw_debug()` | |
+| Per-crop pose model call | Already in `pose/estimator.py` | The pipeline runs the pose model once on the full frame |
+| `center_x`, `torso_y`, `head_x/y`, `hands_center_x/y`, `hand_x/y` | Game merge | Positions for the game, computed from `state.motion` and `state.faces` |
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Motion smoothing: `KeypointTracker` into `MotionFilter`; the pass-through stays as `motion.backend: stub`.
+2. Gesture rules: the six functions, `angle_at()` in `core/geometry.py`, thresholds in the `gestures:` config, tests on synthetic skeletons.
+3. `GestureRecognizer`: timers in seconds, rising-edge events `punch`, `hands_up`, `arms_crossed`, reset on loss and re-entry, `draw_debug`, `log_fields`.
+4. Check and record: event counts on the two test clips, Change Overviews, `docs/phase-1/status.md`.
+
+**Verification.** Unit tests for every step; event counts on `data/test_clips/`. The Task 5 owner checks the gestures live on the webcam.
+
+### Changes
+
+#### Step 1 · Motion smoothing: `KeypointTracker` into `MotionFilter`
+
+**Changed:** `src/ipcvgame/pose/motion.py`
+
+- `MotionFilter` now does the prototype's `KeypointTracker.update()` per player (`_smooth()`, state in `_PlayerState`), with the same five rules:
+  - keypoints under the confidence threshold count as missing;
+  - a missing point keeps its last position and stays valid for `hold_s`;
+  - an EMA smooths the positions;
+  - a point that comes back after more than `hold_s` jumps to the detection;
+  - a frame without a detection resets the player (the prototype reset when the pose model found nobody in the crop).
+- The missing-frame counter became the time each keypoint was last seen (`last_good`, from `Frame.t`), so the hold is the same at any frame rate.
+- Velocities are still the finite difference on `Frame.t`, now of the smoothed points. A point that jumps back gets velocity 0 on that frame, so the jump doesn't count as motion.
+- The phase-1 pass-through stays as `backend: stub`, unchanged except for the new confidence threshold.
+
+**Changed:** `src/ipcvgame/core/filters.py`: `EMA.__call__` takes an optional `snap` mask; masked rows jump to the new value instead of being smoothed. Without the mask it behaves as before, so the face stage is unaffected.
+
+**Changed:** `configs/default.yaml`, `motion:` section
+
+| Key | Value | From the prototype |
+| --- | --- | --- |
+| `backend` | `ema` | (new; `stub` = pass-through) |
+| `kpt_conf_threshold` | 0.35 (was 0.5) | `CONF_T`; the gesture thresholds were tuned with it |
+| `tau` | 0.048 s | `ALPHA = 0.5` per frame at 30 FPS: τ = −dt / ln(1 − α) |
+| `hold_s` | 0.33 s | `MISSING_FRAMES = 10` at 30 FPS |
+
+**Added:** `tests/test_motion.py` (7 tests: first detection snaps, EMA step after one time constant, hold → invalid → snap back, reset on no detection and on re-entry, stub pass-through, unknown backend). `tests/test_filters.py`: one test for the snap mask.
+
+**Changed:** `tests/test_pipeline.py`, `test_velocity_uses_frame_time`: runs with `motion.tau=0` (no smoothing), so it still checks the plain finite difference.
+
+**Checked:** 78 tests pass, `ruff` clean. On the first 300 frames of each test clip (jitter = median second difference of valid keypoints, which includes real motion):
+
+| Clip | Backend | Jitter | Valid keypoints | Motion stage |
+| --- | --- | --- | --- | --- |
+| `two_people_fitness_challenge.webm` | stub | 3.25 px | 95.9% | 0.04 ms |
+| | ema | 0.89 px | 98.5% | 0.08 ms |
+| `two_people_jump.mp4` (4K) | stub | 12.34 px | 99.3% | 0.06 ms |
+| | ema | 8.27 px | 100.0% | 0.11 ms |

@@ -1,6 +1,6 @@
 """Task 1 — MediaPipe Face Landmarker on a face crop.
 
-Used next to YuNet, not instead of it: YuNet finds and tracks the face, and
+Used next to YuNet: YuNet finds and tracks the face, and
 the landmarker reads what YuNet's 5 points cannot give: the head rotation
 (reliable also for strong up/down tilt) and the 52 blendshape scores
 (jawOpen, eyeBlinkLeft/Right, mouthSmileLeft/Right, cheekPuff, ...).
