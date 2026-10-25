@@ -625,3 +625,17 @@ On the test clips:
 - flow that shrinks the face by 25% per frame stops (→ hold) before the face drops below `min_face`.
 
 **Checked:** 70 tests pass, `ruff` clean.
+
+#### After step 10 · Backlog: `docs/extra_features.md`
+
+**Added:** `docs/extra_features.md`. The game features agreed during the merge, written up for after it, each with owners, inputs from the face stage, a starting design with thresholds, and how to check it:
+
+1. team colour;
+2. hit reaction;
+3. status above the head;
+4. super charge that a blink resets;
+5. taunt;
+6. Smash-Bros-style consumables (eat falling items with a chomp, or grab them from the floor);
+7. cheek bulge.
+
+It also lists the merge steps still needed first (gestures, game logic, renderer, identity), the technical follow-ups from Task 1, and ideas considered but not planned. No code changed.
