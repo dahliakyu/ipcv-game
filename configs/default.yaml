@@ -56,11 +56,35 @@ motion:                   # Task 2 — motion filtering (stub: pass-through)
   # threshold Ultralytics uses when drawing keypoints.
   kpt_conf_threshold: 0.5
 
-face:                     # Task 1 — stub: above_head anchor above the nose
-  # above_head sits this many shoulder-widths above the nose. ~0.9 clears
-  # the top of the head for an average adult.
+face:                     # Task 1 — YuNet face detection on per-player head crops
+  # "yunet" = real detector; "stub" = above_head anchor above the nose
+  # keypoint (no model file needed, used by the tests).
+  backend: yunet
+  # YuNet face detector from the OpenCV model zoo. Not in the repo; the
+  # README has the download command.
+  model: models/face_detection_yunet_2023mar.onnx
+  # Detection score threshold. Lower than OpenCV's 0.9 default so blurry or
+  # distant faces are still found (prototype value).
+  score_threshold: 0.6
+  # YuNet's own non-maximum suppression: overlapping boxes above this IoU
+  # count as one face (OpenCV default 0.3).
+  nms_threshold: 0.3
+  # Candidates kept before NMS. A head crop holds one or two faces, so 50
+  # is plenty (OpenCV default 5000).
+  top_k: 50
+
+  # Effect sprites: RGBA PNGs, relative to the repo root.
+  hat_sprite: assets/face/hat.png
+  mustache_sprite: assets/face/mustache.png
+  # Hat width in face widths; tuned by eye in the prototype.
+  hat_width: 1.5
+  # Mustache width in face widths; tuned by eye in the prototype.
+  mustache_width: 0.8
+
+  # Stub backend only: above_head sits this many shoulder-widths above the
+  # nose. ~0.9 clears the top of the head for an average adult.
   above_head_factor: 0.9
-  # Fallback head scale (px) when shoulders are not visible.
+  # Stub backend only: fallback head scale (px) when shoulders are not visible.
   default_scale: 80.0
 
 gestures:                 # Task 4 — stub: no events

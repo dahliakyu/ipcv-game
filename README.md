@@ -28,6 +28,13 @@ automatically on first run; to fetch it by hand:
 mkdir -p models && wget -P models https://github.com/ultralytics/assets/releases/latest/download/yolo26n-pose.pt
 ```
 
+The face detector (YuNet, OpenCV model zoo) is not downloaded automatically:
+
+```bash
+wget -P models https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+sha256sum models/face_detection_yunet_2023mar.onnx   # 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
+```
+
 Test clips go in `data/clips/` (gitignored, shared via the drive). Copy each
 `.mp4` together with its `.timestamps.csv`.
 

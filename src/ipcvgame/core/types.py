@@ -59,6 +59,7 @@ class Face:                    # Task 1 output, per player
     roll: float
     yaw: float
     anchors: dict[str, np.ndarray]   # "above_head", "forehead", "mouth"
+    alpha: float = 1.0               # effect opacity: 1 while tracked, fades to 0 once lost
 
 
 @dataclass
