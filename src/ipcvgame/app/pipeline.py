@@ -69,10 +69,11 @@ class Pipeline:
         if self._runs("identity"):
             with prof("identity"):
                 players = self.identity.update(dets, frame)
-            # The reentered flag tells Tasks 1 and 2 to drop filter state.
+            # The reentered flag tells Tasks 1, 2 and 4 to drop per-player state.
             for pid, p in players.items():
                 if p.reentered:
                     self.face.reset(pid)
+                    self.gestures.reset(pid)
         if self._runs("motion"):
             with prof("motion"):
                 motion = self.motion.update(players, frame.t)

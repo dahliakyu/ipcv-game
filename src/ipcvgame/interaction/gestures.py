@@ -6,7 +6,11 @@ keypoints and validity from ``Motion``; all distances are in shoulder widths
 (``sw``), so they work at any distance from the camera. Every number comes
 from the ``gestures:`` config.
 
-``GestureRecognizer`` is still the phase-1 stub (no events) until merge step 3.
+``GestureRecognizer`` turns the rules into events: hands up and arms crossed
+must hold for ``confirm_s`` (the prototype's ``Debounce``), and a punch stays on
+for ``punch_hold_s`` after its last detection (``punch_until``). One event is
+sent when a gesture turns on (the rising edge), so one punch gives one ``punch``
+event; punches less than ``punch_hold_s`` apart count as one.
 """
 
 from __future__ import annotations
@@ -16,7 +20,9 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.geometry import angle_at
 from ipcvgame.core.types import FrameState, GestureEvent, Motion
-from ipcvgame.scene.draw import draw_lines
+from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, player_color
+
+GESTURES = ("hands_up", "arms_crossed", "punch")
 
 
 def lower_body_y(kpts: np.ndarray, valid: np.ndarray, shoulder_y: float, sw: float,
@@ -67,13 +73,15 @@ def detect_crossed(kpts: np.ndarray, valid: np.ndarray, sw: float, cfg: dict) ->
 
 def arm_extended(kpts: np.ndarray, valid: np.ndarray, sw: float, shoulder: int,
                  elbow: int, wrist: int, cfg: dict) -> bool:
-    """Arm is straight, reaching out, and at roughly shoulder height."""
+    """Arm is straight, reaching out sideways, and at roughly shoulder height."""
     if not (valid[shoulder] and valid[elbow] and valid[wrist]):
         return False
 
     straight = angle_at(kpts[shoulder], kpts[elbow], kpts[wrist]) > cfg["punch_elbow_angle"]
 
-    reach = np.linalg.norm(kpts[wrist] - kpts[shoulder]) / sw > cfg["punch_min_reach"]
+    # Sideways reach only (merge step 2b): a straight arm hanging down also
+    # reaches 1 sw from the shoulder, but not to the side.
+    reach = abs(kpts[wrist][0] - kpts[shoulder][0]) / sw > cfg["punch_min_reach"]
 
     # Wrist roughly between head and hip height (excludes hands up)
     shoulder_y = (kpts[sk.L_SHOULDER][1] + kpts[sk.R_SHOULDER][1]) / 2.0
@@ -110,21 +118,97 @@ def detect_punch(kpts: np.ndarray, valid: np.ndarray, sw: float, cfg: dict) -> s
     return None
 
 
+def shoulder_width(kpts: np.ndarray, valid: np.ndarray, min_px: float) -> float | None:
+    """Shoulder width in px, the unit of every rule; None if the shoulders are
+    not both seen or are too close together to measure reliably."""
+    if not (valid[sk.L_SHOULDER] and valid[sk.R_SHOULDER]):
+        return None
+    sw = float(np.linalg.norm(kpts[sk.L_SHOULDER] - kpts[sk.R_SHOULDER]))
+    return sw if sw > min_px else None
+
+
+def detect_all(kpts: np.ndarray, valid: np.ndarray, cfg: dict) -> dict[str, bool]:
+    """All three rules on one frame, before any hold time."""
+    sw = shoulder_width(kpts, valid, cfg["min_shoulder_px"])
+    if sw is None:
+        return dict.fromkeys(GESTURES, False)
+    return {
+        "hands_up": detect_hands_up(kpts, valid, sw, cfg),
+        "arms_crossed": detect_crossed(kpts, valid, sw, cfg),
+        "punch": detect_punch(kpts, valid, sw, cfg) is not None,
+    }
+
+
+class _PlayerState:
+    """One player's timers (the prototype's ``Debounce`` and ``punch_until``)."""
+
+    def __init__(self):
+        # Start of the current run of frames where the rule holds; None = not holding.
+        self.since: dict[str, float | None] = {"hands_up": None, "arms_crossed": None}
+        self.punch_until = -np.inf  # the punch counts as on until this time
+        self.active = dict.fromkeys(GESTURES, False)
+
+
 class GestureRecognizer:
     def __init__(self, cfg: dict):
         self.cfg = cfg
+        self.confirm_s = float(cfg["confirm_s"])
+        self.punch_hold_s = float(cfg["punch_hold_s"])
+        self._state: dict[int, _PlayerState] = {}
 
     def update(self, motion: dict[int, Motion], t: float) -> list[GestureEvent]:
-        return []
+        # As in the prototype: a player without keypoints starts over.
+        for pid in [pid for pid in self._state if pid not in motion]:
+            del self._state[pid]
+
+        events = []
+        for pid, m in sorted(motion.items()):
+            st = self._state.setdefault(pid, _PlayerState())
+            raw = detect_all(m.kpts, m.valid, self.cfg)
+            on = {}
+            for name in ("hands_up", "arms_crossed"):
+                if not raw[name]:
+                    st.since[name] = None
+                elif st.since[name] is None:
+                    st.since[name] = t
+                on[name] = st.since[name] is not None and t - st.since[name] >= self.confirm_s
+            if raw["punch"]:
+                st.punch_until = t + self.punch_hold_s
+            on["punch"] = t < st.punch_until
+            for name in GESTURES:
+                if on[name] and not st.active[name]:
+                    events.append(GestureEvent(pid=pid, name=name, t=t, conf=1.0))
+                st.active[name] = on[name]
+        return events
 
     def reset(self, pid: int | None = None) -> None:
-        pass
+        if pid is None:
+            self._state.clear()
+        else:
+            self._state.pop(pid, None)
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """Each player's motion signals and this frame's events."""
-        lines = []
-        for pid, m in sorted(state.motion.items()):
-            sig = "  ".join(f"{k}={v:.0f}" for k, v in m.signals.items())
-            lines.append(f"P{pid}: {sig}")
-        lines += [f"EVENT P{e.pid} {e.name} ({e.conf:.2f})" for e in state.events]
+        """Skeleton per player, the prototype's H/C/P line under the body box
+        (1 = gesture on), and this frame's events."""
+        for pid, m in state.motion.items():
+            draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
+            st, p = self._state.get(pid), state.players.get(pid)
+            if st is None or p is None:
+                continue
+            a = st.active
+            text = f"H:{int(a['hands_up'])} C:{int(a['arms_crossed'])} P:{int(a['punch'])}"
+            x1, y2 = int(p.bbox[0]), int(p.bbox[3])
+            draw_text(canvas, text, (x1, min(y2 + 25, canvas.shape[0] - 5)), (255, 255, 0))
+        lines = [f"EVENT P{e.pid} {e.name}" for e in state.events]
         draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
+
+    def log_fields(self, state: FrameState) -> dict:
+        """Per-player CSV columns gest_p<pid>_<gesture> (1 while on) and
+        gest_p<pid>_events (names of this frame's events, joined by '+')."""
+        row: dict = {}
+        for pid, st in sorted(self._state.items()):
+            pre = f"gest_p{pid}_"
+            for name in GESTURES:
+                row[pre + name] = int(st.active[name])
+            row[pre + "events"] = "+".join(e.name for e in state.events if e.pid == pid)
+        return row

@@ -141,6 +141,12 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `KeypointTracker.reset()` | `pose/motion.py`, `MotionFilter.reset(pid)` | Also on re-entry |
 | `draw_pose()` | `pose/motion.py`, `MotionFilter.draw_debug()` | Shared `draw_skeleton()` |
 | `angle_at()` | `core/geometry.py`, `angle_at()` | Shared helper |
+| `Debounce`, `punch_until`, `punch_side` | `interaction/gestures.py`, `_PlayerState` + `GestureRecognizer.update()` | Seconds instead of frames; side dropped |
+| `BodyPoseProcessor.process()`, gesture part (`sw > 10`, the three rules) | `interaction/gestures.py`, `shoulder_width()` + `detect_all()` | |
+| `BodyPoseProcessor.reset_player()` | `MotionFilter.reset(pid)` + `GestureRecognizer.reset(pid)` | Also on re-entry |
+| `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer.update()` | Rising-edge `GestureEvent`s |
+| Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
+| `center_x`, `torso_y`, `head_x/y`, `hands_center_x/y`, `hand_x/y` | Not ported yet | Game positions; game merge |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
 **Constants** (`configs/default.yaml`)
@@ -153,6 +159,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `CROSS_MAX_WRIST_DIST`, `PUNCH_ELBOW_ANGLE`, `PUNCH_MIN_REACH`, `PUNCH_BENT_ANGLE` | `gestures.cross_max_wrist_dist`, `punch_elbow_angle`, `punch_min_reach`, `punch_bent_angle` |
 | Numbers inside the functions (0.3, 2.0, 0.5, 1.0 sw) | `gestures.head_above_shoulders`, `hip_below_shoulders`, `chest_above_shoulders`, `punch_above_shoulders` |
 | `NOSE`, `L_SHOULDER`, …, `SKELETON` | `core/skeleton.py` (names and `EDGES`) |
+| `CONFIRM_FRAMES`, `PUNCH_HOLD_S`, `sw > 10` | `gestures.confirm_s`, `punch_hold_s`, `min_shoulder_px` |
 | `CONF_T` (detection), `IMGSZ`, `MODEL_PATH` | `pose.det_conf`, `pose.imgsz`, `pose.weights` (already there; the pipeline runs the pose model once on the full frame) |
 
 #### Task 3: `Project/` (identity)
@@ -189,6 +196,9 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **Seconds instead of frames.** `ALPHA` became a time constant and `MISSING_FRAMES` a hold time, so smoothing and hold behave the same at any frame rate.
 - **Velocities (new):** `Motion.vel` is the finite difference of the smoothed points; 0 on the frame a point jumps back.
 - **`pose_detector.py` not merged:** it is an older single-player copy of `bodypose.py` with slightly different thresholds.
+- **Punch reach is sideways (step 2b):** `arm_extended()` measures the wrist's horizontal distance from the shoulder, not the straight-line distance, so a straight hanging arm is no longer a punch.
+- **Events instead of per-frame flags (step 3):** one `GestureEvent` when a gesture turns on; `main.py`'s `hands_were_up` / `arms_were_crossed` bookkeeping moved into the gesture stage. Punches less than 0.5 s apart give one event.
+- **No usable shoulder width restarts the timers (step 3);** the prototype kept counting across such frames.
 
 #### Task 3 (pre-merge)
 
@@ -691,6 +701,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 - **Smoothing goes to `pose/motion.py` (Task 2),** where the architecture puts it. Gestures, the face stage and the game then all read the same held and smoothed keypoints.
 - **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
 - **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
+- **Punch reach measured sideways (after step 2).** Step 2 showed the prototype's rule fires on a straight hanging arm; step 2b fixes it.
 
 **Where each part goes.**
 
@@ -710,10 +721,12 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 1. Motion smoothing: `KeypointTracker` into `MotionFilter`; the pass-through stays as `motion.backend: stub`.
 2. Gesture rules: the six functions, `angle_at()` in `core/geometry.py`, thresholds in the `gestures:` config, tests on synthetic skeletons.
+2b. Punch rule fix: sideways reach in `arm_extended()`.
 3. `GestureRecognizer`: timers in seconds, rising-edge events `punch`, `hands_up`, `arms_crossed`, reset on loss and re-entry, `draw_debug`, `log_fields`.
 4. Check and record: event counts on the two test clips, Change Overviews, `docs/phase-1/status.md`.
 
 **Verification.** Unit tests for every step; event counts on `data/test_clips/`. The Task 5 owner checks the gestures live on the webcam.
+
 
 ### Changes
 
@@ -791,3 +804,63 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 | `two_people_jump.mp4` | 730 | 0.0% | 0.0% | 33.4% |
 
 **Found: a hanging arm reads as a punch.** In the jump clip, the runners' arms hang straight (elbow 159–177°), so they pass the straightness check. The wrist is 1.0–1.4 sw from the shoulder, so it passes the reach check. The wrist is just above the hip keypoint, so it passes the height check. Meanwhile the other arm swings bent. `arm_extended()` checks the distance from the shoulder but not the direction, and the lowest allowed wrist position is the hip line. On all 268 false punch frames across both clips, the wrist is at most 0.96 sw to the side of its shoulder (median 0.19–0.23); a sideways punch at the other player reaches at least `punch_min_reach` (1 sw) sideways. Not changed in this step; the decision is for the Task 5 owner.
+
+#### Step 2b · Punch reach measured sideways
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`, `arm_extended()`: the reach check uses the wrist's horizontal distance from its shoulder, `abs(wrist.x - shoulder.x) / sw`, instead of the straight-line distance. Everything else in the rule is unchanged, and `punch_min_reach` stays 1.0.
+
+**Why:** a straight arm hanging down is also 1 sw or more from its shoulder, and with the wrist just above the hip keypoint it passed every check (step 2). On the 268 false punch frames the wrist was at most 0.96 sw to the side; a sideways punch at the other player reaches out at least 1 sw.
+
+**Changed:** `configs/default.yaml`: the `punch_min_reach` comment says it is a sideways distance, and why.
+
+**Added:** `tests/test_gestures.py`, `test_hanging_arm_above_hip_line_is_no_punch`: the jump-clip pose (1.9 sw from the shoulder, 0.2 sw to the side), which the old check accepted.
+
+**Checked:** 94 tests pass, `ruff` clean. Punch is now true on 0.0% of player-frames on both test clips (was 4.8% and 33.4%); hands up and crossed are unchanged (3.6% / 0.0% and 0.0% / 0.0%). Neither clip has real punches, so whether real sideways punches still pass needs the webcam check (Task 5 owner).
+
+#### Step 3 · `GestureRecognizer`: events with hold times
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`
+
+- `shoulder_width()` and `detect_all()` (new helpers): the prototype's shoulder-width check from `BodyPoseProcessor.process()` (`sw > 10`), then all three rules on one frame. Without a usable shoulder width every rule is false.
+- `GestureRecognizer.update()` keeps per-player timers in `_PlayerState`:
+  - **hands up and arms crossed** must hold for `confirm_s`. This is the prototype's `Debounce` in seconds: the start time of the current run of frames instead of a frame count.
+  - **punch** stays on for `punch_hold_s` after its last detected frame (the prototype's `punch_until`, from `Frame.t` instead of `time.perf_counter()`).
+  - **one `GestureEvent` when a gesture turns on**, named `hands_up`, `arms_crossed` or `punch`, with `conf` 1.0. This replaces `hands_were_up` / `arms_were_crossed` in `main.py`, and gives one `punch` event per punch.
+  - a player missing from `Motion` starts over, as the prototype did when the pose model found nobody.
+- `reset(pid)` clears one player (`reset_player()`).
+- `draw_debug()`: the skeleton, the prototype's `H:C:P` line under each body box (1 = on), and this frame's events.
+- `log_fields()`: CSV columns `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch` (1 while on) and `gest_p<pid>_events`.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: a re-entering player also resets the gesture stage (`gestures.reset(pid)`).
+
+**Changed:** `configs/default.yaml`, `gestures:` section, each with a comment:
+
+| Key | Value | In the prototype |
+| --- | --- | --- |
+| `min_shoulder_px` | 10 | `sw > 10` in `process()` |
+| `confirm_s` | 0.03 s | `CONFIRM_FRAMES = 2`: at 30 FPS the 2nd frame comes 0.033 s after the 1st |
+| `punch_hold_s` | 0.5 s | `PUNCH_HOLD_S` |
+
+**Behaviour differences from the prototype:**
+
+- A frame without a usable shoulder width restarts the hands-up and crossed timers. The prototype skipped the frame and kept counting.
+- Punches less than 0.5 s apart give one event; a fast double punch counts once.
+
+**Added:** 8 tests in `tests/test_gestures.py`:
+- hands up fires once after the confirm time, and again after a release;
+- a one-frame glitch is no gesture;
+- the crossed event name;
+- one punch gives one event, a new punch after the hold time gives another;
+- a missing player starts over;
+- `reset()`;
+- shoulders under 10 px;
+- `log_fields()`.
+
+**Checked:** 102 tests pass, `ruff` clean. Run up to the gesture stage on the test clips:
+
+| Clip | Events | Gesture stage |
+| --- | --- | --- |
+| `two_people_fitness_challenge.webm` (260 frames) | 2 × `hands_up`, P2 | 0.09 ms |
+| `two_people_jump.mp4` (365 frames) | none | 0.09 ms |
+
+Both `hands_up` events come from player 2 raising both fists above the head during the exercise, which the rule rightly counts.

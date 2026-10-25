@@ -153,6 +153,35 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 
 **Check.** The bulge stays on the cheeks while the head moves and turns, and ends cleanly; ~1 ms extra per face.
 
+### 8. Learned punch classifier
+
+**Status.** Planned for after the merge; the rule with sideways reach (merge step 2b) works well enough for now. Decisions already made (Task 5 owner, 2026-10-25):
+
+- **Goal:** one real sideways punch fires one paint stroke.
+- **Labels:** the start (arm starts moving out) and end (arm fully extended) of each punch, marked frame by frame in a labelling tool.
+- **Data:** the Task 5 owner records themselves in sessions with different clothing and rooms. Clip names: `punch_<session>_<n>`, `neg_<session>_<n>` (no labels needed), `game_<n>` (test only).
+- **Split:** leave one session out; the report states that all data is from one person.
+- **Model:** logistic regression first.
+- **Steps:** `interaction/punch_features.py` → `tools/label_punches.py` → `tools/train_punch.py` → `gestures.punch_backend: rule | classifier` + `tools/eval_gestures.py`.
+
+**What.** A small trained classifier decides "punch or not" per player and frame, instead of the hand-written rule.
+
+**Why.** The prototype's rule (`detect_punch()` in `interaction/gestures.py`) checks poses one frame at a time. It reads a straight hanging arm next to a bent arm as a punch: 33% of player-frames on the jump clip, none of them real punches (`merge_log.md`, Task 4, step 2). The rule also ignores speed. A punch is fast and a hanging arm is still, and a classifier can learn that from examples instead of us adding one rule after another.
+
+**Owners.** Task 4: the classifier, labelling and evaluation. Task 2: the inputs from `Motion` (smoothed keypoints, `valid`, `vel`).
+
+**Design.**
+
+- **Features per player and frame**, all in shoulder widths so distance to the camera doesn't matter:
+  - each arm's elbow and wrist position relative to its shoulder;
+  - both elbow angles;
+  - wrist speed (from `Motion.vel`, in sw/s), plus the same features averaged over the last ~0.2 s, so the movement counts and not just the pose.
+- **Labels:** none / punch, per player-frame. Record clips with `tools/record_clip.py` and label them with a small script of our own. Include hard negatives: hanging arms, running, waving, hands up, arms crossed, stretching. Use the two current test clips as extra negatives.
+- **Model:** start small and explainable with `scikit-learn` (logistic regression, k-NN or a random forest), as in `docs/candidate-modules-and-libraries.md`. Pin `scikit-learn` and `joblib` in `requirements.txt`; keep the trained model file in `models/` (gitignored) with a training command in the README.
+- **Keep the rule as fallback:** `gestures.punch_backend: rule | classifier`. The event logic stays the same (hold time, rising-edge `punch` event), and only the per-frame "is this a punch" changes. A probability threshold goes in config.
+
+**Check.** Split train and test by recording, not by frame, so frames from one clip never land on both sides. Report precision and recall per player-frame and missed or extra punch events, for the rule and the classifier on the same test clips. Target: no punches on the jump and fitness clips, real sideways punches still detected, under 1 ms per frame.
+
 ## Technical follow-ups from the Task 1 merge
 
 | Item | Why | Where |

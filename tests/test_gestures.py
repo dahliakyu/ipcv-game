@@ -10,7 +10,9 @@ import pytest
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
 from ipcvgame.core.geometry import angle_at
+from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import (
+    GestureRecognizer,
     arm_bent,
     arm_extended,
     detect_crossed,
@@ -138,6 +140,17 @@ def test_punch_right(cfg):
     assert detect_punch(k, v, SW, cfg) == "R"
 
 
+def test_hanging_arm_above_hip_line_is_no_punch(cfg):
+    # The false positive from the jump clip: a straight arm hanging with the
+    # wrist just above the hip keypoint, the other arm bent. 1.9 sw from the
+    # shoulder, but only 0.2 sw to the side.
+    k, v = standing()
+    k[sk.L_ELBOW], k[sk.L_WRIST] = (368, 270), (376, 350)
+    k[sk.R_ELBOW], k[sk.R_WRIST] = (260, 280), (300, 230)
+    assert not arm_extended(k, v, SW, sk.L_SHOULDER, sk.L_ELBOW, sk.L_WRIST, cfg)
+    assert detect_punch(k, v, SW, cfg) is None
+
+
 def test_two_straight_arms_are_no_punch(cfg):
     k, v = punch_left()
     k[sk.R_ELBOW], k[sk.R_WRIST] = (220, 200), (160, 200)  # T-pose
@@ -157,3 +170,92 @@ def test_punch_rejects_short_reach_and_raised_arm(cfg):
     k, v = punch_left()
     k[sk.L_ELBOW], k[sk.L_WRIST] = (360, 140), (360, 60)  # straight up
     assert detect_punch(k, v, SW, cfg) is None
+
+
+# --- GestureRecognizer: hold times and one event per gesture ----------------
+
+def recognizer() -> GestureRecognizer:
+    return GestureRecognizer(load_config()["gestures"])
+
+
+def motion(k: np.ndarray, v: np.ndarray) -> dict[int, Motion]:
+    return {1: Motion(kpts=k, vel=np.zeros_like(k), valid=v, signals={})}
+
+
+def hands_up() -> tuple[np.ndarray, np.ndarray]:
+    k, v = standing()
+    k[sk.L_WRIST], k[sk.R_WRIST] = (370, 100), (270, 100)
+    return k, v
+
+
+def names(events) -> list[str]:
+    return [e.name for e in events]
+
+
+def test_hands_up_fires_once_after_confirm_time():
+    g = recognizer()
+    assert g.update(motion(*hands_up()), 0.0) == []  # 1st frame: not confirmed yet
+    ev = g.update(motion(*hands_up()), 1 / 30)
+    assert names(ev) == ["hands_up"] and ev[0].pid == 1 and ev[0].t == 1 / 30
+    assert g.update(motion(*hands_up()), 2 / 30) == []  # held: no repeat
+    g.update(motion(*standing()), 3 / 30)
+    g.update(motion(*hands_up()), 4 / 30)
+    assert names(g.update(motion(*hands_up()), 5 / 30)) == ["hands_up"]
+
+
+def test_one_frame_glitch_is_no_gesture():
+    g = recognizer()
+    g.update(motion(*crossed()), 0.0)
+    assert g.update(motion(*standing()), 1 / 30) == []
+    assert g.update(motion(*crossed()), 2 / 30) == []
+
+
+def test_arms_crossed_event_name():
+    g = recognizer()
+    g.update(motion(*crossed()), 0.0)
+    assert names(g.update(motion(*crossed()), 1 / 30)) == ["arms_crossed"]
+
+
+def test_one_punch_gives_one_event():
+    g = recognizer()
+    assert names(g.update(motion(*punch_left()), 0.0)) == ["punch"]  # no confirm time
+    # Arm fails the rule for a frame, then passes again: same punch.
+    assert g.update(motion(*standing()), 1 / 30) == []
+    assert g.update(motion(*punch_left()), 2 / 30) == []
+    # Off for longer than punch_hold_s: the next punch is a new event.
+    hold = load_config()["gestures"]["punch_hold_s"]
+    g.update(motion(*standing()), 2 / 30 + hold + 0.01)
+    assert names(g.update(motion(*punch_left()), 2 / 30 + hold + 0.05)) == ["punch"]
+
+
+def test_missing_player_starts_over():
+    g = recognizer()
+    g.update(motion(*hands_up()), 0.0)
+    g.update(motion(*hands_up()), 1 / 30)
+    g.update({}, 2 / 30)  # no keypoints this frame
+    assert g.update(motion(*hands_up()), 3 / 30) == []
+    assert names(g.update(motion(*hands_up()), 4 / 30)) == ["hands_up"]
+
+
+def test_reset_clears_player():
+    g = recognizer()
+    g.update(motion(*punch_left()), 0.0)
+    g.reset(1)
+    assert names(g.update(motion(*punch_left()), 0.1)) == ["punch"]
+
+
+def test_small_shoulders_give_no_gesture():
+    g = recognizer()
+    k, v = hands_up()
+    k[sk.R_SHOULDER] = k[sk.L_SHOULDER] + (8, 0)  # 8 px apart
+    g.update(motion(k, v), 0.0)
+    assert g.update(motion(k, v), 1 / 30) == []
+
+
+def test_log_fields():
+    g = recognizer()
+    ev = g.update(motion(*punch_left()), 0.0)
+    state = FrameState(frame=None, players={}, motion={}, faces={}, events=ev, timings={})
+    row = g.log_fields(state)
+    assert row["gest_p1_punch"] == 1 and row["gest_p1_hands_up"] == 0
+    assert row["gest_p1_events"] == "punch"

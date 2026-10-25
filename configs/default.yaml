@@ -244,7 +244,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Stub backend only: fallback head scale (px) when shoulders are not visible.
   default_scale: 80.0
 
-gestures:                 # Task 4 — Colour Clash rules (recognizer still a stub)
+gestures:                 # Task 4 — Colour Clash rules -> events
   # All distances are in shoulder widths (sw), so the rules hold at any
   # distance from the camera. Values are the prototype's (Project/bodypose.py).
   # Hands up without a visible nose: the head is taken this far above the
@@ -263,8 +263,10 @@ gestures:                 # Task 4 — Colour Clash rules (recognizer still a st
   # Punch: elbow angle above this (degrees) counts as a straight arm; 180 is
   # fully straight, and 150 tolerates keypoint noise at the elbow.
   punch_elbow_angle: 150.0
-  # Punch: wrist at least this far from its shoulder, so an arm pointed at
-  # the camera (foreshortened, looks short) or held close is not a punch.
+  # Punch: wrist at least this far to the side of its shoulder (horizontal
+  # distance), so an arm pointed at the camera, held close, or hanging
+  # straight down is not a punch. The prototype measured the straight-line
+  # distance, which let a hanging arm through (merge step 2b).
   punch_min_reach: 1.0
   # Punch: wrist no higher than this above the shoulders (and not below the
   # hips), which excludes hands up.
@@ -272,6 +274,19 @@ gestures:                 # Task 4 — Colour Clash rules (recognizer still a st
   # Punch: the other arm must be bent under this angle (guard), so two
   # straight arms (e.g. a T-pose) are not a punch.
   punch_bent_angle: 120.0
+  # No gesture while the shoulders are closer than this (px): the shoulder
+  # width is the unit of every rule, and below 10 px a few pixels of keypoint
+  # noise change it by tens of percent. Prototype value.
+  min_shoulder_px: 10.0
+  # Hands up and arms crossed must hold this long before their event (the
+  # prototype's CONFIRM_FRAMES = 2: at 30 FPS the 2nd frame comes 0.033 s
+  # after the 1st; 0.03 leaves room for timestamp jitter). Filters out
+  # one-frame keypoint glitches.
+  confirm_s: 0.03
+  # A punch stays on this long after its last detected frame (prototype
+  # PUNCH_HOLD_S). It bridges frames where the arm briefly fails the rule, so
+  # one punch gives one event; punches closer together than this count as one.
+  punch_hold_s: 0.5
 
 game:                     # Task 4 — stub: prints events
   {}
