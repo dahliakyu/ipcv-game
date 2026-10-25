@@ -81,6 +81,7 @@ src/ipcvgame/
   app/                   Task 5: pipeline, main
 tools/                   run_module.py, record_clip.py, eval_*.py (per task)
 tests/                   pytest; no model or camera needed
+assets/                  sprites and other media the game draws (e.g. assets/face/hat.png)
 data/clips/, models/, logs/   gitignored
 ```
 
@@ -121,6 +122,6 @@ merge through a PR.
 
 ## Third-party licences
 
-Ultralytics YOLO (AGPL-3.0) and MediaPipe (Apache 2.0) are used as pretrained
-models; both are fine for coursework and are listed in the AI and
-external-tools statement.
+Ultralytics YOLO (AGPL-3.0), MediaPipe (Apache 2.0) and the YuNet face
+detector from the OpenCV model zoo (MIT) are used as pretrained models; all
+are fine for coursework and are listed in the AI and external-tools statement.

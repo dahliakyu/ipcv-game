@@ -1,4 +1,6 @@
 
+> **History.** This guide improved the standalone `hat_tracker.py` (MediaPipe) step by step before the port. The face stage now lives in `src/ipcvgame/face/`, built from the Task 1 owner's later YuNet script; `hat_tracker.py`, `hat_tracker_v2.py` and the root sprites were removed on 2026-10-25. `paste()` from step 1 is in `face/effects.py`. How the port was done: [docs/merge_log.md](../merge_log.md#task-1-face-tracking-and-ar).
+
 ## Step 1: `load_sprite` and `paste`
 
 `draw_hat` and `draw_mustache` are the same code with three numbers changed: the sprite, the pivot point on the sprite, and the width. Instead of repeating yourself, a single function (named paste here) can be used to replace both and fixes:

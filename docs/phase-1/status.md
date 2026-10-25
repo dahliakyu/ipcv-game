@@ -18,10 +18,10 @@ This document covers what the pipeline looks like right now, what your stub does
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Stub | No smoothing, no signals |
 | `identity/tracker.py` | Task 3 | Stub | Left half = P1, right half = P2 |
-| `face/tracker.py`, `face/effects.py` | Task 1 | Stub | No face model; dot above the nose |
+| `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
 | `interaction/gestures.py`, `interaction/game.py` | Task 4 | Stub | No events; game prints events |
 
-Tests: 18 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 44 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -63,7 +63,7 @@ Every module has the same methods; replace the body, keep the signature.
 
 `configs/default.yaml` has one section per module: `source`, `pose`, `identity`, `motion`, `face`, `gestures`, `game`, `recorder`, `render`. Every threshold goes in your section with a comment explaining its value. You can override any value from the command line without editing the file: `--set identity.num_players=2`.
 
-One cross-section read exists today: `FaceTracker` receives `motion.kpt_conf_threshold` for deciding whether the nose keypoint is trustworthy. Task 1 may replace this with its own key in `face:`.
+There are no cross-section reads: since the Colour Clash merge, `FaceTracker` reads its own `face.kpt_conf_threshold` instead of `motion.kpt_conf_threshold`.
 
 ### Naming conventions
 
@@ -121,7 +121,8 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | Stage | ms/frame |
 | --- | --- |
 | pose (YOLO26n-pose, fp16) | ~10 |
-| identity, motion, face, gestures, game (stubs) | < 0.1 each |
+| face (YuNet on head crops, two players) | ~2.5 on a small clip; grows with crop size (24 at 4K) |
+| identity, motion, gestures, game (stubs) | < 0.1 each |
 | render | ~1 |
 | **total** | **~11** |
 
@@ -147,16 +148,15 @@ pytest                                        # before every PR
 
 ### Task 1: Face tracking and AR — owner: @eline
 
-**Stub today:** `FaceTracker.update` puts `center` on the nose keypoint and sets `scale` to the shoulder width. Its only anchor is `above_head`, placed 0.9 × scale above the nose. It sets `landmarks=None` and `roll = yaw = 0`. `FaceEffects.draw` draws a coloured dot at `above_head`.
+**Status (merged 2026-10-25 from the Task 1 owner's YuNet script; details in [merge_log.md](../merge_log.md#task-1-face-tracking-and-ar)):** `FaceTracker` runs OpenCV's YuNet face detector on a head crop per player, taken from that player's pose keypoints, so faces cannot swap between players. A One Euro filter smooths the face key points. When YuNet misses a face, optical flow carries it for up to 1.3 s; after that the effect holds and fades out (`Face.alpha`). `FaceEffects` draws a hat and a mustache, rotated by the head roll and scaled to the face width. `face.backend: stub` brings back the old nose-anchor stand-in.
 
-**To deliver:** a stable AR effect on each player's face, with no swaps between players.
-
-- Real face model; the recommended one is MediaPipe Face Landmarker, one instance per player on the head crop taken from that player's keypoints or box.
-- Fill every `Face` field: `landmarks`, `center`, `scale`, `roll`, `yaw`, `valid`.
-- Anchors at least `above_head`, `forehead`, `mouth` (Tasks 4 and 5 only ever draw at anchors).
-- Smoothing on anchors or pose parameters (not all 478 landmarks) with `core/filters.py`; reset on `reset(pid)`.
-- Real sprite effects in `FaceEffects.draw` (alpha blending, rotation by roll, scaling by scale).
-- Thresholds in `face:`; `log_fields` (e.g. `face_p1_valid`, `face_p1_roll`); `tools/eval_face.py`.
+- [x] Real face model on per-player head crops (YuNet instead of MediaPipe: fast on small crops, finds small faces).
+- [x] `Face` fields `landmarks` (5 YuNet points), `center`, `scale`, `roll`, `valid`, plus the new `alpha`. `yaw` is still 0.0.
+- [x] Anchors `above_head`, `forehead`, `mouth`, plus `hat`.
+- [x] Smoothing of the 4 face key points with `core/filters.py`; `reset(pid)` clears it.
+- [x] Sprite effects in `FaceEffects.draw` (alpha blending, rotation by roll, scaling by face width).
+- [x] Thresholds in `face:`; `log_fields` (`face_p<pid>_source`, `_roll_deg`, …); `tools/eval_face.py` (see [evaluation.md](../evaluation.md)).
+- [ ] Next: scale head crops down before detection, head pose (`yaw`) with `solvePnP`, MediaPipe Face Landmarker for mouth opening and blinking.
 
 ### Task 2: Pose and motion — owner: ____________
 
@@ -230,7 +230,7 @@ pytest                                        # before every PR
 | Demo laptop |  | ☐ |
 | Pose model | YOLO26n-pose (Task 2 confirms on clips) | ☐ |
 | Motion signal names (Task 2 ↔ Task 4) | | ☐ |
-| Face anchor names beyond `above_head` | `forehead`, `mouth` | ☐ |
+| Face anchor names beyond `above_head` | `forehead`, `mouth`, `hat` | ☑ |
 | Keypoint left/right on mirrored frames | Swap in the adapter so `L_*` = the player's own left | ☐ |
 | Game design | | ☐ |
 
@@ -253,6 +253,5 @@ These are expected, and each goes away when its stub is replaced:
 
 - IDs swap whenever players cross the middle of the screen, and a third person in the middle is ignored.
 - Skeletons jitter, because there is no smoothing yet.
-- The face "effect" is a dot and ignores head rotation; nothing appears when the nose keypoint is not confident.
 - No gestures fire, so the game prints nothing.
 - `Player.pos` is always `(0, 0)` in the CSV logs.

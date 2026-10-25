@@ -131,6 +131,17 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 6. Evaluation: `log_fields` and `tools/eval_face.py`.
 7. Cleanup: remove the old root scripts and sprites, mark the update guide as history, update `docs/phase-1/status.md`.
 
+**Added after step 6 (decisions by the Task 5 owner, 2026-10-25).** These steps only touch `face/`, apart from one `Face` field:
+
+8. Speed: scale each head crop down to a maximum size before YuNet; the 4K test clip costs 24 ms in the face stage.
+9. Head pose: `cv2.solvePnP` on the 5 YuNet landmarks and a canonical 3D face, which fills `Face.yaw`.
+10. Mouth opening and blinking: MediaPipe Face Landmarker on the face box YuNet finds, alternating players frame by frame. Its blendshapes (`jawOpen`, `eyeBlinkLeft`/`Right`, …) go into a new `Face.blendshapes` field (**team heads-up: contract change**, approved). Uses:
+    - eating consumables with the mouth;
+    - a blink resets the super-charge move;
+    - taunt (smile) and cheek bulge effects.
+
+Game features that build on the face stage (team colour, hit reaction, status above the head, taunt, cheek bulge, Smash-Bros-style consumables) are written up for later in `docs/extra_features.md`.
+
 **Verification.** Steps 2 and 3 are covered by unit tests. Steps 4 and 5 are checked by the Task 5 owner on the webcam (single player). The multiplayer cases (two faces, crossing) wait for recorded clips.
 
 ### Changes
@@ -306,3 +317,27 @@ The prototype's `Metrics` class (jitter, alignment error, detection rate per lig
 
 - 44 tests pass, `ruff` clean.
 - Both test clips evaluate end to end. On the fitness clip the filter cuts jitter from 2.6 to 1.7 px (P1) at about 2 px of lag. A `--tag noflow --set face.flow_max_s=0` run turns the 23.8% flow frames into hold frames and saves about 0.4 ms per frame.
+
+#### Step 7 · Cleanup
+
+**Deleted** (superseded by `src/ipcvgame/face/`; still in git history):
+
+- `hat_tracker.py`, `hat_tracker_v2.py`: the earlier standalone MediaPipe versions of the face script.
+- `hat.png`, `mustache.png` in the repo root: byte-identical to `assets/face/`.
+
+**Changed:**
+
+- `docs/phase-1/facetracking-update-guide.md`: a "History" note at the top. It says the guide was for the standalone script, where its `paste()` now lives, and links here.
+- `docs/phase-1/status.md`:
+  - the module table now shows the face stage as done;
+  - Task 1's "Stub today" became a status paragraph and a checklist: done items ticked, next steps 8–10 listed;
+  - the old cross-section read note is replaced (the face stage has its own `kpt_conf_threshold`);
+  - a face row in the timing table;
+  - the anchor-name decision ticked (`forehead`, `mouth`, `hat`);
+  - the stub-limitation line about the face dot removed;
+  - test count updated to 44.
+- `README.md`: `assets/` in the layout; YuNet (MIT, OpenCV model zoo) in the licence section.
+
+**Not changed:** `.gitignore` keeps `garb/` until the whole Colour Clash merge is done, not just Task 1.
+
+**Checked:** nothing outside `garb/` and the history note refers to the deleted files. 44 tests pass, `ruff` clean.
