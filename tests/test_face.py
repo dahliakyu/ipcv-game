@@ -6,7 +6,7 @@ import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Frame, Player, PoseDetection
+from ipcvgame.core.types import Frame, FrameState, Player, PoseDetection
 from ipcvgame.face import tracker as ft
 from ipcvgame.face.tracker import (
     FaceTracker,
@@ -193,3 +193,17 @@ def test_hold_then_fade_then_gone(scripted_tracker, monkeypatch):
     f_fade = tr.update(Frame(img, 2, 0.55), p)[1]
     assert f_fade.alpha == pytest.approx(0.5) and f_fade.valid
     assert 1 not in tr.update(Frame(img, 3, 1.2), p)                  # past lost_after_s
+
+
+def test_log_fields_raw_mouth_only_on_detect(scripted_tracker):
+    tr, script = scripted_tracker
+    img = cv2.cvtColor(texture(), cv2.COLOR_GRAY2BGR)
+    script[0] = yunet_row() + np.r_[50, 10, 0, 0, [50, 10] * 5, 0]
+    p = {1: player()}
+    f0 = tr.update(Frame(img, 0, 0.0), p)
+    row0 = tr.log_fields(FrameState(Frame(img, 0, 0.0), p, {}, f0, [], {}))
+    assert row0["face_p1_source"] == "detect" and row0["face_p1_score"] == pytest.approx(0.95)
+    assert {"face_p1_mouth_raw_x", "face_p1_crop_px", "face_p1_roll_deg"} <= set(row0)
+    f1 = tr.update(Frame(shifted(img, 5, 3), 1, 1 / 30), p)
+    row1 = tr.log_fields(FrameState(Frame(img, 1, 1 / 30), p, {}, f1, [], {}))
+    assert row1["face_p1_source"] == "flow" and "face_p1_mouth_raw_x" not in row1

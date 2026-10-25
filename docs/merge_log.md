@@ -277,3 +277,32 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 - 40 tests pass, `ruff` clean.
 - On `two_people_fitness_challenge.webm`, faces come from detection in 77.3% of player-frames and from flow in 18.8%; in step 4 those 18.8% had no hat. 3.8% are frames before a face was first found. On the 4K `two_people_jump.mp4` it is 99.2% detection, 0.8% flow.
 - Face stage: 2.6 ms per frame on the small clip (was 2.1). On the 4K clip 24.0 ms (was 19.1); grayscale conversion of a 4K frame is part of that. Still open from step 4: scaling crops down before detection.
+
+#### Step 6 · Evaluation: `log_fields` and `tools/eval_face.py`
+
+The prototype's `Metrics` class (jitter, alignment error, detection rate per lighting, latency) moves out of the tracker. The tracker now writes per-frame CSV columns, and a separate script computes the metrics from them.
+
+**Changed:** `src/ipcvgame/face/tracker.py`
+
+- `log_fields(state)`: per player, the columns `face_p<pid>_source` (detect/flow/hold, empty while no face), `_score` (YuNet score on detect frames), `_alpha`, `_scale`, `_roll_deg`, `_mouth_x/_y` (smoothed anchor), `_mouth_raw_x/_y` (unsmoothed upper-lip point, on detect frames only) and `_crop_px`. The prototype logged the same raw-versus-smoothed lip pair.
+- The raw detection and crop box are now recorded in `update()` instead of `_detect()`, so they are also there when the detector is replaced in tests.
+
+**Added:** `tools/eval_face.py`
+
+- Takes clips, which it runs headless up to the face stage, writing `logs/eval/face-<clip>[-<tag>].csv`; or it takes existing logs.
+- Prints one Markdown row per clip and player:
+  - coverage: detect / flow / hold / no face %;
+  - jitter: the prototype's second-difference RMS, raw versus smoothed, in px and % of face width;
+  - lag: the prototype's alignment error (mean, p95, % face width);
+  - crop size and face-stage time.
+- `--set` and `--tag` run parameter experiments; `--markdown` saves the table.
+- Differences from the prototype: conditions come from clip names instead of `s`/`d`/`l` key presses. Latency is the face-stage time from the profiler (`ms_face`). Identity switches are no longer counted here: faces cannot swap with head crops, and switches are Task 3's metric.
+
+**Added:** `docs/evaluation.md`: how to evaluate on the clips for the report. The workflow and run-log columns are for all tasks; the face section has commands, column definitions, how to read the numbers, and an example. It ends with how to add an `eval_<stage>.py`.
+
+**Added:** `tests/test_eval_face.py` (3 tests: the metrics on a synthetic log with known jitter, lag and coverage; missing frames count as "no face"; the Markdown table). Also added to `tests/test_face.py`: a test that raw mouth columns are only written on detect frames.
+
+**Checked:**
+
+- 44 tests pass, `ruff` clean.
+- Both test clips evaluate end to end. On the fitness clip the filter cuts jitter from 2.6 to 1.7 px (P1) at about 2 px of lag. A `--tag noflow --set face.flow_max_s=0` run turns the 23.8% flow frames into hold frames and saves about 0.4 ms per frame.

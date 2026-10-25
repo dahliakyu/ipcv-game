@@ -188,8 +188,12 @@ class FaceTracker:
             self._state[pid] = st
             st.debug = {}
             box = head_box(p, self.kpt_conf_threshold, cfg["crop_size"])
-            det = self._detect(frame.image, box, st) if box is not None else None
+            det = None
+            if box is not None:
+                st.debug["box"] = box
+                det = self._detect(frame.image, box, st)
             if det is not None:
+                st.debug["det"] = det           # raw detection, for draw_debug and log_fields
                 m = measure(det, cfg["center_drop"], cfg["forehead_rise"], cfg["lip_to_nose"])
                 st.kp, st.landmarks, st.lk = m["pts"], m["landmarks"], flow_points(m["pts"], cfg)
                 st.last_det = st.last_update = t
@@ -222,7 +226,6 @@ class FaceTracker:
         full-frame pixels) closest to the crop centre, i.e. the head keypoints.
         Another player's face in the same crop is further away and skipped."""
         img, off = crop(image, box)
-        st.debug["box"] = box
         h, w = img.shape[:2]
         if min(h, w) < self.cfg["min_face"]:
             return None
@@ -240,9 +243,7 @@ class FaceTracker:
             return None
         centre = (box[:2] + box[2:]) / 2
         dist = np.linalg.norm(rows[:, :2] + rows[:, 2:4] / 2 - centre, axis=1)
-        det = rows[int(np.argmin(dist))]
-        st.debug["det"] = det
-        return det
+        return rows[int(np.argmin(dist))]
 
     def _stub_faces(self, players: dict[int, Player]) -> dict[int, Face]:
         """Phase-1 stand-in: above_head anchor above the nose keypoint."""
@@ -265,6 +266,32 @@ class FaceTracker:
                 anchors={"above_head": nose - np.array([0.0, factor * scale])},
             )
         return faces
+
+    def log_fields(self, state: FrameState) -> dict:
+        """Per-player CSV columns face_p<pid>_<field>, read by tools/eval_face.py.
+
+        source: detect | flow | hold, or empty while no face was found.
+        mouth_x/y is the smoothed mouth anchor; mouth_raw_x/y the unsmoothed
+        upper-lip key point, only on detect frames (it is a measurement there).
+        """
+        row: dict = {}
+        for pid, st in sorted(self._state.items()):
+            pre = f"face_p{pid}_"
+            f = state.faces.get(pid)
+            row[pre + "source"] = st.source if f is not None else ""
+            if f is None:
+                continue
+            det = st.debug.get("det")
+            row[pre + "score"] = float(det[14]) if st.source == "detect" and det is not None else ""
+            row[pre + "alpha"] = float(f.alpha)
+            row[pre + "scale"] = float(f.scale)
+            row[pre + "roll_deg"] = float(np.degrees(f.roll))
+            row[pre + "mouth_x"], row[pre + "mouth_y"] = (float(v) for v in f.anchors["mouth"])
+            if st.source == "detect":
+                row[pre + "mouth_raw_x"], row[pre + "mouth_raw_y"] = (float(v) for v in st.kp[3])
+            if "box" in st.debug:
+                row[pre + "crop_px"] = float(st.debug["box"][2] - st.debug["box"][0])
+        return row
 
     def reset(self, pid: int | None = None) -> None:
         if pid is None:
