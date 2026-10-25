@@ -83,3 +83,20 @@ def test_effects_draw_only_visible_faces():
     fx.draw(img, {1: face()})
     assert img[:40].sum() > 0       # hat above its anchor
     assert img[55:65].sum() > 0     # mustache around the mouth
+
+
+def test_hat_hangs_from_its_brim(tmp_path):
+    """A hat PNG with transparent padding below the hat: the visible bottom
+    (the brim) lands on the hat anchor, not the bottom of the image."""
+    hat = solid_sprite(20, 20)
+    hat[12:, :, 3] = 0                                   # bottom 8 rows transparent
+    cv2.imwrite(str(tmp_path / "hat.png"), hat)
+    cfg = load_config()["face"] | {"hat_sprite": str(tmp_path / "hat.png"), "hat_width": 1.0}
+    fx = FaceEffects(cfg)
+    img = canvas()
+    f = face()
+    f.anchors = {"hat": np.array([50.0, 50.0])}
+    f.scale = 20.0                                       # sprite drawn at its own size
+    fx.draw(img, {1: f})
+    assert tuple(img[48, 50]) == RED                     # visible hat just above the anchor
+    assert img[52, 50].sum() == 0                        # nothing below it

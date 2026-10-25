@@ -21,7 +21,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
 | `interaction/gestures.py`, `interaction/game.py` | Task 4 | Stub | No events; game prints events |
 
-Tests: 44 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 67 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -121,7 +121,7 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | Stage | ms/frame |
 | --- | --- |
 | pose (YOLO26n-pose, fp16) | ~10 |
-| face (YuNet on head crops, two players) | ~2.5 on a small clip; grows with crop size (24 at 4K) |
+| face (YuNet on head crops + MediaPipe for one player per frame) | ~10.5 on a small clip, ~19 on a 4K clip; MediaPipe is ~8 of that |
 | identity, motion, gestures, game (stubs) | < 0.1 each |
 | render | ~1 |
 | **total** | **~11** |
@@ -151,12 +151,15 @@ pytest                                        # before every PR
 **Status (merged 2026-10-25 from the Task 1 owner's YuNet script; details in [merge_log.md](../merge_log.md#task-1-face-tracking-and-ar)):** `FaceTracker` runs OpenCV's YuNet face detector on a head crop per player, taken from that player's pose keypoints, so faces cannot swap between players. A One Euro filter smooths the face key points. When YuNet misses a face, optical flow carries it for up to 1.3 s; after that the effect holds and fades out (`Face.alpha`). `FaceEffects` draws a hat and a mustache, rotated by the head roll and scaled to the face width. `face.backend: stub` brings back the old nose-anchor stand-in.
 
 - [x] Real face model on per-player head crops (YuNet instead of MediaPipe: fast on small crops, finds small faces).
-- [x] `Face` fields `landmarks` (5 YuNet points), `center`, `scale`, `roll`, `valid`, plus the new `alpha`. `yaw` is still 0.0.
+- [x] `Face` fields `landmarks` (5 YuNet points), `center`, `scale`, `roll`, `yaw` (head pose), `valid`, plus the new `alpha`.
 - [x] Anchors `above_head`, `forehead`, `mouth`, plus `hat`.
 - [x] Smoothing of the 4 face key points with `core/filters.py`; `reset(pid)` clears it.
 - [x] Sprite effects in `FaceEffects.draw` (alpha blending, rotation by roll, scaling by face width).
 - [x] Thresholds in `face:`; `log_fields` (`face_p<pid>_source`, `_roll_deg`, …); `tools/eval_face.py` (see [evaluation.md](../evaluation.md)).
-- [ ] Next: scale head crops down before detection, head pose (`yaw`) with `solvePnP`, MediaPipe Face Landmarker for mouth opening and blinking.
+- [x] Large head crops are shrunk before detection (`crop_max_px`).
+- [x] Head pose with `solvePnP` (5 YuNet landmarks, canonical 3D head): fills `Face.yaw`; forehead, hat and `above_head` are 3D points on the head, so they follow tilt and turn.
+- [x] MediaPipe Face Landmarker on the face, one player per frame in turn: head rotation for the 3D anchors (reliable also for strong up/down tilt) and blendshape scores in the new `Face.blendshapes` (`jawOpen`, `eyeBlinkLeft`/`Right`, `mouthSmileLeft`/`Right`, …).
+- [ ] Next: game features on top of the face stage, see `docs/extra_features.md`.
 
 ### Task 2: Pose and motion — owner: ____________
 

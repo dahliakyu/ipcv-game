@@ -12,7 +12,6 @@ Each entry names the files it touched, so owners can check what changed in their
 
 The folder arrived as a Windows zip of 1.4 GB and ~33,800 files; after the clean-up it holds 24 MB and 15 files. No source code was changed in this step.
 
-**Permissions.** Every directory came out of the zip read-only (`dr-xr-xr-x`), so nothing in it could be deleted. All directories were made writable for their owner (`chmod u+w`).
 
 **Deleted:**
 
@@ -73,6 +72,97 @@ These are not fixed yet; each belongs to the owner of the code.
 - **Stored appearance is never updated (Task 3).** In `PlayerIdentityTracker`, each player's OSNet vector is stored once, when the player is created. Lighting changes or a jacket coming off can then break re-identification. Matching is also greedy per track, not a joint assignment (Hungarian).
 - **`Colour Clash/Project/test_osnet.py` fails as written.** It calls `OSNetEmbeddingExtractor()` without the required `model_path` argument, and it opens the webcam.
 - **Working directory.** `Colour Clash/` has a space in its name and `Project/` has no `__init__.py`, so `main.py` only runs with `Colour Clash/` as the working directory. This goes away when the code moves into `src/ipcvgame/`.
+
+## Change Overviews
+
+A quick reference for each teammate: where your prototype code now lives, and what was changed beyond moving it. The task sections below have the step-by-step details and the reasons.
+
+### Refactor: where to find your code
+
+#### Task 1: `face_track/facial_tracking_yunet.py`
+
+**Functions and classes**
+
+| In the prototype | Now in | Note |
+| --- | --- | --- |
+| `measure()` | `face/tracker.py`, `measure()` | Same maths; constants come from config |
+| `measure()`, the `lk` grid part | `face/tracker.py`, `flow_points()` | Built from the 4 key points |
+| `geometry()` | `face/tracker.py`, `geometry()` | Also returns `forehead` and `above_head`; since step 9 the fallback when the head pose is off or fails |
+| (new, steps 9–10) head pose | `face/head_pose.py`: `camera_matrix()`, `head_pose()`, `pose_angles()`, `rotation()`, `mediapipe_angles()`, `translation()`, `anchor_points_mm()`; used in `face/tracker.py`, `FaceTracker._smoothed_geometry()` | Not in the prototype |
+| (new, step 10) mouth, blinks, MediaPipe pose | `face/landmarker.py`, `FaceLandmarker`; `face/tracker.py`, `FaceTracker._landmark()` | Not in the prototype |
+| `OneEuro` | `core/filters.py`, `OneEuro` | Shared filter, same maths |
+| `Track` (state) | `face/tracker.py`, `_FaceState` | One per player ID |
+| `Track.update()` | `face/tracker.py`, `FaceTracker.update()`, "detect" branch | |
+| `Track.flow()` | `face/tracker.py`, `estimate_motion()` + the "flow" branch of `update()` | |
+| `Track._apply()` | `face/tracker.py`, `FaceTracker.update()` | Filter, then `geometry()` |
+| `Track.alpha()` | `face/tracker.py`, `fade()` | In seconds; result in `Face.alpha` |
+| `Track.draw()`, `overlay()` | `face/effects.py`, `FaceEffects.draw()` + `paste()` | |
+| `load_detector()` | `face/tracker.py`, `FaceTracker.__init__()` | |
+| `update_tracks()` | `face/tracker.py`, `head_box()` + `FaceTracker._detect()` | Replaced; see Modifications |
+| Main loop: detect, flow, delete tracks | `face/tracker.py`, `FaceTracker.update()` | |
+| `Metrics` | `face/tracker.py`, `FaceTracker.log_fields()` + `tools/eval_face.py`, `evaluate()` | Jitter = `second_difference()` |
+| `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: `docs/evaluation.md` |
+| `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline (Task 5) |
+| Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` reset) | |
+| `draw_status()` (name + HP bar) | Not ported | Game UI; planned in `docs/extra_features.md` |
+| `Track.predicted()`, `Track.vel` | Removed | Only used for matching |
+| Keys `s`, `d`, `l`, `x`, `1`/`2` | Removed | Conditions come from clip names; HP demo is game logic |
+
+**Constants**
+
+All of these are in `configs/default.yaml`, `face:` section, unless another section is named.
+
+| In the prototype | Now |
+| --- | --- |
+| `MODEL`, `MODEL_URL` | `model` (download command in `README.md`) |
+| `SCORE_THRESH` | `score_threshold` |
+| `MIN_FACE` | `min_face` |
+| `MAX_SIZE_JUMP` | `max_size_jump` |
+| `HOLD_FRAMES`, `FLOW_FRAMES`, `MAX_MISSED` | `hold_s`, `flow_max_s`, `lost_after_s` (seconds) |
+| `LK_GRID` | `flow_grid_x`, `flow_grid_y`, `flow_grid_n` |
+| `LK_PARAMS` | `flow_win`, `flow_levels`, `flow_criteria` |
+| Numbers inside `Track.flow()` (8 points, 6 inliers, 3.0 px, 0.7–1.4) | `flow_min_points`, `flow_min_inliers`, `flow_ransac_px`, `flow_scale_range` |
+| Numbers inside `measure()` / `geometry()` (0.20, 0.50, 0.35, 0.40) | `center_drop`, `forehead_rise`, `lip_to_nose`; the 0.40 became `hat_rise` (0.11) in step 10, see Modifications |
+| Numbers inside `Track.draw()` (1.5, 0.80) | `hat_width`, `mustache_width` |
+| `OneEuro(1.5, 0.1)` | `filter_min_cutoff`, `filter_beta`, `filter_d_cutoff` |
+| `HAT`, `MUSTACHE` (`hat.png`, `mustache.png`) | `hat_sprite`, `mustache_sprite` → `assets/face/` |
+| `CAP_W`, `CAP_H`, `CAMERA_INDEX` | `source:` section (`width`, `height`, `uri`) |
+| `MAX_PLAYERS` | `identity:` section (`num_players`), Task 3 |
+| `COLORS` | `scene/draw.py`, `PLAYER_COLORS`, Task 5 |
+| `MATCH_FACTOR`, `LIGHTS`, `EXPOSURE` | Removed (matching replaced; conditions from clip names; exposure not ported) |
+
+#### Task 3: `Project/` (identity)
+
+Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exists. To be added when the identity merge happens.
+
+### Modifications: changes beyond moving code
+
+#### Task 1
+
+- **Head crops instead of full-frame detection.** YuNet runs on a crop around each player's head, taken from the pose keypoints, and the player ID comes from Task 3. `update_tracks()`, greedy matching and `MAX_PLAYERS` are gone, so faces cannot swap between players. It is also faster: 1.2 ms per small crop against 24.5 ms for a full 720p frame.
+- **Which detection is used (new).** If a crop holds more than one face, the one closest to the player's head keypoints is used.
+- **Seconds instead of frames.** Hold, flow and lost limits are in seconds (`Frame.t`), so they behave the same at any frame rate.
+- **Fade-out moved into the contract.** The opacity is now `Face.alpha`, a new `core/types.py` field, so the renderer and the game can see it.
+- **More anchors.** `forehead` and `above_head` are added next to `hat` and `mouth`.
+- **Head pose and 3D anchors (step 9, new).** `solvePnP` fits a canonical 3D head to the 5 landmarks. The forehead, hat and `above_head` anchors are then 3D points on that head, projected into the image. The prototype's fixed 2D offsets made the hat rise when the chin went up, and sink when it went down. `Face.yaw` is filled from the pose.
+- **Head rotation from MediaPipe (step 10, new).** YuNet's 5 landmarks stay near-frontal at strong up/down tilts (−3° measured on a 33° chin-up), so the rotation now comes from MediaPipe Face Landmarker, which runs on one player per frame, in turn. `solvePnP` on YuNet's landmarks plus the pose model's ears is the fallback.
+- **Mouth and blinks (step 10, new).** MediaPipe's blendshape scores go into `Face.blendshapes`, a new `core/types.py` field.
+- **Hat hangs from its brim (step 10).** The prototype's `overlay()` pinned the hat at the bottom of the PNG, which has 34% transparent padding below the hat, so the visible brim floated half a face width above the anchor. The hat now hangs from its visible brim, and `hat_drop` (0.40 below the forehead point) became `hat_rise` (0.11 above it), which keeps the frontal look the same.
+- **Smoothing order (step 9).** The One Euro filter now runs on the face sides and the anchors together, after the 3D projection, instead of on the 4 key points before `geometry()`.
+- **Flow also moves the 5 landmarks (new),** not just the key points and flow points.
+- **Large head crops are shrunk (step 8, new).** Crops over `crop_max_px` (192) are shrunk before YuNet, and the detection is scaled back to frame pixels: 23.4 → 9.2 ms on a 4K clip with nearly the same detections.
+- **Faster drawing.** `paste()` warps only the sprite's box, not the whole frame. It looks the same: 2.6 ms against 85 ms for two faces at 720p.
+- **Face state dropped** after `lost_after_s` without any update, and when the player disappears or re-enters (`reset(pid)`).
+- **No model download at runtime.** The YuNet model is fetched once with the `README.md` command.
+- **The old stand-in stays as `face.backend: stub`,** so the tests run without the model.
+- **Evaluation** is per clip, with conditions from clip names instead of key presses. Latency is the face-stage time (`ms_face`). The identity-switch count moved to Task 3.
+- **Name and HP bar** are not drawn by the face stage any more; they are game UI.
+- **One Euro filter:** the shared one in `core/filters.py`. The only difference is the minimum time step (1 µs instead of 1 ms), which is negligible.
+
+#### Task 3 (pre-merge)
+
+- **`torchreid` replaced by a copied `osnet.py`.** `osnet_embedding.py` imports it instead of `torchreid`. Embeddings are identical (max difference 0.0).
+- **`load_weights()` raises an error** when no layer of the weight file matches, instead of only warning and running with random weights.
 
 ## Task 1: Face tracking and AR
 
@@ -341,3 +431,197 @@ The prototype's `Metrics` class (jitter, alignment error, detection rate per lig
 **Not changed:** `.gitignore` keeps `garb/` until the whole Colour Clash merge is done, not just Task 1.
 
 **Checked:** nothing outside `garb/` and the history note refers to the deleted files. 44 tests pass, `ruff` clean.
+
+#### Step 8 · Shrink large head crops before detection
+
+**Changed:** `src/ipcvgame/face/tracker.py`, `FaceTracker._detect()`. A crop whose longest side is over `crop_max_px` is shrunk (`cv2.resize`, `INTER_AREA`) before YuNet runs. The detection is scaled back to crop pixels and then shifted to frame pixels. Everything after that (`min_face`, the size-jump check, `measure()`) still works in frame pixels, so nothing else changes.
+
+**Changed:** `configs/default.yaml`, `face:`: `crop_max_px: 192` (`null` = never shrink).
+
+**Measured** with `tools/eval_face.py --tag max<N> --set face.crop_max_px=<N>`. Face-stage time per frame, and the share of player-frames found by detection:
+
+| `crop_max_px` | 4K `two_people_jump.mp4` (crops ~480 px) | `two_people_fitness_challenge.webm` (crops ~100–117 px) |
+| --- | --- | --- |
+| none | 23.4 ms, detect 98.4 / 100% | 2.59 ms, detect 76.2 / 78.5% |
+| 320 | 15.2 ms, 98.4 / 100% | 2.64 ms, unchanged |
+| 240 | 11.6 ms, 98.1 / 100% | 2.67 ms, unchanged |
+| **192** | **9.2 ms, 97.8 / 100%** | 2.60 ms, unchanged |
+| 160 | 8.2 ms, 97.8 / 100% | 2.61 ms, unchanged |
+| 128 | 7.3 ms, 97.8 / 100% | 2.46 ms, unchanged |
+
+Why 192:
+
+- Below 192 the gain flattens. What remains at 4K is mostly the full-frame grayscale conversion for optical flow.
+- A face is about 0.27 of the crop width, so at 192 it is still ~50 px in YuNet's input. At 128 it would be ~34 px, and the landmarks would lose more precision.
+- Small crops (the fitness clip, a webcam far away) are not touched.
+
+Open: the landmark precision cost of shrinking shows best as jitter on a still clip. The two test clips are both dynamic; check on the shared `normal` clip.
+
+**Added to** `tests/test_face.py`: a test with a stand-in detector that finds a face in the middle of whatever crop it gets. Without a limit and with `crop_max_px=64`, the returned face is the same in frame pixels, and YuNet really receives the 64 px crop.
+
+**Changed:** `docs/phase-1/status.md` (face timing row, Task 1 checklist, test count) and the Task 1 modifications in "Change Overviews" above.
+
+**Checked:** 46 tests pass, `ruff` clean.
+
+#### Step 9 · Head pose and 3D anchors
+
+**Why the scope grew.** The plan was to fill `Face.yaw`. Testing step 8 on the webcam showed the hat lifting off the head when the chin goes up. The cause is the prototype's 2D geometry: the forehead and hat sit at fixed offsets above the eyes, whatever way the head points. When the chin goes up, the top of the head turns away from the camera and moves *down* in the image, but the hat stays put. When the chin goes down, the hat sinks onto the forehead. So step 9 estimates the full head pose and places those anchors in 3D.
+
+**Changed:** `src/ipcvgame/face/tracker.py`
+
+- `camera_matrix(w, h, focal_per_width)`: pinhole intrinsics without calibration. The focal length is `focal_per_width` × the image width (1.0 ≈ 53° horizontal field of view), and the principal point is the image centre.
+- `head_pose(landmarks, model_mm, K)`: `cv2.solvePnP` with the SQPnP solver, which works from 4 points without an initial guess (the iterative solver needs 6). It fits the canonical 3D head to the 5 YuNet landmarks. Eyes and mouth corners are matched by image position, not by YuNet's labels, so the mirrored frame works. It returns `None` without a valid solution, or when the head would be behind the camera.
+- `pose_angles(rvec)`: yaw and pitch from the rotation, as seen on screen: yaw > 0 = face turned to the image right, pitch > 0 = chin up.
+- `anchor_points_mm(cfg, model_mm)`: `forehead`, `hat` and `above_head` as 3D points on the head. They come from the existing `forehead_rise`, `hat_drop` and `above_head_rise`, so when the face looks straight at the camera they land where the 2D anchors were. The hat points sit `hat_depth_mm` behind the eyes, so they move like a hat on the head.
+- `FaceTracker._smoothed_geometry()`, after every detect or flow update:
+  1. the 2D anchors from `geometry()`;
+  2. if `head_pose` is on and the pose is within `pose_max_deg`: the forehead, hat and `above_head` anchors are replaced by the projected 3D points (`cv2.projectPoints`);
+  3. One Euro on the face sides and the anchors together;
+  4. width, roll and centre from the smoothed sides.
+  - Yaw and pitch have their own One Euro filter, and `Face.yaw` is filled from it.
+  - The mouth anchor and the roll stay as measured (landmarks and eye line).
+- `log_fields`: `face_p<pid>_yaw_deg`, `_pitch_deg`, `_pose` (1 = anchors from the head pose, 0 = 2D fallback), and `_hat_x`/`_hat_y`.
+- `draw_debug`: yaw and pitch in the label, and a 40 mm head axis triad drawn from the nose (x red, y green, z blue).
+
+**Changed:** `configs/default.yaml`, `face:`
+
+- `head_pose: true` (`false` = the 2D anchors only, for comparison).
+- `head_model_mm`: the canonical head. Eyes 63 mm apart. The nose tip (34 mm below the eyes) and mouth corners (62 mm below, 54 mm apart) match YuNet's median layout on 73 detections from the two test clips and two photos. Depths are from a generic face model (nose tip 27 mm in front of the eyes).
+- `box_per_eye: 2.16`: YuNet box width in eye distances, the median of the same detections.
+- `hat_depth_mm: 50`, `focal_per_width: 1.0`, `pose_max_deg: 60`.
+- `pose_filter_min_cutoff: 1.0`, `pose_filter_beta: 0.5`: angle filter values from the update guide.
+
+**Changed:** `tools/eval_face.py`: new columns `pose %` and `hat jitter px`; `docs/evaluation.md` explains both.
+
+**Added to** `tests/test_face.py`: 9 tests on a synthetic head projected with known rotations, 1.5 m from the camera.
+
+- Yaw and pitch are recovered within 0.5° for five poses.
+- Swapping the eye and mouth-corner labels (a mirrored frame) gives the same pose.
+- Facing the camera, the 3D forehead and hat anchors land on the 2D ones (under 1% of a face width). `above_head` is within 6%: it is 1.5 face widths up and deeper in the head, so perspective puts it slightly lower.
+- The reported bug as a test: chin up 25°, and the hat is closer to the eyes than the 2D anchor put it. Chin down 25°, and it is higher.
+- The step 8 crop test was updated for the new filter argument.
+
+**Measured** on the two test clips, `--set face.head_pose=true/false`:
+
+| Clip | Player | pose % | hat jitter px (2D → 3D) | face ms (2D → 3D) |
+| --- | --- | --- | --- | --- |
+| `two_people_fitness_challenge` | P1 | 100 | 1.98 → 2.33 | 2.60 → 2.90 |
+| `two_people_fitness_challenge` | P2 | 100 | 2.93 → 2.92 | |
+| `two_people_jump` (4K) | P1 | 100 | 10.5 → 12.0 | 9.24 → 9.54 |
+| `two_people_jump` (4K) | P2 | 100 | 9.42 → 10.2 | |
+
+- The pose was used on every detect and flow frame.
+- Yaw ranges: fitness clip P1 +16° to +54°, P2 −45° to +12°; pitch between −31° and +3°.
+- Frame to frame, the smoothed yaw changes by a median of 0.4–0.8°.
+- The hat moves a little more (up to +18%). Part of that is the hat now following real head movement, which these moving clips are full of. The cost is 0.3 ms.
+- On a photo with the head turned (yaw +40°), the hat moves towards the middle of the head instead of staying on the face outline.
+
+**Open:** check on the webcam (chin up, chin down, turning). `hat_depth_mm` is a first guess; a larger value moves the hat more with tilt. The mouth anchor is not affected by the pose.
+
+**Checked:** 55 tests pass, `ruff` clean.
+
+#### Step 10 · MediaPipe: head rotation, mouth opening and blinks
+
+**Why.** Testing step 9 on the webcam, the hat still lifted off during a strong chin-up. On that frame, YuNet's 5 landmarks were almost frontal: nose 0.49 eye distances below the eyes (frontal 0.54), mouth 0.99 (frontal 0.99). `solvePnP` therefore found −3° of pitch. MediaPipe Face Landmarker, which fits 478 landmarks, found 33°, which matches the picture. Adding the pose model's ears to `solvePnP` gave 15–21°: better, but not enough. Mouth opening and blinking need MediaPipe anyway (step 10), so its head rotation is used as well.
+
+**Contract (team heads-up):** `src/ipcvgame/core/types.py`: `Face.blendshapes: dict[str, float]`, default empty. These are MediaPipe's 52 scores from 0 to 1 (`jawOpen`, `eyeBlinkLeft`, `eyeBlinkRight`, `mouthSmileLeft`, `cheekPuff`, …), empty when not measured. MediaPipe names the left/right scores as if the image were not mirrored, so on our mirrored frame `eyeBlinkLeft` is the player's own right eye.
+
+**Added:** `src/ipcvgame/face/landmarker.py`, `FaceLandmarker`. A thin wrapper around MediaPipe Face Landmarker in IMAGE mode: every call stands alone, because the crops come from different players in turn. It returns the blendshape scores and the head transformation matrix for one face crop, or `None`.
+
+**Added:** `src/ipcvgame/face/head_pose.py`. The step 9 functions moved here from `tracker.py`, to keep that file readable. New in this step:
+
+- `head_pose(..., ears, ears_mm)`: optional ear keypoints from the pose model as two more points.
+- `mediapipe_angles(matrix)`: yaw and pitch from MediaPipe's matrix. Its face frame has y up and z towards the camera, so both axes are flipped (`C R C`, `C = diag(1, −1, −1)`).
+- `rotation(yaw, pitch, roll)`: the inverse of `pose_angles()`, plus roll.
+- `translation(R, model_mm, points, K)`: the head position for a known rotation, by linear least squares on the pinhole equations. The rotation comes from MediaPipe (which ran on a crop), and the position is fitted to the YuNet landmarks in the full frame.
+- `sorted_landmarks()`.
+
+**Changed:** `src/ipcvgame/face/tracker.py`
+
+- `update()` now runs in three passes:
+  1. find each face: detection, else optical flow (unchanged);
+  2. MediaPipe for `landmarker_per_frame` players, the one that waited longest first (`_landmark()`), on a crop of `landmarker_crop` face widths around the face;
+  3. smoothed geometry and the `Face` output, now with `blendshapes` while the last MediaPipe result is under `landmarker_max_age_s` old.
+- `_smoothed_geometry()`: the rotation comes from MediaPipe while its last result is recent, else from `solvePnP` on YuNet's landmarks plus both ears (when the pose model trusts them).
+  - Only yaw and pitch are taken from either source, and they go through the pose One Euro filter.
+  - Roll comes from the eye line, as before.
+  - The position comes from `translation()`.
+  - The 3D anchors are then projected as in step 9.
+  - Both pose sources go through the same steps, so switching between them does not make the hat jump.
+- `geometry(pts, hat_rise, above_head_rise)`: the hat brim is now `hat_rise` above the forehead point (see the effects change below).
+- `log_fields`:
+  - `face_p<pid>_pose` is now the source: `mediapipe`, `pnp` or empty for 2D;
+  - new `_jaw_open`, `_blink` (mean of both eyes), `_smile` (mean of both sides);
+  - new `_mp` (1 = MediaPipe result this frame).
+- `draw_debug`: the pose source in the label, and `jaw` and `blink` bars next to the face.
+
+**Changed:** `src/ipcvgame/face/effects.py`. The hat now hangs from its visible brim: the lowest row of `hat.png` that is not transparent. `hat.png` has 34% transparent padding below the hat, so with the prototype's pivot at the bottom of the image, the visible brim floated half a face width above the anchor. Any pitch error made that look worse.
+
+**Changed:** `configs/default.yaml`, `face:`
+
+- `hat_drop: 0.40` became `hat_rise: 0.11`: the brim sits 0.11 face widths above the forehead point. That is −0.40 + 0.51 (34% padding × 1.5 face widths), so the hat looks the same as before when facing the camera.
+- `above_head_rise: 1.5` became `1.0`, now measured from the brim; `above_head` stays 1.6 face widths above the eyes.
+- `head_model_mm` gets `left_ear` and `right_ear` at (±72, 20, 85) mm: beside the head, at ear-canal height, behind the eyes.
+- New: `landmarker` (true), `landmarker_model`, `landmarker_min_conf` (0.5), `landmarker_crop` (2.0), `landmarker_max_side` (256), `landmarker_per_frame` (1), `landmarker_max_age_s` (0.25).
+
+**Changed:** `README.md`: download command and SHA-256 for `models/face_landmarker.task`. `tools/eval_face.py`: `pose %` now counts both pose sources, plus a new `mediapipe pose %`; `docs/evaluation.md` explains them.
+
+**Tests:** 67 pass, `ruff` clean.
+
+- `tests/test_face.py`:
+  - MediaPipe's matrix gives our yaw and pitch for 5 poses, including the 33° chin-up;
+  - `rotation()` inverts `pose_angles()`;
+  - `translation()` recovers a known position;
+  - with frontal-biased landmarks, the 5-point fit misses a 33° chin-up and the ears recover it;
+  - with a stand-in landmarker and two players, MediaPipe runs once per frame, in turn (P1, P2, P1, P2), and its blendshapes and pitch reach `Face` and the pose.
+- The frontal test now checks the exact perspective offset of the deeper hat points (`Z / (Z + depth)`) instead of a tolerance.
+- `tests/test_effects.py`: the hat hangs from its brim on a padded sprite.
+- Existing tests: imports moved to `head_pose.py`, `hat_rise`, and `landmarker: False` where YuNet is replaced.
+
+**Measured**
+
+On the chin-up screenshot:
+
+| | Pose | Pitch | Brim above the eyes |
+| --- | --- | --- | --- |
+| Step 9 | YuNet `solvePnP` | −3° | 61 px (the floating hat) |
+| Step 10 | MediaPipe | +33° | 8 px; the hat sits on the head |
+
+On the test clips:
+
+| Clip | Player | pose % | mediapipe pose % | hat jitter px | face ms (mean / p95) |
+| --- | --- | --- | --- | --- | --- |
+| `two_people_fitness_challenge` | P1 | 100 | 83.8 | 1.95 | 10.5 / 13.0 |
+| `two_people_fitness_challenge` | P2 | 100 | 99.6 | 3.43 | |
+| `two_people_jump` (4K) | P1 | 100 | 99.2 | 11.2 | 19.2 / 20.2 |
+| `two_people_jump` (4K) | P2 | 100 | 99.7 | 10.0 | |
+
+- MediaPipe costs ~8 ms per frame for one player (CPU), so the face stage went from ~3 to ~10.5 ms. With pose (~10 ms) and render that is ~23 ms per frame at 720p, enough for 30 FPS.
+- Pitch now spans ±30° on the fitness clip; with YuNet `solvePnP` (step 9) it was −31° to +3°.
+- Hat jitter: P1 is lower than with the step 9 pose (2.33). P2 is higher than in step 9 (2.92), probably from switching between the two pose sources on hard frames.
+- Blendshapes are present on 84–100% of frames. `jawOpen` reaches 0.61 on the fitness clip.
+- `blink` goes over 0.5 in up to 26% of the frames of the jump clip: eyelids also drop when people look down. A blink event (for the super charge) needs hysteresis, a per-player baseline, and probably a pitch check. This is noted for `docs/extra_features.md`.
+
+**Open:**
+
+- Check on the webcam: chin up and down, blinking, mouth opening (the `jaw` and `blink` bars in the debug view).
+- MediaPipe's GPU delegate may cut its ~8 ms; not tried yet.
+- With `landmarker_per_frame: 1`, two players are measured at ~15 Hz each. Set it to 2 if short blinks are missed.
+
+#### Step 10 fix · Crash in `solvePnP` on degenerate points
+
+**What happened.** The live game crashed with `cv2.error ... sqpnp.cpp:236: (-215:Assertion failed) point_coordinate_variance >= POINT_VARIANCE_THRESHOLD`, raised from the `solvePnP` fallback in `head_pose()`.
+
+**Cause.** OpenCV's SQPnP solver asserts, instead of failing softly, when the image points (nearly) coincide or are not finite. Reproduced offline: it fails for a face a few pixels wide or a NaN coordinate, and works for normal and off-image points. YuNet never reports a face under `min_face` (20 px), so the likely route in a live run is optical flow: each step may shrink the face by up to `flow_scale_range[0]` (0.7×), and over `flow_max_s` that can compound to a few pixels. The exact frame of the crash was not recorded.
+
+**Changed:**
+
+- `src/ipcvgame/face/head_pose.py`, `head_pose()`: returns `None` (2D anchors for that frame) for non-finite points or eyes under 2 px apart, and for any `cv2.error` from the solver. A pose failure can no longer stop the game.
+- `src/ipcvgame/face/tracker.py`, flow branch of `update()`: a flow step that would shrink the face below `min_face` is not applied. The face holds and fades instead, the same as when flow fails.
+
+**Added to** `tests/test_face.py`:
+
+- `head_pose()` returns `None` for NaN and for collapsed points (the crash case);
+- flow that shrinks the face by 25% per frame stops (→ hold) before the face drops below `min_face`.
+
+**Checked:** 70 tests pass, `ruff` clean.

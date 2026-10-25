@@ -59,18 +59,21 @@ class FaceEffects:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.hat = load_sprite(cfg["hat_sprite"])
+        # The hat hangs from the bottom of its visible part (the brim), not from the
+        # bottom of the image: the PNG has transparent padding below the hat.
+        self.hat_brim = float(np.flatnonzero(self.hat[:, :, 3].max(axis=1) > 0).max() + 1)
         self.mustache = load_sprite(cfg["mustache_sprite"])
         self.hat_width = float(cfg["hat_width"])
         self.mustache_width = float(cfg["mustache_width"])
 
     def draw(self, canvas: np.ndarray, faces: dict[int, Face]) -> None:
-        hh, hw = self.hat.shape[:2]
+        hw = self.hat.shape[1]
         mh, mw = self.mustache.shape[:2]
         for f in faces.values():
             if not f.valid or f.alpha <= 0:
                 continue
-            if "hat" in f.anchors:       # pivot: bottom-middle of the hat
-                paste(canvas, self.hat, f.anchors["hat"], (hw / 2, hh), f.roll,
+            if "hat" in f.anchors:       # pivot: middle of the brim
+                paste(canvas, self.hat, f.anchors["hat"], (hw / 2, self.hat_brim), f.roll,
                       self.hat_width * f.scale, f.alpha)
             if "mouth" in f.anchors:     # pivot: centre of the mustache
                 paste(canvas, self.mustache, f.anchors["mouth"], (mw / 2, mh / 2), f.roll,

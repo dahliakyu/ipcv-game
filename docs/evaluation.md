@@ -58,6 +58,8 @@ One row per clip and player.
 | `jitter raw px`, `jitter smooth px` | Frame-to-frame shake of the mouth anchor: the RMS of the second difference ‖p₊₁ − 2p + p₋₁‖ over three consecutive *detect* frames. Steady motion cancels out in a second difference, so what remains is shake. *raw* is the unsmoothed YuNet point, *smooth* the One-Euro-filtered anchor the effect is drawn at |
 | `jitter raw %w`, `jitter smooth %w` | The same, as a percentage of the face width, so near and far players compare |
 | `lag px`, `lag p95 px`, `lag %w` | Alignment error: distance between the smoothed anchor and the raw measurement on detect frames (mean, 95th percentile, mean as % of face width). This is what smoothing costs: the effect trails the face |
+| `pose %`, `mediapipe pose %` | Share of detect and flow frames whose forehead, hat and `above_head` anchors came from the 3D head pose, and the part of those where the rotation came from MediaPipe (the rest: `solvePnP` on YuNet's landmarks plus the ears). Frames without a pose used the 2D offsets |
+| `hat jitter px` | The same second-difference shake, for the smoothed hat anchor the hat sprite hangs from. Compare `--set face.head_pose=false` runs to see what the head pose adds |
 | `crop px` | Mean side of the head crop YuNet runs on. Detection time grows with its area |
 | `face ms`, `face ms p95` | Time of the face stage per frame (mean, 95th percentile) |
 
@@ -67,6 +69,7 @@ One row per clip and player.
 - **Measure jitter on still clips.** On clips with fast movement (jumping, fast arms), the second difference also contains real acceleration. Use those clips for coverage and lag instead.
 - **Coverage per condition.** `detect %` per clip (`normal_play` versus `poor_lighting`, and so on) shows how robust the detector is. `flow %` shows how much the optical-flow fallback adds: compare against a `--tag noflow --set face.flow_max_s=0` run, where those frames become `hold`.
 - **No face swaps by construction.** Each face is detected inside its own player's head crop, so a face cannot jump to the other player. Identity switches are a Task 3 metric (`tools/eval_identity.py`).
+- **Head pose.** With `face.head_pose=true` the hat follows head tilt and turn, which also shows up as a little more `hat jitter px` on moving clips; compare against a `--tag pose_off --set face.head_pose=false` run.
 - **Speed.** `face ms` covers the face stage only. For the full-pipeline frame rate, run the game normally (without `--until`) and look at `ms_total` in the log.
 
 ### Example

@@ -65,6 +65,12 @@ def evaluate(df: pd.DataFrame, label: str) -> list[dict]:
         for s in SOURCES:
             row[f"{s} %"] = 100 * float((src == s).sum()) / n if n else float("nan")
         row["no face %"] = 100 * float((src == "").sum()) / n if n else float("nan")
+        if pre + "pose" in df:                  # detect/flow frames: where the head pose came from
+            moving = src.isin(["detect", "flow"])
+            pose = df[pre + "pose"].fillna("")[moving]
+            m = int(moving.sum())
+            row["pose %"] = 100 * float((pose != "").sum()) / m if m else float("nan")
+            row["mediapipe pose %"] = 100 * float((pose == "mediapipe").sum()) / m if m else float("nan")
 
         # Jitter and lag on detect frames, where the raw lip point is a measurement
         det = (src == "detect").to_numpy() & consecutive
@@ -83,6 +89,9 @@ def evaluate(df: pd.DataFrame, label: str) -> list[dict]:
                 "lag p95 px": float(np.percentile(lag, 95)) if len(lag) else float("nan"),
                 "lag %w": float(np.mean(lag / scale[det] * 100)) if len(lag) else float("nan"),
             }
+        if pre + "hat_x" in df:                 # smoothed hat anchor, same second difference
+            j_hat, _ = second_difference(df[[pre + "hat_x", pre + "hat_y"]].to_numpy(float), det)
+            row["hat jitter px"] = rms(j_hat)
         if pre + "crop_px" in df:
             row["crop px"] = float(df[pre + "crop_px"].mean())
         ms = df["ms_face"].dropna().to_numpy(float) if "ms_face" in df else np.array([])

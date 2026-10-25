@@ -87,6 +87,11 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # visible). A face is roughly 0.4 shoulder widths wide, so 1.5 leaves room
   # for keypoint error and head tilt; YuNet's cost grows with the crop area.
   crop_size: 1.5
+  # Crops larger than this (px, longest side) are shrunk before YuNet runs;
+  # null = never shrink. A face is ~0.27 of the crop width, so at 192 it is
+  # still ~50 px for YuNet. Measured on a 4K clip (480 px crops): face stage
+  # 23.4 -> 9.2 ms, detections 99.2% -> 98.9%; below 192 the gain flattens.
+  crop_max_px: 192
 
   # One Euro filter on the 4 face key points (prototype values).
   # min_cutoff (Hz): lower = steadier hat when the head is still.
@@ -141,14 +146,77 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Upper-lip point: this fraction of the way from the mouth centre to the
   # nose, where a mustache sits.
   lip_to_nose: 0.35
-  # Hat brim this far below the forehead point. The hat sprite has
-  # transparent padding at its bottom, so this puts the visible brim on the
-  # forehead instead of floating above it.
-  hat_drop: 0.40
-  # above_head anchor this far above the hat brim. The hat sprite is square
-  # and hat_width (1.5) wide, so this clears its top; the prototype drew the
-  # player name here.
-  above_head_rise: 1.5
+  # Hat brim this far above the forehead point (the effect hangs the hat
+  # from its visible brim). 0.11 keeps the prototype's look: it placed the
+  # sprite's bottom 0.40 below the forehead point, and the sprite has 34%
+  # transparent padding below the brim at 1.5 face widths: -0.40 + 0.51.
+  hat_rise: 0.11
+  # above_head anchor this far above the hat brim. The visible hat is ~0.6
+  # face widths tall, so this clears it; the prototype drew the player name
+  # here (1.6 above the eyes, as now).
+  above_head_rise: 1.0
+
+  # Head pose (steps 9-10): forehead, hat and above_head are 3D points on a
+  # canonical head, projected into the image with the head's rotation, so
+  # they follow it when it tilts up/down or turns. The rotation comes from
+  # MediaPipe (below), else from solvePnP on the YuNet landmarks and the
+  # ears. false = 2D anchors from the offsets above only.
+  head_pose: true
+  # Canonical head (mm; origin between the eyes, x image-right, y down,
+  # z into the head). Eyes 63 mm apart (adult average); nose tip and mouth
+  # corners match YuNet's average layout on 73 test detections (nose 0.54,
+  # mouth 0.99 eye distances below the eyes, mouth 0.85 wide); depths from a
+  # generic face model (nose tip 27 mm in front of the eyes).
+  head_model_mm:
+    left_eye: [-31.5, 0.0, 0.0]
+    right_eye: [31.5, 0.0, 0.0]
+    nose: [0.0, 34.0, -27.0]
+    left_mouth: [-27.0, 62.0, -2.0]
+    right_mouth: [27.0, 62.0, -2.0]
+    # Ears for the solvePnP fallback (pose model keypoints): ~72 mm to the
+    # side, at the level of the ear canal just below the eyes, ~85 mm behind
+    # them. Their depth gives the fit leverage on up/down tilt, which YuNet's
+    # near-frontal landmarks alone underestimate.
+    left_ear: [-72.0, 20.0, 85.0]
+    right_ear: [72.0, 20.0, 85.0]
+  # YuNet box width in eye distances (median of the same 73 detections), to
+  # turn the face-width offsets above into millimetres on the head.
+  box_per_eye: 2.16
+  # The hat and above_head points sit this far behind the eyes, between the
+  # front of the forehead and the centre of the head, so they drop towards
+  # the eyes when the chin goes up and rise when it goes down. Tune by eye.
+  hat_depth_mm: 50.0
+  # Uncalibrated webcam: focal length = this many image widths (1.0 = ~53 deg
+  # horizontal field of view, typical for laptop webcams).
+  focal_per_width: 1.0
+  # Ignore a pose beyond this yaw or pitch (deg): YuNet's landmarks get
+  # unreliable there, so the 2D anchors are used for that frame instead.
+  pose_max_deg: 60
+  # MediaPipe Face Landmarker (step 10) on a crop around the face: head
+  # rotation for the 3D anchors, and blendshape scores (jawOpen, eyeBlink...)
+  # in Face.blendshapes. false = pose from solvePnP only, no blendshapes.
+  landmarker: true
+  # Model file; not in the repo, the README has the download command.
+  landmarker_model: models/face_landmarker.task
+  # Detection and presence confidence (MediaPipe default 0.5).
+  landmarker_min_conf: 0.5
+  # Crop side in face widths: the whole face with forehead and chin, plus a
+  # margin for movement since the face position was measured.
+  landmarker_crop: 2.0
+  # Crops are shrunk to this side (px) first; the model works at 256 px.
+  landmarker_max_side: 256
+  # Players measured per frame, taking turns. Each run costs ~7.5 ms on the
+  # CPU, so 1 keeps two players at ~15 Hz each; a blink (100-300 ms) still
+  # spans 1-4 measurements. 2 = every player every frame.
+  landmarker_per_frame: 1
+  # A result counts as current for this long: covers the turn-taking gap
+  # (one frame at 30 FPS) with margin. Older: blendshapes are empty and the
+  # pose falls back to solvePnP.
+  landmarker_max_age_s: 0.25
+  # One Euro filter on yaw and pitch (rad). Angles from 5 landmarks are
+  # noisy, so a lower cutoff than for points; beta from the update guide.
+  pose_filter_min_cutoff: 1.0
+  pose_filter_beta: 0.5
 
   # Effect sprites: RGBA PNGs, relative to the repo root.
   hat_sprite: assets/face/hat.png

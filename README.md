@@ -35,6 +35,14 @@ wget -P models https://github.com/opencv/opencv_zoo/raw/main/models/face_detecti
 sha256sum models/face_detection_yunet_2023mar.onnx   # 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
 ```
 
+The MediaPipe Face Landmarker (head rotation, mouth opening, blinks) is not
+downloaded automatically either:
+
+```bash
+wget -P models https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+sha256sum models/face_landmarker.task   # 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+```
+
 Test clips go in `data/clips/` (gitignored, shared via the drive). Copy each
 `.mp4` together with its `.timestamps.csv`.
 
