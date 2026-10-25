@@ -2,7 +2,7 @@ Sep 28, 2026 · @el created with help of Claude Opus 5.5
 
 # Phase 1 status: what exists, what each of us does next
 
-The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module is a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone.
+The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module started as a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone. The Colour Clash merge is now replacing the stubs with the teammates' prototype code (see the table and [merge_log.md](../merge_log.md)).
 
 This document covers what the pipeline looks like right now, what your stub does and what you need to deliver, and the open items the team still has to fill in.
 
@@ -16,12 +16,13 @@ This document covers what the pipeline looks like right now, what your stub does
 | `scene/` renderer (OpenCV) | Task 5 | Phase-1 version | Moves to `pygame-ce` once the game is designed |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
-| `pose/motion.py` | Task 2 | Stub | No smoothing, no signals |
+| `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
 | `identity/tracker.py` | Task 3 | Stub | Left half = P1, right half = P2 |
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
-| `interaction/gestures.py`, `interaction/game.py` | Task 4 | Stub | No events; game prints events |
+| `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
+| `interaction/game.py` | Task 4 | Stub | Prints events; Colour Clash game logic is the next merge |
 
-Tests: 67 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 102 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -36,7 +37,7 @@ All of this lives in `Pipeline.step()` in `src/ipcvgame/app/pipeline.py`. It run
 - **Mirroring happens once, in the source.** Every coordinate you receive is a pixel in the mirrored full-resolution frame. Clips are stored *raw* and mirrored on load, the same as the webcam.
 - **Time comes from `Frame.t` in seconds.** For a live webcam that is `perf_counter()` at capture. For clips it is replayed from the `<clip>.timestamps.csv` sidecar, so your filters see the same dt as they did live. Never use frame counts as time.
 - **Keypoints are in canonical COCO-17 order.** Index them by name (`from ipcvgame.core import skeleton as sk; kpts[sk.L_WRIST]`). YOLO outputs COCO-17 directly; `skeleton.FROM_MEDIAPIPE33` maps MediaPipe's 33 points if Task 2 switches models.
-- **Re-entry resets.** When `Player.reentered` is True, `MotionFilter` clears that player's state itself, and the pipeline calls `face.reset(pid)`. Keep this behaviour when you replace a stub.
+- **Re-entry resets.** When `Player.reentered` is True, `MotionFilter` clears that player's state itself, and the pipeline calls `face.reset(pid)` and `gestures.reset(pid)`. Keep this behaviour when you replace a stub.
 - **Model warm-up.** The pipeline runs one dummy frame through the model at startup, so the ~3 s CUDA initialisation never shows up as a gap between frames 0 and 1.
 
 ### The module interface
@@ -55,8 +56,8 @@ Every module has the same methods; replace the body, keep the signature.
 
 ### Shared code you should use rather than rewrite
 
-- `core/filters.py`: `OneEuro`, `EMA` and `ConstantVelocityKalman`. They work on any array shape (e.g. `(17, 2)` keypoints) and take the real `t`. They are tested, including a test that the result does not depend on the FPS.
-- `core/geometry.py`: `bbox_iou`, `bbox_center`, `clip_bbox`, `crop` (returns the crop plus the offset back to full-frame pixels).
+- `core/filters.py`: `OneEuro`, `EMA` and `ConstantVelocityKalman`. They work on any array shape (e.g. `(17, 2)` keypoints) and take the real `t`. `EMA` can let chosen rows jump instead of being smoothed (`snap` mask). They are tested, including a test that the result does not depend on the FPS.
+- `core/geometry.py`: `bbox_iou`, `bbox_center`, `clip_bbox`, `crop` (returns the crop plus the offset back to full-frame pixels), `angle_at` (angle at a joint, in degrees).
 - `scene/draw.py`: `player_color(pid)`, `draw_skeleton`, `draw_bbox`, `draw_text`, so debug views use the same colours everywhere.
 
 ### Config
@@ -104,7 +105,7 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | Player status | fixed set | `active`, `occluded`, `lost` | contract |
 | Face anchors | body location | `above_head`, `forehead`, `mouth` | Task 1 ↔ 4, 5 |
 | Motion signals | `<side>_<joint>_<quantity>`, or a state name as 0.0/1.0 | `r_wrist_speed`, `hands_above_head` | Task 2 ↔ 4 (proposal) |
-| Gesture events | the action | `punch`, `raise_hands` | Task 4 (proposal) |
+| Gesture events | the action | `punch`, `hands_up`, `arms_crossed` | Task 4 (merged) |
 
 **Files and branches.**
 
@@ -122,7 +123,8 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | --- | --- |
 | pose (YOLO26n-pose, fp16) | ~10 |
 | face (YuNet on head crops + MediaPipe for one player per frame) | ~10.5 on a small clip, ~19 on a 4K clip; MediaPipe is ~8 of that |
-| identity, motion, gestures, game (stubs) | < 0.1 each |
+| motion (EMA smoothing), gestures (rules) | ~0.1 each |
+| identity, game (stubs) | < 0.1 each |
 | render | ~1 |
 | **total** | **~11** |
 
@@ -163,15 +165,19 @@ pytest                                        # before every PR
 
 ### Task 2: Pose and motion — owner: ____________
 
-**Stub today:** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically) and converts its output to canonical keypoints. `MotionFilter` passes keypoints through unsmoothed, computes velocity by finite difference on `t`, sets `valid = conf ≥ 0.5`, and returns `signals = {}`.
+**Status (smoothing merged 2026-10-25 from the prototype's `KeypointTracker`; details in [merge_log.md](../merge_log.md#task-4-gestures)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as the prototype, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
 
-**To deliver:** smoothed keypoints and motion signals per player.
+- keypoints under confidence 0.35 count as missing, and keep their last position for 0.33 s;
+- an EMA smooths the positions (time constant 0.048 s);
+- a point that comes back after that jumps straight to the detection.
 
-- Choose and justify the model and its size (YOLO26 vs YOLO11, n vs s) on the shared clips; keep the adapter to canonical order.
-- Per-player, per-keypoint smoothing (One Euro and/or Kalman from `core/filters.py`); state keyed by `pid`, cleared on `reentered`.
-- Confidence gating: hold the last valid value for a short time when a keypoint drops out.
-- Define the `signals` Task 4 needs (e.g. `r_wrist_speed`, `hands_above_head`). **Agree the names with Task 4.**
-- Thresholds in `pose:` / `motion:`; `log_fields` (raw vs smoothed jitter); `tools/eval_motion.py`.
+Velocities are the finite difference of the smoothed points. `motion.backend: stub` brings back the pass-through.
+
+- [x] Per-player, per-keypoint smoothing with `core/filters.py` (`EMA`); state keyed by `pid`, cleared on `reentered` and when the player has no detection.
+- [x] Confidence gating: missing keypoints hold their last position for `hold_s`, then become invalid.
+- [ ] Choose and justify the model and its size (YOLO26 vs YOLO11, n vs s) on the shared clips; keep the adapter to canonical order.
+- [ ] Define `signals` (still `{}`; the gesture rules read the smoothed keypoints directly).
+- [ ] `log_fields` (raw vs smoothed jitter); `tools/eval_motion.py`.
 
 ### Task 3: Identity tracking — owner: ____________
 
@@ -188,15 +194,20 @@ pytest                                        # before every PR
 
 ### Task 4: Interaction — owner: ____________
 
-**Stub today:** `GestureRecognizer.update` returns `[]`. Its `draw_debug` already shows each player's motion signals and the frame's events. `Game.update` prints events to the console.
+**Status (gestures merged 2026-10-25 from the prototype's `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures)):** `GestureRecognizer` runs the prototype's rules on the smoothed keypoints, with all distances in shoulder widths:
 
-**To deliver:** gesture events with hold times and cooldowns.
+- **`hands_up`:** both wrists above the nose.
+- **`arms_crossed`:** wrists swapped left/right in front of the chest.
+- **`punch`:** one arm straight and reaching at least 1 shoulder width to the side at chest height, the other arm bent. The reach is measured sideways since the merge, so a hanging arm is not a punch.
 
-- Rule-based gestures on `Motion` (angles, distances normalised by shoulder width, velocities).
-- Per-player state machine (idle → charging → fired → cooldown) with hold times and hysteresis; all in `gestures:`.
-- Only use `motion[pid].valid` keypoints and the agreed `signals` names from Task 2.
-- `log_fields` (gesture state per player); `tools/eval_gestures.py` (true/false triggers on the clips).
-- `game.py` stays a stub until the game design is final.
+Hands up and crossed must hold for 0.03 s; a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. `Game.update` still prints events to the console.
+
+- [x] Rule-based gestures on `Motion`, using only `valid` keypoints; thresholds in `gestures:`.
+- [x] Hold times per player; one event per gesture. Cooldowns belong to the game (the prototype's bolt has 1.8 s).
+- [x] `log_fields`: `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch`, `_events`.
+- [ ] `tools/eval_gestures.py`: needs clips with real, labelled gestures (the two test clips have none).
+- [ ] `game.py`: the Colour Clash game logic (next merge).
+- [ ] Later: a trained punch classifier, see `docs/extra_features.md`, feature 8.
 
 ### Task 5: Integration — owner: @el
 
@@ -255,6 +266,5 @@ Record with `python tools/record_clip.py <name>`. Each clip is stored with its `
 These are expected, and each goes away when its stub is replaced:
 
 - IDs swap whenever players cross the middle of the screen, and a third person in the middle is ignored.
-- Skeletons jitter, because there is no smoothing yet.
-- No gestures fire, so the game prints nothing.
+- Gestures fire, but the game only prints them to the console.
 - `Player.pos` is always `(0, 0)` in the CSV logs.

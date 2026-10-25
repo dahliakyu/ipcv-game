@@ -864,3 +864,18 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 | `two_people_jump.mp4` (365 frames) | none | 0.09 ms |
 
 Both `hands_up` events come from player 2 raising both fists above the head during the exercise, which the rule rightly counts.
+
+#### Step 4 · Check and record
+
+**Changed:** `docs/phase-1/status.md`
+
+- "Where we are": `pose/motion.py` marked as smoothing done; `interaction/gestures.py` done, with `interaction/game.py` on its own row as the remaining stub. Test count 102.
+- Task 2 and Task 4 sections: "Stub today" replaced by the merged status and a checklist of what is done and still open (model choice, `signals`, `tools/eval_motion.py`, `tools/eval_gestures.py`, the game logic, the punch classifier for later).
+- Conventions: re-entry also calls `gestures.reset(pid)`; `EMA` has a `snap` mask; `core/geometry.py` has `angle_at`.
+- Naming: gesture event names are `punch`, `hands_up`, `arms_crossed`.
+- Performance: motion and gestures are ~0.1 ms each (steps 1 and 3).
+- Known limitations: no more "skeletons jitter" or "no gestures fire"; gestures fire, but the game only prints them.
+
+**Change Overviews** for Task 2 and Task 4 were filled in step by step (steps 1–3).
+
+**Checked:** 102 tests pass, `ruff` clean.
