@@ -171,6 +171,10 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `PaintSplat`, `Projectile`, `PaintBeam`, `Shield` | `interaction/game.py`, same names | Pixels; a splat stores `owner_id` instead of a colour |
 | `Player` | `interaction/game.py`, `GamePlayer` | Renamed (`Player` is the identity type) |
 | `Game.__init__()`, `get_player()`, `reset()` | `interaction/game.py`, same names | `reset(pid)` added |
+| `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()`, `_apply_damage()` | `interaction/game.py`, same names | Pixels; shield check added |
+| `Game.update(dt, visible)` | `interaction/game.py`, `Game.advance(dt, visible)` | Renamed; `update(state)` is the module interface |
+| (new) shield check | `interaction/game.py`, `Game.shielded(pid)` | |
+| `test_game.py` | `tests/test_game.py` | Same tests in px, plus new ones |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
 
@@ -219,6 +223,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **One colour table (step 5):** the prototype's P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
 - **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
+- **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; the prototype's shield was only drawn.
 
 #### Task 3 (pre-merge)
 
@@ -994,3 +999,29 @@ Both `hands_up` events come from player 2 raising both fists above the head duri
 **Added:** `tests/test_game.py` (4 tests): team colours, a new player at full health, `reset()` keeps positions and clears the round (the prototype's `test_reset_starts_a_fresh_round`), `reset(pid)`.
 
 **Checked:** 106 tests pass, `ruff` clean.
+
+#### Step 6 · Combat
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+
+- `attack()`, `beam_attack()`, `activate_shield()`, `_find_projectile_target()`, `_check_beam_hits()` and `_apply_damage()` keep the prototype's names, logic and order, in pixels. The prototype's `update(dt, visible)` is now `advance(dt, visible)`, because `update(state)` is the module interface (step 7).
+- Speeds and the beam's hit radius are config fractions times the frame size (`frame_w`, `frame_h`, set from each frame in step 7). Bolts and beams leave the game at the frame edge (`0 … frame_w`), as at 0 … 1 before.
+- `player_id` has no default any more (the prototype defaulted to 1 for its single-player version).
+- `attack()` sets the cooldown from `bolt_cooldown_s` (0, so every punch fires).
+- A splat stores `owner_id`. The minimum box size in `_apply_damage()` is 1 px (was 0.001 of the frame).
+- **Shield blocking (new):**
+  - `shielded(pid)` is true while that player's shield is up, not during its fade-out;
+  - a bolt that reaches a shielded player disappears without damage or paint;
+  - a beam that reaches a shielded player adds them to `hit_player_ids` without damage, so it does not hit them later in its life, after the shield is gone.
+
+**Added:** 13 tests in `tests/test_game.py`.
+- The prototype's 6 combat tests, same names and numbers, in a 1000 × 1000 px frame so 0–1 coordinates become pixels:
+  - red bolt hits blue;
+  - blue bolt hits red;
+  - a beam hits a target only once;
+  - the cooldown, with the prototype's 1.8 s set in the config;
+  - a fully painted player loses;
+  - a bolt never hurts its owner.
+- New: every punch fires with cooldown 0, a shield blocks a bolt, a shield blocks a beam for the rest of the beam, a fading shield does not block and then disappears, an invisible player is not hit, a bolt leaves the frame, and the same hit gives the same splats.
+
+**Checked:** 119 tests pass, `ruff` clean.

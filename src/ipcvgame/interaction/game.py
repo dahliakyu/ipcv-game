@@ -4,12 +4,15 @@ Moved from the prototype's ``game.py`` in the game merge (docs/merge_log.md,
 Task 4). Positions are pixels in the mirrored frame; every number comes from
 the ``game:`` config.
 
-So far (merge step 5): the game state. ``update()`` still only prints events;
-combat (step 6) and the pipeline wiring (step 7) follow.
+Combat (``advance()``): bolts and beams fly across the frame and damage the
+first other player whose body box they reach, adding paint splats; a raised
+shield blocks them. At 0 health the attacker wins and the game freezes.
+``update()`` still only prints events until the pipeline wiring (merge step 7).
 """
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -70,6 +73,9 @@ class Game:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.max_health = int(cfg["max_health"])
+        # Frame size in px; speeds and sizes in the config are fractions of it.
+        # Set from each frame by update() (step 7).
+        self.frame_w, self.frame_h = 0, 0
         self.players: dict[int, GamePlayer] = {}
         self.projectiles: list[Projectile] = []
         self.beams: list[PaintBeam] = []
@@ -80,6 +86,147 @@ class Game:
         if player_id not in self.players:
             self.players[player_id] = GamePlayer(health=self.max_health)
         return self.players[player_id]
+
+    def attack(self, x: float, y: float, direction: int, player_id: int) -> bool:
+        """Fire a bolt from (x, y) px; return if it fired."""
+        player = self.get_player(player_id)
+        if self.winner_id is not None or player.cooldown > 0:
+            return False
+
+        self.projectiles.append(Projectile(x, y, 1 if direction >= 0 else -1, player_id))
+        player.cooldown = self.cfg["bolt_cooldown_s"]
+        return True
+
+    def beam_attack(self, x: float, y: float, direction: int, player_id: int) -> None:
+        """Launch a short-lived paint beam from (x, y) px."""
+        if self.winner_id is not None:
+            return
+        self.beams.append(PaintBeam(x, x, y, 1 if direction >= 0 else -1, owner_id=player_id))
+
+    def activate_shield(self, x: float, y: float, direction: int, player_id: int) -> None:
+        """Raise the shield beside the player; it blocks hits for shield_s."""
+        self.shields[player_id] = Shield(x, y, 1 if direction >= 0 else -1,
+                                         remaining=self.cfg["shield_s"])
+
+    def shielded(self, player_id: int) -> bool:
+        """True while the player's shield blocks (not during its fade-out)."""
+        shield = self.shields.get(player_id)
+        return shield is not None and shield.remaining > 0
+
+    def advance(self, dt: float, visible_player_ids: set[int] | None = None) -> None:
+        """Move the game on by dt seconds (the prototype's ``update()``). Only
+        visible players can be hit."""
+        if self.winner_id is not None:
+            return
+        cfg = self.cfg
+
+        for player in self.players.values():
+            player.cooldown = max(0.0, player.cooldown - dt)
+
+        for player_id, shield in list(self.shields.items()):
+            shield.age += dt
+            shield.remaining -= dt
+            if shield.remaining <= -cfg["shield_fade_s"]:
+                del self.shields[player_id]
+
+        active_player_ids = set(self.players) if visible_player_ids is None else visible_player_ids
+        remaining = []
+        for projectile in self.projectiles:
+            previous_x = projectile.x
+            projectile.x += projectile.direction * cfg["bolt_speed_w"] * self.frame_w * dt
+            target = self._find_projectile_target(projectile, previous_x, active_player_ids)
+            if target is not None:
+                # A shield absorbs the bolt: it disappears without damage.
+                if not self.shielded(target):
+                    self._apply_damage(target, projectile.owner_id, projectile.x,
+                                       projectile.y, cfg["bolt_damage"])
+            elif 0.0 <= projectile.x <= self.frame_w:
+                remaining.append(projectile)
+        self.projectiles = remaining
+
+        charge = cfg["beam_charge_s"]
+        speed = cfg["beam_speed_w"] * self.frame_w
+        active_beams = []
+        for beam in self.beams:
+            previous_x = beam.x
+            previous_age = beam.age
+            beam.age += dt
+            if previous_age >= charge:
+                beam.x += beam.direction * speed * dt
+            elif beam.age > charge:
+                beam.x += beam.direction * speed * (beam.age - charge)
+            if beam.age >= charge:
+                self._check_beam_hits(beam, previous_x, active_player_ids)
+            if 0.0 <= beam.x <= self.frame_w and beam.age < charge + cfg["beam_duration_s"]:
+                active_beams.append(beam)
+        self.beams = active_beams
+
+    def _find_projectile_target(self, projectile: Projectile, previous_x: float,
+                                visible_player_ids: set[int]) -> int | None:
+        # The path since the last frame, so a fast bolt cannot skip a box.
+        segment_left = min(previous_x, projectile.x)
+        segment_right = max(previous_x, projectile.x)
+        for player_id in visible_player_ids:
+            if player_id == projectile.owner_id:
+                continue
+            bounds = self.get_player(player_id).bounds
+            if bounds is None:
+                continue
+            left, top, right, bottom = bounds
+            if top <= projectile.y <= bottom and segment_right >= left and segment_left <= right:
+                return player_id
+        return None
+
+    def _check_beam_hits(self, beam: PaintBeam, previous_x: float,
+                         visible_player_ids: set[int]) -> None:
+        radius = self.cfg["beam_hit_radius_h"] * self.frame_h
+        beam_left = min(beam.start_x, previous_x, beam.x)
+        beam_right = max(beam.start_x, previous_x, beam.x)
+        for player_id in visible_player_ids:
+            if player_id == beam.owner_id or player_id in beam.hit_player_ids:
+                continue
+            bounds = self.get_player(player_id).bounds
+            if bounds is None:
+                continue
+            left, top, right, bottom = bounds
+            if (beam.y + radius >= top and beam.y - radius <= bottom
+                    and beam_right >= left and beam_left <= right):
+                # A shield blocks the beam for this player for the rest of the beam.
+                if not self.shielded(player_id):
+                    self._apply_damage(player_id, beam.owner_id,
+                                       min(max(right, beam_left), beam_right), beam.y,
+                                       self.cfg["beam_damage"])
+                beam.hit_player_ids.add(player_id)
+
+    def _apply_damage(self, target_id: int, owner_id: int, impact_x: float,
+                      impact_y: float, damage: int) -> None:
+        target = self.get_player(target_id)
+        if target.health <= 0 or self.winner_id is not None:
+            return
+
+        target.health = max(0, target.health - damage)
+        if target.bounds is not None:
+            lo, hi = self.cfg["splat_band"]
+            spread = self.cfg["splat_spread"]
+            left, top, right, bottom = target.bounds
+            width = max(right - left, 1.0)
+            height = max(bottom - top, 1.0)
+            # Impact point as a fraction of the box, kept on the torso band.
+            center_x = min(hi, max(lo, (impact_x - left) / width))
+            center_y = min(hi, max(lo, (impact_y - top) / height))
+            splats = target.paint_splats
+            splats.append(PaintSplat(center_x, center_y, owner_id))
+            # Seeded, so the same hit always gives the same splats.
+            rng = random.Random(target_id * 1000 + len(splats))
+            for _ in range(self.cfg["splat_extra"]):
+                splats.append(PaintSplat(
+                    min(hi, max(lo, center_x + rng.uniform(-spread, spread))),
+                    min(hi, max(lo, center_y + rng.uniform(-spread, spread))),
+                    owner_id,
+                ))
+
+        if target.health == 0:
+            self.winner_id = owner_id
 
     def update(self, state: FrameState) -> None:
         for e in state.events:
