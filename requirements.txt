@@ -19,6 +19,11 @@ numpy==2.5.2
 scipy==1.18.1                  # Task 3 Hungarian (linear_sum_assignment)
 filterpy==1.4.5                # Kalman filters (Tasks 2, 3)
 
+# --- identity (Task 3, from the Colour Clash prototype) ---
+# OSNet re-id is vendored as osnet.py (MIT, from KaiyangZhou/deep-person-reid),
+# so torchreid and its gdown/tensorboard imports are not needed.
+lap==0.5.13                    # Ultralytics BoT-SORT matching; else auto-installed at runtime
+
 # --- game / rendering ---
 pygame-ce==2.5.8               # final game renderer and sound
 

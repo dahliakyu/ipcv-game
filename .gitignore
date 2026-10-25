@@ -10,6 +10,10 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 
+# Teammates' raw prototype code, kept local during the Colour Clash merge
+# (temporary: remove this entry once the merge is done)
+garb/
+
 # Environments (conda env lives outside the repo; venv users keep it here)
 .venv/
 venv/
