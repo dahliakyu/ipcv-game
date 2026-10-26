@@ -391,6 +391,25 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # players get a copy with every hue turned by the same angle, so it takes
   # their team colour (scene/draw.py).
   beam_effect_owner: 1
+  # Shield look, from the assets/shield/FX019 frames: a ring of fire around
+  # the player's chest. The pack's first shield_form_frames frames form the
+  # ring (whirling arcs closing); they play once over shield_form_s, faster
+  # than the pack's 1.3 s, because the shield blocks from its first frame and
+  # lasts only shield_s. The next shield_loop_frames frames are the burning
+  # ring, looped at shield_sprite_fps (the pack's preview rate); the pack's
+  # remaining frames repeat them and are not used. The ring fades out with the
+  # shield (shield_fade_s). null = a plain ellipse.
+  shield_sprite: assets/shield/FX019
+  shield_form_frames: 13
+  shield_loop_frames: 16
+  shield_form_s: 0.3
+  shield_sprite_fps: 10
+  # Ring diameter in shoulder widths: 2.6 frames the upper body (shoulders
+  # plus arms crossed in front) at any distance from the camera.
+  shield_ring_sw: 2.6
+  # The ring's own colours (orange fire) are P1's (red team); others get a
+  # hue-turned copy in their team colour.
+  shield_effect_owner: 1
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player

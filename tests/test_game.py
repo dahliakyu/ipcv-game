@@ -411,3 +411,19 @@ def test_bolt_end_is_kept_where_the_bolt_stopped(arena):
 def test_bolt_effect_off_draws_a_dot():
     g = Game({**load_config()["game"], "bolt_sprite": None})
     assert g._bolt_effect(1) is None
+
+
+def test_shield_ring_sits_on_the_chest(game):
+    s = frame_state(0.0, events=[(1, "arms_crossed")])
+    game.update(s)
+    (cx, cy), d = game.ring_geometry(1, game.shields[1], s)
+    # Shoulders at y 300 and 100 px apart, hips at 600: chest at 450.
+    assert (cx, cy) == (200.0, 450.0) and d == pytest.approx(game.cfg["shield_ring_sw"] * 100)
+
+
+def test_shield_ring_falls_back_without_shoulders(game):
+    s = frame_state(0.0, events=[(1, "arms_crossed")])
+    game.update(s)
+    s.motion[1].valid[sk.R_SHOULDER] = False
+    (cx, cy), d = game.ring_geometry(1, game.shields[1], s)
+    assert (cx, cy) == (game.shields[1].x, game.shields[1].y) and d == 200.0   # box width

@@ -175,6 +175,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | (new) debug view, CSV columns | `interaction/game.py`, `Game.draw_debug()` + `log_fields()` | `--until game`; the full drawing is the renderer merge |
 | (new) magic ball and beam | `scene/magic_beam.py`, `MagicBeam`; `scene/draw.py`, `blend_rgba()`, `main_hue()`, `shift_hue()` | Task 4 modifications; one hue-turned copy per team |
 | (new) fire blast for the bolt | `scene/fire_bolt.py`, `FireBolt`; `Projectile.age`, `BoltEnd` | Task 4 modifications; one hue-turned copy per team |
+| (new) ring of fire for the shield | `scene/fire_ring.py`, `FireRing`; `Game.ring_geometry()` | Task 4 modifications; one hue-turned copy per team |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
 
@@ -228,6 +229,7 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **One beam per raise (Task 4 modifications):** hands up and arms crossed stay on through dropouts shorter than `release_s` (0.3 s), and a player cannot start a beam while their previous one is alive; `game.py` had no limit.
 - **Slower bolt (Task 4 modifications):** `bolt_speed_w` 1.0 frame widths/s instead of `game.py`'s 1.4, so the bolt is easier to see coming and shield.
 - **Bolts start at the punching hand (Task 4 modifications)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
+- **The shield is drawn as a ring of fire (Task 4 modifications, new):** sprite frames per team instead of `renderer.py`'s shield picture, on the player's chest and sized to their shoulders.
 - **The bolt is drawn as a fire blast (Task 4 modifications, new):** sprite frames per team instead of `renderer.py`'s bolt, with a break-up where it ends; `Projectile` has an `age` field, and `Game.bolt_ends` keeps where bolts stopped, for drawing.
 - **The beam is drawn as a magic ball and beam (Task 4 modifications, new):** sprite frames instead of `renderer.py`'s paint beam, in each player's team colour.
 - **The beam lasts its full duration (Task 4 modifications):** its tip stops at the frame edge instead of the beam ending there, so a target stepping into it later is also hit (once).
@@ -1056,7 +1058,7 @@ The beam (hands up) is drawn with the `assets/magic_effect/` frames ("Magic Atta
 
 ### Normal attack drawn as a fire blast (assets/beam frames)
 
-The bolt (punch) is drawn with the 6 fire-blast frames in `assets/beam/` instead of a dot. Each team has its own colour.
+The bolt (punch) is drawn with the 6 fire-blast frames in `assets/beam/` ("Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, credited in the README) instead of a dot. Each team has its own colour.
 
 **Added:** `src/ipcvgame/scene/fire_bolt.py`, `FireBolt` (Task 5, so the renderer can use it later).
 - **The frames:** 131 × 32 px pixel art, a one-shot fire blast drawn to the right: a launch flash (frame 1), the blast in flight (2–3), its break-up into sparks (4–6). The blast moves within the frames.
@@ -1142,4 +1144,43 @@ The webcam test sometimes fired the major attack and a normal attack together. R
   - gestures starting together send only one event, the major attack first;
   - the `ready` CSV column.
 - `tests/test_game.py`: no bolt while the player's own beam is alive. `test_log_fields` now fires its bolt from P2, since P1's beam is still alive there.
+
+### Shield drawn as a ring of fire (FX019 frames)
+
+The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` instead of an ellipse. Each team has its own colour.
+
+**Added:** `src/ipcvgame/scene/fire_ring.py`, `FireRing` (Task 5, so the renderer can use it later).
+- **The frames:** 45 frames of 759 × 512 px, a ring of fire at the pack's 10 FPS (`PFX019.gif`).
+  - Frames 1–13: whirling arcs that close into the ring.
+  - Frames 14–29: the burning ring, looping.
+  - Frames 30–45: exact copies of 14–29, not used.
+- **Forming** (`shield_form_frames`) plays once over `shield_form_s` (0.3 s) instead of the pack's 1.3 s. The shield blocks from its first frame and lasts only `shield_s` (1 s), so the ring has to be up quickly.
+- **The ring** (`shield_loop_frames`) then loops at `shield_sprite_fps`.
+- **Anchor and size,** both measured from the loop frames:
+  - the centre is the middle of the frames' combined outline, fixed, so it doesn't jitter;
+  - the size is the median height of the ring, because flames flick outside it now and then.
+- **Fade:** the ring fades out with the shield's fade (`shield_fade_s`) through the blend's opacity.
+- **Team colour:** orange fire belongs to `shield_effect_owner` (P1); other players get a hue-turned copy (P2: blue), as for the bolt and the beam.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `draw_debug()` draws each shield with its owner's `FireRing` (`_shield_effect()`, loaded on first draw). With `shield_sprite: null` the old ellipse is drawn.
+- `ring_geometry()` (new): the ring follows the player. It is centred on the chest (halfway between shoulders and hips) and is `shield_ring_sw` shoulder widths across, so its size follows the player's distance to the camera. Without a shoulder width it goes where the shield went up, as wide as the body box. Blocking is unchanged and does not depend on where the ring is drawn.
+
+**Changed:** `configs/default.yaml`, `game:` section, each with a comment:
+- `shield_sprite` (`assets/shield/FX019`);
+- `shield_form_frames` (13), `shield_loop_frames` (16), `shield_form_s` (0.3), `shield_sprite_fps` (10);
+- `shield_ring_sw` (2.6: frames the upper body with the arms crossed in front);
+- `shield_effect_owner` (1).
+
+**Changed:** `.gitignore`: preview GIFs of the sprite packs (`assets/**/*.gif`) stay out of the repo; they are reference only.
+
+**Added:**
+- `tests/test_fire_ring.py` (6 tests, on made-up frames):
+  - forming, then the loop, with the copies unused;
+  - the ring's centre and size are measured;
+  - the ring is centred and sized when drawn;
+  - the fade lowers opacity;
+  - the hue shift, and too few frames raise;
+  - each team gets its own ring from the real frames.
+- `tests/test_game.py`: the ring sits on the chest at 2.6 shoulder widths, and the fallback without shoulders.
 

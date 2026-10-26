@@ -49,5 +49,5 @@ logs/
 runs/
 *.csv.tmp
 
-# Preview of the magic_effect pack; reference only, not used by the game
-assets/magic_effect/magic.gif
+# Preview GIFs of the sprite packs; reference only, not used by the game
+assets/**/*.gif

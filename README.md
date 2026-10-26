@@ -139,4 +139,4 @@ Sprites from third parties:
 | File | Source | Licence |
 | --- | --- | --- |
 | `assets/magic_effect/` (power-attack ball and beam) | "Magic Attack" by NYKNCK, itch.io, https://nyknck.itch.io/magic-attack (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
-| `assets/spiral/` (red and blue spiral frames) | "Magic Animation" by NYKNCK, itch.io, https://nyknck.itch.io/magic (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
+| `assets/beam/` (normal-attack fire blast) | "Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, https://nyknck.itch.io/fx061 (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |

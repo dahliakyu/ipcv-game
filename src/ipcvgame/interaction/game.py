@@ -27,6 +27,7 @@ from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
 from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, hue_of, player_color, pt
 from ipcvgame.scene.fire_bolt import FireBolt
+from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.magic_beam import MagicBeam
 
 
@@ -122,6 +123,7 @@ class Game:
         self.actions: list[tuple[int, str]] = []
         self._magic: dict[int, MagicBeam] = {}  # beam look per owner, loaded on first draw
         self._fire: dict[int, FireBolt] = {}  # bolt look per owner, loaded on first draw
+        self._rings: dict[int, FireRing] = {}  # shield look per owner, loaded on first draw
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:
@@ -375,7 +377,8 @@ class Game:
         it ended, or a dot),
         beams (the magic ball and beam, or a
         line with a growing dot while charging), shields (ellipse beside the
-        player; thin while fading), this frame's actions, and the winner."""
+        player; thin while fading; or the fire ring around the chest), this
+        frame's actions, and the winner."""
         unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid), 1)
@@ -434,6 +437,12 @@ class Game:
                          cv2.LINE_AA)
 
         for pid, shield in self.shields.items():
+            ring = self._shield_effect(pid)
+            if ring is not None:
+                center, diameter = self.ring_geometry(pid, shield, state)
+                fade = 1.0 if shield.remaining > 0 else 1.0 + shield.remaining / self.cfg["shield_fade_s"]
+                ring.draw(canvas, center, diameter, shield.age, max(fade, 0.0))
+                continue
             player = self.players.get(pid)
             h = (player.bounds[3] - player.bounds[1]) if player and player.bounds is not None else 40 * unit
             center = pt((shield.x + shield.direction * 6 * unit, shield.y - 0.25 * h))
@@ -468,6 +477,40 @@ class Game:
             if owner_id != owner:
                 self._fire[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
         return self._fire[owner_id]
+
+    def ring_geometry(self, pid: int, shield: Shield, state: FrameState) -> tuple[tuple[float, float], float]:
+        """Centre and diameter (px) of the shield's fire ring: on the
+        player's chest (halfway between shoulders and hips), following them,
+        shield_ring_sw shoulder widths across; without a shoulder width, where
+        the shield went up and as wide as the body box."""
+        m = state.motion.get(pid)
+        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"]) if m is not None else None
+        if sw is not None:
+            shoulder_y = (m.kpts[sk.L_SHOULDER][1] + m.kpts[sk.R_SHOULDER][1]) / 2.0
+            x, hip_y = self.body_position(m)
+            return (x, (shoulder_y + hip_y) / 2.0), self.cfg["shield_ring_sw"] * sw
+        player = self.players.get(pid)
+        width = (player.bounds[2] - player.bounds[0]) if player and player.bounds is not None else 100.0
+        return (shield.x, shield.y), float(width)
+
+    def _shield_effect(self, owner_id: int) -> FireRing | None:
+        """The shield's look for one player (game.shield_sprite), loaded on
+        first use; None = draw the plain ellipse. Hue-turned for players other
+        than shield_effect_owner, as for the bolt and the beam."""
+        cfg = self.cfg
+        if not cfg.get("shield_sprite"):
+            return None
+        if owner_id not in self._rings:
+            def load(hue_shift: int = 0) -> FireRing:
+                return FireRing(cfg["shield_sprite"], cfg["shield_form_frames"],
+                                cfg["shield_loop_frames"], cfg["shield_form_s"],
+                                cfg["shield_sprite_fps"], hue_shift)
+            owner = cfg["shield_effect_owner"]
+            base = self._rings.get(owner) or load()
+            self._rings[owner] = base
+            if owner_id != owner:
+                self._rings[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
+        return self._rings[owner_id]
 
     def _beam_effect(self, owner_id: int) -> MagicBeam | None:
         """The beam's look for one player (game.beam_ball, game.beam_band),
