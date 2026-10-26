@@ -59,3 +59,47 @@ def draw_lines(canvas: np.ndarray, lines: list[str], org: tuple[int, int] = (10,
     for line in lines:
         draw_text(canvas, line, (x, y), color, 0.5)
         y += 20
+
+
+def blend_rgba(canvas: np.ndarray, sprite: np.ndarray, x0: float, y0: float,
+               alpha: float = 1.0) -> None:
+    """Alpha-blend a BGRA sprite onto a BGR canvas in place, its top-left
+    corner at (x0, y0) px; the parts outside the canvas are clipped."""
+    h, w = sprite.shape[:2]
+    x0, y0 = int(round(x0)), int(round(y0))
+    cx0, cy0 = max(x0, 0), max(y0, 0)
+    cx1, cy1 = min(x0 + w, canvas.shape[1]), min(y0 + h, canvas.shape[0])
+    if cx0 >= cx1 or cy0 >= cy1:
+        return
+    s = sprite[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
+    a = s[:, :, 3:4].astype(np.float32) * (alpha / 255.0)
+    roi = canvas[cy0:cy1, cx0:cx1]
+    roi[:] = (s[:, :, :3] * a + roi * (1.0 - a)).astype(np.uint8)
+
+
+def hue_of(bgr: tuple[int, int, int]) -> int:
+    """OpenCV hue (0-179) of one BGR colour."""
+    return int(cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0, 0, 0])
+
+
+def main_hue(images: list[np.ndarray]) -> int:
+    """Main colour of BGRA sprites: the mean hue (OpenCV, 0-179) of their
+    coloured pixels (opaque, saturation > 60). Hue is an angle, so this is a
+    circular mean: reds just above 0 and just below 180 average to red."""
+    px = np.concatenate([im.reshape(-1, 4) for im in images])
+    hsv = cv2.cvtColor(px[None, :, :3], cv2.COLOR_BGR2HSV)[0]
+    coloured = (px[:, 3] > 0) & (hsv[:, 1] > 60)
+    angle = hsv[coloured, 0].astype(np.float64) * (2 * np.pi / 180)
+    mean = np.arctan2(np.sin(angle).mean(), np.cos(angle).mean())
+    return int(round(mean * 180 / (2 * np.pi))) % 180
+
+
+def shift_hue(image: np.ndarray, shift: int) -> np.ndarray:
+    """Copy of a BGRA sprite with every pixel's hue turned by `shift` (OpenCV
+    units, 0-179); brightness, saturation and transparency stay, so white
+    stays white and the main colour moves to a new team colour."""
+    out = image.copy()
+    hsv = cv2.cvtColor(image[:, :, :3], cv2.COLOR_BGR2HSV)
+    hsv[:, :, 0] = (hsv[:, :, 0].astype(int) + shift) % 180
+    out[:, :, :3] = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return out

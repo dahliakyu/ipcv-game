@@ -200,7 +200,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 - **`arms_crossed`:** wrists swapped left/right in front of the chest.
 - **`punch`:** one arm straight, reaching at least 1 shoulder width to the side, with the wrist at least level with its shoulder (0.2 shoulder widths of slack); the other arm bent. Since the merge, reach is measured sideways and low arms are excluded, so neither a hanging arm nor an arm held low is a punch.
 
-Hands up and crossed must hold for 0.03 s; a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. `Game.update` still prints events to the console.
+Hands up and crossed must hold for 0.03 s to turn on, and stay on until their rule has failed for 0.3 s (so a short keypoint dropout doesn't fire twice); a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. After any event the player must return to a normal position (no gesture on) before the next gesture can fire, so two actions never fire together. `Game.update` still prints events to the console.
 
 - [x] Rule-based gestures on `Motion`, using only `valid` keypoints; thresholds in `gestures:`.
 - [x] Hold times per player; one event per gesture. Cooldowns belong to the game (`game.py`'s bolt had 1.8 s; now 0).

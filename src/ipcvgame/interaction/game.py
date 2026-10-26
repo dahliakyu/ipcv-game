@@ -25,7 +25,9 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
-from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, player_color, pt
+from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, hue_of, player_color, pt
+from ipcvgame.scene.fire_bolt import FireBolt
+from ipcvgame.scene.magic_beam import MagicBeam
 
 
 @dataclass
@@ -53,6 +55,18 @@ class Projectile:
     y: float
     direction: int    # +1 = to the right, -1 = to the left
     owner_id: int
+    age: float = 0.0  # s since it was fired (drives the fire animation)
+
+
+@dataclass
+class BoltEnd:
+    """Where a bolt ended (a hit, a shield or the frame edge): drawing only,
+    so its break-up can play there for bolt_end_s."""
+    x: float
+    y: float
+    direction: int
+    owner_id: int
+    age: float = 0.0
 
 
 @dataclass
@@ -99,12 +113,15 @@ class Game:
         self.frame_w, self.frame_h = 0, 0
         self.players: dict[int, GamePlayer] = {}
         self.projectiles: list[Projectile] = []
+        self.bolt_ends: list[BoltEnd] = []
         self.beams: list[PaintBeam] = []
         self.shields: dict[int, Shield] = {}
         self.winner_id: int | None = None
         self._t: float | None = None  # Frame.t of the previous update
         # Actions this frame as (pid, "bolt" | "beam" | "shield"), for the CSV.
         self.actions: list[tuple[int, str]] = []
+        self._magic: dict[int, MagicBeam] = {}  # beam look per owner, loaded on first draw
+        self._fire: dict[int, FireBolt] = {}  # bolt look per owner, loaded on first draw
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:
@@ -112,20 +129,24 @@ class Game:
         return self.players[player_id]
 
     def attack(self, x: float, y: float, direction: int, player_id: int) -> bool:
-        """Fire a bolt from (x, y) px; return if it fired."""
+        """Fire a bolt from (x, y) px; return if it fired. Not while the
+        player's own beam is still alive: one attack at a time."""
         player = self.get_player(player_id)
-        if self.winner_id is not None or player.cooldown > 0:
+        if (self.winner_id is not None or player.cooldown > 0
+                or any(b.owner_id == player_id for b in self.beams)):
             return False
 
         self.projectiles.append(Projectile(x, y, 1 if direction >= 0 else -1, player_id))
         player.cooldown = self.cfg["bolt_cooldown_s"]
         return True
 
-    def beam_attack(self, x: float, y: float, direction: int, player_id: int) -> None:
-        """Launch a short-lived paint beam from (x, y) px."""
-        if self.winner_id is not None:
-            return
+    def beam_attack(self, x: float, y: float, direction: int, player_id: int) -> bool:
+        """Launch a short-lived paint beam from (x, y) px; return if it fired.
+        One beam per player at a time: none while their last one is alive."""
+        if self.winner_id is not None or any(b.owner_id == player_id for b in self.beams):
+            return False
         self.beams.append(PaintBeam(x, x, y, 1 if direction >= 0 else -1, owner_id=player_id))
+        return True
 
     def activate_shield(self, x: float, y: float, direction: int, player_id: int) -> None:
         """Raise the shield beside the player; it blocks hits for shield_s."""
@@ -154,9 +175,13 @@ class Game:
                 del self.shields[player_id]
 
         active_player_ids = set(self.players) if visible_player_ids is None else visible_player_ids
+        for end in self.bolt_ends:
+            end.age += dt
+        self.bolt_ends = [e for e in self.bolt_ends if e.age < cfg["bolt_end_s"]]
         remaining = []
         for projectile in self.projectiles:
             previous_x = projectile.x
+            projectile.age += dt
             projectile.x += projectile.direction * cfg["bolt_speed_w"] * self.frame_w * dt
             target = self._find_projectile_target(projectile, previous_x, active_player_ids)
             if target is not None:
@@ -166,6 +191,9 @@ class Game:
                                        projectile.y, cfg["bolt_damage"])
             elif 0.0 <= projectile.x <= self.frame_w:
                 remaining.append(projectile)
+                continue
+            self.bolt_ends.append(BoltEnd(min(max(projectile.x, 0.0), float(self.frame_w)),
+                                          projectile.y, projectile.direction, projectile.owner_id))
         self.projectiles = remaining
 
         charge = cfg["beam_charge_s"]
@@ -181,7 +209,9 @@ class Game:
                 beam.x += beam.direction * speed * (beam.age - charge)
             if beam.age >= charge:
                 self._check_beam_hits(beam, previous_x, active_player_ids)
-            if 0.0 <= beam.x <= self.frame_w and beam.age < charge + cfg["beam_duration_s"]:
+            # The tip stops at the frame edge; the beam lasts its full duration.
+            beam.x = min(max(beam.x, 0.0), float(self.frame_w))
+            if beam.age < charge + cfg["beam_duration_s"]:
                 active_beams.append(beam)
         self.beams = active_beams
 
@@ -311,8 +341,7 @@ class Game:
             if not (m.valid[sk.L_WRIST] and m.valid[sk.R_WRIST]):
                 return
             hx, hy = (m.kpts[sk.L_WRIST] + m.kpts[sk.R_WRIST]) / 2.0
-            if self.winner_id is None:
-                self.beam_attack(float(hx), float(hy), direction, pid)
+            if self.beam_attack(float(hx), float(hy), direction, pid):
                 self.actions.append((pid, "beam"))
         elif gesture == "arms_crossed":
             self.activate_shield(player.x, player.y, direction, pid)
@@ -329,6 +358,7 @@ class Game:
         for player in self.players.values():
             self._refresh(player)
         self.projectiles.clear()
+        self.bolt_ends.clear()
         self.beams.clear()
         self.shields.clear()
         self.winner_id = None
@@ -339,11 +369,13 @@ class Game:
         player.paint_splats.clear()
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """The game state as plain shapes, in the attacker's or owner's colour,
-        until the renderer draws it properly: skeleton (thin), health bar and
-        paint splats on each body box, bolts (dot), beams (line; a growing
-        dot while charging), shields (ellipse beside the player; thin while
-        fading), this frame's actions, and the winner."""
+        """The game state, in the attacker's or owner's colour, until the
+        renderer draws it properly: skeleton (thin), health bar and paint
+        splats on each body box, bolts (the fire blast and its break-up where
+        it ended, or a dot),
+        beams (the magic ball and beam, or a
+        line with a growing dot while charging), shields (ellipse beside the
+        player; thin while fading), this frame's actions, and the winner."""
         unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid), 1)
@@ -369,16 +401,32 @@ class Game:
                 label += " shield"
             draw_text(canvas, label, (x0, y0 - int(unit) - 6), player_color(pid))
 
+        bolt_h = int(self.cfg["bolt_sprite_h"] * canvas.shape[0])
+        for end in self.bolt_ends:
+            fire = self._bolt_effect(end.owner_id)
+            k = fire.end_index(end.age) if fire is not None else None
+            if k is not None:
+                fire.draw(canvas, end.x, end.y, end.direction, k, bolt_h)
         for b in self.projectiles:
+            fire = self._bolt_effect(b.owner_id)
+            if fire is not None:
+                fire.draw(canvas, b.x, b.y, b.direction, fire.flight_index(b.age), bolt_h)
+                continue
             c = player_color(b.owner_id)
             cv2.circle(canvas, pt((b.x, b.y)), int(unit), c, -1, cv2.LINE_AA)
             cv2.line(canvas, pt((b.x, b.y)), pt((b.x - b.direction * 4 * unit, b.y)), c, 2, cv2.LINE_AA)
 
         charge = self.cfg["beam_charge_s"]
+        life = charge + self.cfg["beam_duration_s"]
         thickness = max(2, int(2 * self.cfg["beam_hit_radius_h"] * canvas.shape[0]))
+        ball_px = int(self.cfg["beam_ball_h"] * canvas.shape[0])
         for beam in self.beams:
             c = player_color(beam.owner_id)
-            if beam.age < charge:
+            magic = self._beam_effect(beam.owner_id)
+            if magic is not None:
+                magic.draw(canvas, beam.start_x, beam.x, beam.y, beam.direction, beam.age,
+                           charge, life, thickness, ball_px)
+            elif beam.age < charge:
                 r = int(unit * (1 + 2 * beam.age / charge))
                 cv2.circle(canvas, pt((beam.start_x, beam.y)), r, c, 2, cv2.LINE_AA)
             else:
@@ -399,6 +447,47 @@ class Game:
             draw_text(canvas, f"P{self.winner_id} wins - press r for a new round",
                       (int(canvas.shape[1] * 0.3), canvas.shape[0] // 2),
                       player_color(self.winner_id), 1.0)
+
+    def _bolt_effect(self, owner_id: int) -> FireBolt | None:
+        """The bolt's look for one player (game.bolt_sprite), loaded on first
+        use so the game logic runs without it; None = draw a plain dot.
+
+        The frames' own colours belong to player bolt_effect_owner; for any
+        other player every hue is turned so it takes their team colour."""
+        cfg = self.cfg
+        if not cfg.get("bolt_sprite"):
+            return None
+        if owner_id not in self._fire:
+            def load(hue_shift: int = 0) -> FireBolt:
+                return FireBolt(cfg["bolt_sprite"], cfg["bolt_sprite_launch"],
+                                cfg["bolt_sprite_flight"], cfg["bolt_sprite_fps"],
+                                cfg["bolt_end_s"], hue_shift)
+            owner = cfg["bolt_effect_owner"]
+            base = self._fire.get(owner) or load()
+            self._fire[owner] = base
+            if owner_id != owner:
+                self._fire[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
+        return self._fire[owner_id]
+
+    def _beam_effect(self, owner_id: int) -> MagicBeam | None:
+        """The beam's look for one player (game.beam_ball, game.beam_band),
+        loaded on first use so the game logic runs without it; None = draw a
+        plain line.
+
+        The pack's own colours belong to player beam_effect_owner; for any
+        other player every hue is turned so it takes their team colour."""
+        cfg = self.cfg
+        if not cfg.get("beam_ball"):
+            return None
+        if owner_id not in self._magic:
+            def load(hue_shift: int = 0) -> MagicBeam:
+                return MagicBeam(cfg["beam_ball"], cfg["beam_band"], cfg["beam_ramp_s"], hue_shift)
+            owner = cfg["beam_effect_owner"]
+            base = self._magic.get(owner) or load()
+            self._magic[owner] = base
+            if owner_id != owner:
+                self._magic[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
+        return self._magic[owner_id]
 
     def bar_geometry(self, pid: int, state: FrameState) -> tuple[tuple[float, float], float]:
         """Centre (px) and length (px) of the debug health bar.

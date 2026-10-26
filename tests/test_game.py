@@ -18,8 +18,9 @@ def game() -> Game:
 @pytest.fixture
 def arena() -> Game:
     """The setup of test_game.py in a 1000 x 1000 px frame, so its 0-1
-    coordinates become px by multiplying by 1000: P1 on the left, P2 right."""
-    g = Game(load_config()["game"])
+    coordinates become px by multiplying by 1000: P1 on the left, P2 right.
+    With game.py's bolt speed (1.4), so its test numbers still hold."""
+    g = Game({**load_config()["game"], "bolt_speed_w": 1.4})
     g.frame_w, g.frame_h = 1000, 1000
     g.get_player(1).bounds = np.array([100.0, 200, 300, 800])
     g.get_player(2).bounds = np.array([600.0, 200, 800, 800])
@@ -95,6 +96,35 @@ def test_beam_damages_a_target_only_once(arena):
     assert arena.get_player(2).health == 88
     arena.advance(0.1, {1, 2})
     assert arena.get_player(2).health == 88
+
+
+def test_beam_stops_at_the_frame_edge_and_lasts_its_duration(arena):
+    arena.beam_attack(300, 100, 1, player_id=1)       # above both boxes
+    arena.advance(0.35, {1, 2})
+    arena.advance(0.6, {1, 2})                        # tip would be far past the edge
+    (beam,) = arena.beams
+    assert beam.x == 1000                             # stopped at the frame edge
+    arena.advance(0.21, {1, 2})                       # 1.16 s: past charge + duration
+    assert arena.beams == []
+
+
+def test_no_bolt_while_own_beam_is_alive(arena):
+    arena.beam_attack(300, 500, 1, player_id=1)
+    assert not arena.attack(300, 500, 1, player_id=1)          # P1 is firing a beam
+    assert arena.attack(700, 500, -1, player_id=2)             # P2 is not
+    arena.advance(0.35, {1, 2})
+    arena.advance(0.8, {1, 2})                                 # beam over
+    assert arena.attack(300, 500, 1, player_id=1)
+
+
+def test_one_beam_per_player_at_a_time(arena):
+    assert arena.beam_attack(300, 500, 1, player_id=1)
+    assert not arena.beam_attack(320, 450, 1, player_id=1)     # first still alive
+    assert arena.beam_attack(700, 500, -1, player_id=2)        # other player: fine
+    arena.advance(0.35, {1, 2})
+    arena.advance(0.8, {1, 2})                                 # both beams finished
+    assert arena.beams == []
+    assert arena.beam_attack(300, 500, 1, player_id=1)
 
 
 def test_bolt_cooldown_when_configured():
@@ -265,10 +295,11 @@ def test_time_comes_from_frame_t_and_is_capped(game):
     game.update(frame_state(0.0))
     assert game.projectiles[0].x == x0             # dt = 0: no movement
     game.update(frame_state(0.05))
-    assert game.projectiles[0].x == pytest.approx(x0 + 1.4 * W * 0.05)
+    speed = game.cfg["bolt_speed_w"] * W
+    assert game.projectiles[0].x == pytest.approx(x0 + speed * 0.05)
     game.update(frame_state(5.0))                  # long stall: capped at 0.1 s
-    # 260 + 70 + 140 = 470, short of P2's box at 700: still flying.
-    assert game.projectiles[0].x == pytest.approx(x0 + 1.4 * W * 0.15)
+    # 0.05 + 0.1 s of flight from x 260: short of P2's box at 700, still flying.
+    assert game.projectiles[0].x == pytest.approx(x0 + speed * 0.15)
 
 
 def test_bolt_hits_through_update(game):
@@ -320,8 +351,8 @@ def test_log_fields(game):
     assert row["game_p2_shield"] == 1 and row["game_p1_shield"] == 0
     assert row["game_bolts"] == 1 and row["game_beams"] == 1
     assert row["game_winner"] == ""
-    game.update(frame_state(0.2, events=[(1, "punch")]))
-    assert game.log_fields(frame_state(0.2))["game_p1_actions"] == "bolt"
+    game.update(frame_state(0.2, events=[(2, "punch")]))   # P1's beam is alive; P2 is free
+    assert game.log_fields(frame_state(0.2))["game_p2_actions"] == "bolt"
 
 
 def face_at(x: float, y: float, scale: float) -> Face:
@@ -345,3 +376,38 @@ def test_health_bar_without_face_uses_shoulder_width(game):
     (cx, cy), length = game.bar_geometry(1, frame_state(0.0))
     # Shoulders 100 px apart, centred at x 200; box bottom at y 900.
     assert (cx, cy) == (200.0, 900.0) and length == pytest.approx(1.3 * 100)
+
+
+def test_draw_debug_without_beam_effect_draws_a_line():
+    g = Game({**load_config()["game"], "beam_ball": None})
+    busy_game(g)
+    state = frame_state(0.6)
+    g.update(state)
+    canvas = state.frame.image.copy()
+    g.draw_debug(canvas, state)
+    assert g._magic == {} and canvas.any()
+
+
+def test_bolt_age_drives_its_animation(arena):
+    arena.attack(300, 500, 1, player_id=1)
+    arena.advance(0.1, {1, 2})
+    assert arena.projectiles[0].age == pytest.approx(0.1)
+
+
+def test_bolt_end_is_kept_where_the_bolt_stopped(arena):
+    arena.activate_shield(700, 500, -1, player_id=2)
+    arena.attack(300, 500, 1, player_id=1)       # blocked by P2's shield
+    arena.attack(300, 100, 1, player_id=1)       # above both boxes: leaves the frame
+    arena.advance(0.3, {1, 2})
+    assert sorted((round(e.x), e.y) for e in arena.bolt_ends) == [(720, 500)]
+    arena.advance(0.3, {1, 2})                   # second bolt reaches the edge
+    assert (1000.0, 100) in [(e.x, e.y) for e in arena.bolt_ends]
+    arena.advance(arena.cfg["bolt_end_s"], {1, 2})
+    assert all(e.y == 100 for e in arena.bolt_ends)      # the first end is over
+    arena.reset()
+    assert arena.bolt_ends == []
+
+
+def test_bolt_effect_off_draws_a_dot():
+    g = Game({**load_config()["game"], "bolt_sprite": None})
+    assert g._bolt_effect(1) is None

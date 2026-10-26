@@ -59,7 +59,7 @@ The identity code (`PlayerIdentityTracker` in `Colour Clash/Project/bodypose.py`
 
 ### Open issues found during the merge
 
-These are not fixed yet; each belongs to the owner of the code.
+These are not fixed yet; each belongs to the owner of the code. The `Colour Clash/` folder named below now lives in `garb/rest/` (ignored by git, local only).
 
 - **Two detectors per frame (Task 3, Task 2).** `Colour Clash/main.py` runs `yolo11n.pt` as a separate person detector for tracking and then `yolo26n-pose.pt` for keypoints. The architecture rule is one pose model per frame. YOLO-pose already returns person boxes, so tracking can run on those and `yolo11n.pt` can go.
 - **Stored appearance is never updated (Task 3).** In `PlayerIdentityTracker`, each player's OSNet vector is stored once, when the player is created. Lighting changes or a jacket coming off can then break re-identification. Matching is also greedy per track, not a joint assignment (Hungarian).
@@ -173,6 +173,8 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `bodypose.py`: `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Pixels, from the smoothed keypoints |
 | `test_game.py` | `tests/test_game.py` | Same tests in px, plus new ones |
 | (new) debug view, CSV columns | `interaction/game.py`, `Game.draw_debug()` + `log_fields()` | `--until game`; the full drawing is the renderer merge |
+| (new) magic ball and beam | `scene/magic_beam.py`, `MagicBeam`; `scene/draw.py`, `blend_rgba()`, `main_hue()`, `shift_hue()` | Task 4 modifications; one hue-turned copy per team |
+| (new) fire blast for the bolt | `scene/fire_bolt.py`, `FireBolt`; `Projectile.age`, `BoltEnd` | Task 4 modifications; one hue-turned copy per team |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
 
@@ -222,7 +224,13 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **One colour table (step 5):** `game.py`'s P1 red and P2 blue replace the debug colours in `scene/draw.py`; splats store the attacker's pid.
 - **Pixels instead of 0–1 coordinates (step 5);** speeds and sizes are fractions of the frame width or height in the config.
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
+- **One action at a time (Task 4 modifications, new):** after any action the player must return to a normal position (no gesture on) before the next one; gestures starting together send only the highest priority (hands up, arms crossed, punch); no bolt while the player's own beam is alive.
+- **One beam per raise (Task 4 modifications):** hands up and arms crossed stay on through dropouts shorter than `release_s` (0.3 s), and a player cannot start a beam while their previous one is alive; `game.py` had no limit.
+- **Slower bolt (Task 4 modifications):** `bolt_speed_w` 1.0 frame widths/s instead of `game.py`'s 1.4, so the bolt is easier to see coming and shield.
 - **Bolts start at the punching hand (Task 4 modifications)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
+- **The bolt is drawn as a fire blast (Task 4 modifications, new):** sprite frames per team instead of `renderer.py`'s bolt, with a break-up where it ends; `Projectile` has an `age` field, and `Game.bolt_ends` keeps where bolts stopped, for drawing.
+- **The beam is drawn as a magic ball and beam (Task 4 modifications, new):** sprite frames instead of `renderer.py`'s paint beam, in each player's team colour.
+- **The beam lasts its full duration (Task 4 modifications):** its tip stops at the frame edge instead of the beam ending there, so a target stepping into it later is also hit (once).
 - **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
 
 #### Task 3 (pre-merge)
@@ -1007,3 +1015,131 @@ The webcam test still fired punches with a straight arm held low, at chest or be
 **Changed:** `docs/phase-1/status.md`: the punch description says the wrist must be at least level with its shoulder.
 
 **Added:** 2 tests in `tests/test_gestures.py`: a straight sideways arm at chest height (0.75 sw below the shoulder) is no punch; a punch 0.125 sw below the shoulder still counts.
+
+### Power attack drawn as a magic ball and beam (magic_effect frames)
+
+The beam (hands up) is drawn with the `assets/magic_effect/` frames ("Magic Attack" by NYKNCK, itch.io, credited in the README) instead of a plain line, as in the pack's preview (`magic.gif`, kept out of the repo): a magic ball between the player's hands, and the beam coming out of it. Each team has its own colour.
+
+**Added:** `src/ipcvgame/scene/magic_beam.py`, `MagicBeam` (Task 5, so the renderer can use it later).
+- **Ball (`M5025-1` … `-26`, 512 × 512 px):** drawn on the beam's start point, the wrist midpoint when the hands went up. Its 26 frames play once over the beam's whole life (charge plus firing, 1.15 s), so it grows while charging, swirls while the beam fires, and shrinks to a dot as the beam ends.
+- **Beam (`L5020-1` … `-3`, 256 × 256 px):** the beam's cross-section, thickest first: horizontal stripes, identical in every column. One column is kept and stretched to the beam's length, so any length is exact. After the charge the beam starts at the thinnest band, thickens one step every `beam_ramp_s`, and thins again in its last steps, as in the preview. The full band is as thick as the hit band (2 × `beam_hit_radius_h` × frame height), so what you see is what hits. The beam is drawn under the ball.
+- **Team colour:** the pack's colours (red) belong to `beam_effect_owner` (P1, the red team). For any other player, every pixel's hue is turned by the same angle, so the pack's main hue becomes that player's team colour from `scene/draw.py`. Brightness and saturation stay. P2's copy is blue.
+
+**Changed:** `src/ipcvgame/scene/draw.py`:
+- `blend_rgba()` (new): alpha-blends a BGRA sprite onto the frame at a top-left corner, clipped to the frame.
+- `hue_of()`, `main_hue()`, `shift_hue()` (new): hue of a colour; main hue of sprites; a hue-turned copy of a sprite. `main_hue()` is a circular mean, because hue is an angle: the pack's reds lie just above 0 and just below 180, and a plain average or median of those would give cyan.
+
+**Added:** `src/ipcvgame/scene/animation.py`, `load_frames()`: reads the frames of a folder or a glob pattern, in natural order, and checks they are RGBA and the same size. The pack numbers its frames without leading zeros, so name order would put `M5025-10` before `M5025-2`.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `draw_debug()`: each beam is drawn with its owner's `MagicBeam` (`_beam_effect()`, loaded on first draw so the game logic runs without the files). With `beam_ball: null` the old line and charge circle are drawn.
+- `advance()`: **the beam's tip now stops at the frame edge, and the beam lasts its full duration** (`beam_duration_s`, 0.8 s). In `game.py` a beam ended as soon as its tip left the frame, about 0.3 s after firing, which would cut off the ball animation and the thinning at the end. Gameplay effect: each target is still hit at most once per beam, but stepping into a beam that is still active now also hits.
+
+**Changed:** `configs/default.yaml`, `game:` section, each with a comment:
+- `beam_ball` and `beam_band` (glob patterns for the two frame sets);
+- `beam_ramp_s` (0.1 s, the preview's frame time);
+- `beam_ball_h` (0.36 of the frame height: the ball fills about half its frame, so ~130 px at 720p, three times the beam's thickness, as in the preview);
+- `beam_effect_owner` (1).
+
+**Added:** `tests/test_magic_beam.py` (9 tests, on a small made-up pack):
+- frames load in natural order;
+- the ball plays once over the beam's life;
+- the band ramps up and down;
+- the beam reaches the tip and no further, with the ball on top;
+- left beams, and only the ball while charging;
+- `main_hue()` is circular for red;
+- `shift_hue()` keeps white and transparency;
+- `blend_rgba()` clips;
+- each team gets its own beam colour from the real pack.
+
+`tests/test_animation.py` (3 tests: a folder and a glob in natural order, missing or mixed frames raise). `tests/test_game.py`: the beam stops at the frame edge and lasts its duration; the debug view without the effect.
+
+### Normal attack drawn as a fire blast (assets/beam frames)
+
+The bolt (punch) is drawn with the 6 fire-blast frames in `assets/beam/` instead of a dot. Each team has its own colour.
+
+**Added:** `src/ipcvgame/scene/fire_bolt.py`, `FireBolt` (Task 5, so the renderer can use it later).
+- **The frames:** 131 × 32 px pixel art, a one-shot fire blast drawn to the right: a launch flash (frame 1), the blast in flight (2–3), its break-up into sparks (4–6). The blast moves within the frames.
+- **Split by phase** (`bolt_sprite_launch`, `bolt_sprite_flight`; the rest is the end):
+  - launch: shown for one frame time after the punch;
+  - flight: looped while the bolt flies;
+  - end: played once over `bolt_end_s` where the bolt ended: a hit, a shield or the frame edge.
+- **Anchor:** each frame is drawn with its own head (its rightmost opaque column) on the bolt's hit point, so the front of the fire is always on the bolt and the flames trail behind it. A single anchor for all frames put the launch flash ~130 px behind the hand, because the blast starts at the left of the pack's frames. The height is anchored on the middle row of the flight frames, shared, so the blast doesn't jump up and down. Bolts going left are mirrored.
+- **Team colour:** the frames' colours (orange fire) belong to `bolt_effect_owner` (P1, the red team). Other players get a copy with every hue turned by the same angle (P2: blue), as for the beam.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `Projectile` has a new field `age` (s since it was fired), counted up in `advance()`. It drives the animation.
+- `BoltEnd` (new) and `Game.bolt_ends`: when a bolt stops (a hit, a shield or the frame edge), `advance()` keeps its position, direction and owner for `bolt_end_s` so the break-up can play there. It is for drawing only; `reset()` clears it.
+- `draw_debug()` draws the bolt ends and the bolts with their owner's `FireBolt` (`_bolt_effect()`, loaded on first draw). With `bolt_sprite: null` the old dot is drawn.
+
+**Changed:** `configs/default.yaml`, `game:` section, each with a comment:
+- `bolt_sprite` (`assets/beam`), `bolt_sprite_launch` (1), `bolt_sprite_flight` (2);
+- `bolt_sprite_fps` (12, a common pixel-art rate; the two flight frames flicker like fire);
+- `bolt_end_s` (0.25: the 3 break-up frames at about the same rate);
+- `bolt_sprite_h` (0.08 of the frame height: the blast ~27 px thick and ~240 px long at 720p);
+- `bolt_effect_owner` (1);
+- `bolt_speed_w` 1.4 → 1.0: the frame is crossed in 1 s instead of 0.7 s, so the bolt is easier to see coming and shield.
+
+**Added:** `tests/test_fire_bolt.py` (7 tests, on made-up frames):
+- the frame for each phase;
+- each frame's head on the bolt, flames behind;
+- left bolts mirrored;
+- the blast centred on the bolt's height;
+- the hue shift gives the team colour;
+- too few frames raise;
+- each team gets its own colour from the real frames.
+
+`tests/test_game.py`:
+- a bolt's age advances;
+- a bolt end is kept where the bolt stopped (shield, frame edge) for `bolt_end_s` and cleared by `reset()`;
+- no frames gives a dot.
+
+The tests from `test_game.py` (the `arena` fixture) keep `game.py`'s bolt speed 1.4, so their numbers still hold; the time test reads the speed from the config.
+
+### Beam: one per raise of the hands
+
+The webcam test showed the power attack sometimes firing from several places at once. Reproduced with synthetic poses through the gesture stage and the game. Three causes:
+
+- **Short dropouts.** Hands up (and arms crossed) turned off on the first frame its rule failed, for example when a wrist keypoint dipped for a frame or two. Raising for 0.03 s more then started a new beam where the hands were now, while the first beam (alive for 1.15 s) was still firing.
+- **Wrists above the frame.** The motion stage keeps a lost wrist for 0.33 s (`motion.hold_s`); after that, hands up turned off, and coming back fired again.
+- **No limit in the game.** `beam_attack()` from `game.py` started a new beam for every hands-up event, even while that player's previous beam was alive.
+
+A third effect is left as is: raising one arm before the other passes through the punch pose, so it can fire a bolt as well.
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`, `GestureRecognizer.update()`:
+- Once on, hands up and arms crossed stay on until their rule has failed for `release_s`. `_PlayerState.last_seen` keeps the last time each rule held.
+- Turning on is unchanged (`confirm_s`). It is the same idea as `punch_hold_s` for the punch.
+
+**Changed:** `src/ipcvgame/interaction/game.py`, `beam_attack()`: returns whether it fired, and does nothing while that player's previous beam is still alive (charging, firing, or not yet past the frame edge). `_act()` records the `beam` action only when it fired.
+
+**Changed:** `configs/default.yaml`, `gestures:` section: `release_s: 0.3` (~9 frames at 30 FPS), with a comment. With the motion stage's 0.33 s hold, wrists can be lost for ~0.6 s without ending the gesture.
+
+**Changed:** `docs/phase-1/status.md`: the Task 4 gesture description mentions the release time.
+
+**Changed:** `tests/test_gestures.py`: the repeat test lowers the hands for longer than `release_s`. **Added:**
+- a 2-frame dropout does not restart hands up or arms crossed;
+- a gesture ends after `release_s`;
+- `tests/test_game.py`: one beam per player at a time, and the other player can still fire.
+
+### One action at a time; reset to a normal position first
+
+The webcam test sometimes fired the major attack and a normal attack together. Raising the arms one after the other passes through the punch pose, so a punch fired and then the beam. A punch shortly after a beam also flew while the beam was still firing.
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`, `GestureRecognizer.update()`:
+- **Reset first:** after any event (punch, hands up, arms crossed) the player is not ready (`_PlayerState.ready`) until they are back in a normal position, with none of the three gestures on. A gesture that turns on before that sends no event. When the gestures count as off comes from their existing hold times: 0.5 s after the last punch frame (`punch_hold_s`), 0.3 s after lowering the hands or uncrossing (`release_s`). So no new threshold is needed.
+- **Same frame:** if several gestures turn on in the same frame, only the first in `GESTURES` sends an event. That is the priority order: hands up (the major attack), arms crossed, punch.
+- `draw_debug()` adds "reset first" to the `H:C:P` line while the player is not ready. `log_fields()` adds `gest_p<pid>_ready`.
+
+**Changed:** `src/ipcvgame/interaction/game.py`, `attack()`: no bolt while the player's own beam is still alive (1.15 s), so the two attacks never overlap even after a quick reset. The other player is not affected.
+
+**Known limit:** when the arms go up one after the other, the punch pose usually comes first. The punch then fires and the beam is blocked: never both, but the punch wins. Telling a raise from a punch needs a better punch detector (the classifier in `docs/extra_features.md`, feature 8).
+
+**Changed:** `docs/phase-1/status.md`: the gesture description mentions the reset rule.
+
+**Added:**
+- `tests/test_gestures.py`:
+  - a new action needs a normal position first (punch, then hands up gives nothing; after a reset, arms crossed fires);
+  - gestures starting together send only one event, the major attack first;
+  - the `ready` CSV column.
+- `tests/test_game.py`: no bolt while the player's own beam is alive. `test_log_fields` now fires its bolt from P2, since P1's beam is still alive there.
+

@@ -212,9 +212,32 @@ def test_hands_up_fires_once_after_confirm_time():
     ev = g.update(motion(*hands_up()), 1 / 30)
     assert names(ev) == ["hands_up"] and ev[0].pid == 1 and ev[0].t == 1 / 30
     assert g.update(motion(*hands_up()), 2 / 30) == []  # held: no repeat
-    g.update(motion(*standing()), 3 / 30)
-    g.update(motion(*hands_up()), 4 / 30)
-    assert names(g.update(motion(*hands_up()), 5 / 30)) == ["hands_up"]
+    g.update(motion(*standing()), 3 / 30)               # lowered for 0.4 s,
+    g.update(motion(*standing()), 3 / 30 + 0.4)         # longer than release_s
+    g.update(motion(*hands_up()), 4 / 30 + 0.4)
+    assert names(g.update(motion(*hands_up()), 5 / 30 + 0.4)) == ["hands_up"]
+
+
+@pytest.mark.parametrize("pose", [hands_up, crossed])
+def test_short_dropout_does_not_restart_a_gesture(pose):
+    # The rule fails for 2 frames while the pose is held (keypoint noise):
+    # still one gesture, so one beam / one shield.
+    g = recognizer()
+    events = []
+    for i in range(20):
+        k, v = pose() if i not in (8, 9) else standing()
+        events += g.update(motion(k, v), i / 30)
+    assert len(events) == 1
+
+
+def test_gesture_ends_after_release_time():
+    g, release = recognizer(), load_config()["gestures"]["release_s"]
+    g.update(motion(*hands_up()), 0.0)
+    g.update(motion(*hands_up()), 1 / 30)
+    g.update(motion(*standing()), 2 / 30)
+    assert g._state[1].active["hands_up"]                      # within release_s
+    g.update(motion(*standing()), 1 / 30 + release + 0.01)
+    assert not g._state[1].active["hands_up"]                  # released
 
 
 def test_one_frame_glitch_is_no_gesture():
@@ -240,6 +263,50 @@ def test_one_punch_gives_one_event():
     hold = load_config()["gestures"]["punch_hold_s"]
     g.update(motion(*standing()), 2 / 30 + hold + 0.01)
     assert names(g.update(motion(*punch_left()), 2 / 30 + hold + 0.05)) == ["punch"]
+
+
+def raise_arm_through_punch():
+    """One arm straight out sideways at shoulder height, the other bent:
+    the punch pose, as when one arm goes up before the other."""
+    return punch_left()
+
+
+def test_a_new_action_needs_a_normal_position_first():
+    g, hold = recognizer(), load_config()["gestures"]["punch_hold_s"]
+    assert names(g.update(motion(*raise_arm_through_punch()), 0.0)) == ["punch"]
+    # The arms go on up: hands up turns on while the punch is still on.
+    assert g.update(motion(*hands_up()), 0.05) == []
+    assert g.update(motion(*hands_up()), 0.1) == []
+    assert not g._state[1].ready
+    # Back to normal (arms down) until every gesture is off: ready again.
+    for t in (0.2, 0.2 + hold, 0.25 + hold):
+        g.update(motion(*standing()), t)
+    assert g._state[1].ready
+    g.update(motion(*crossed()), 1.0)
+    assert names(g.update(motion(*crossed()), 1.05)) == ["arms_crossed"]
+
+
+def test_gestures_starting_together_send_only_the_major_attack(monkeypatch):
+    import ipcvgame.interaction.gestures as gestures
+    monkeypatch.setattr(gestures, "detect_all",
+                        lambda k, v, cfg: {"hands_up": True, "arms_crossed": False, "punch": True})
+    g = recognizer()
+    events = g.update(motion(*standing()), 0.0) + g.update(motion(*standing()), 1 / 30)
+    # Frame 1: only the punch is on yet (hands up needs confirm_s) -> punch.
+    # Frame 2: hands up turns on, but the player has not reset -> nothing.
+    assert names(events) == ["punch"]
+    monkeypatch.setattr(gestures, "detect_all",
+                        lambda k, v, cfg: {"hands_up": True, "arms_crossed": True, "punch": False})
+    g = recognizer()
+    g.update(motion(*standing()), 0.0)
+    assert names(g.update(motion(*standing()), 1 / 30)) == ["hands_up"]   # same frame: priority
+
+
+def test_log_fields_ready():
+    g = recognizer()
+    ev = g.update(motion(*punch_left()), 0.0)
+    state = FrameState(frame=None, players={}, motion={}, faces={}, events=ev, timings={})
+    assert g.log_fields(state)["gest_p1_ready"] == 0
 
 
 def test_missing_player_starts_over():

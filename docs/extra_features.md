@@ -6,10 +6,10 @@ This is the backlog of game features agreed during the Colour Clash merge, plus 
 
 ## Before any of this: finish the merge
 
-The features build on the Colour Clash game, which still lives in `garb/rest/` and is not yet in the shared codebase. In this order:
+The features build on the Colour Clash game; the teammates' original code lives in `garb/rest/`. In this order:
 
-1. **Gestures (Task 4, with Task 2 signals).** Move `garb/rest/Project/bodypose.py`'s punch, hands-up and arms-crossed detection into `interaction/gestures.py` as `GestureEvent`s (`punch`, `hands_up`, `arms_crossed`).
-2. **Game logic (Task 4).** Move `garb/rest/game.py` (health, bolts, beam, shield, paint splats, winner) into `interaction/game.py`, driven by those events.
+1. **Gestures (Task 4, with Task 2 signals).** Done: `interaction/gestures.py` sends `punch`, `hands_up` and `arms_crossed` events (merge log, Task 4, steps 1–4).
+2. **Game logic (Task 4).** Done up to the status update: `interaction/game.py` runs the game from those events (merge log, Task 4, steps 5–8 and Task 4 modifications).
 3. **Rendering (Task 5).** Move `garb/rest/renderer.py` into `scene/renderer.py`, drawing at face anchors instead of its own `head_x`/`head_y` from the pose.
 4. **Identity (Task 3).** See the open issues in [merge_log.md](merge_log.md#open-issues-found-during-the-merge).
 
@@ -181,6 +181,70 @@ The features build on the Colour Clash game, which still lives in `garb/rest/` a
 - **Keep the rule as fallback:** `gestures.punch_backend: rule | classifier`. The event logic stays the same (hold time, rising-edge `punch` event), and only the per-frame "is this a punch" changes. A probability threshold goes in config.
 
 **Check.** Split train and test by recording, not by frame, so frames from one clip never land on both sides. Report precision and recall per player-frame and missed or extra punch events, for the rule and the classifier on the same test clips. Target: no punches on the jump and fitness clips, real sideways punches still detected, under 1 ms per frame.
+
+### 9. Charge bar for the major attack
+
+**What.** The major attack (hands up: the magic ball and beam) can only be fired once the player's charge bar has reached a threshold. Firing it empties the bar, so the beam becomes a reward for playing well instead of something to repeat.
+
+**Owners.** Task 4: the charge state and the rule in `interaction/game.py`. Task 5: the bar in the renderer, next to the health bar.
+
+**Design.**
+
+- **Charge per player,** 0–100, a new `GamePlayer.charge` field. It fills:
+  - slowly over time, so a player who is being hit can still get there (~+5 per s: full after ~20 s);
+  - by landing bolts (~+15 per hit);
+  - a little by blocking an attack with the shield (~+10).
+
+  All amounts go in the `game:` config.
+- **Threshold.** At `charge` ≥ the threshold (100 to start with), `hands_up` fires the beam and the bar drops to 0. Below the threshold, `hands_up` fires nothing. The player gets "not charged" feedback (the bar flashes), and the reset rule still applies, so they have to lower their arms before trying again.
+- **Display.** A thin bar under the health bar, in the team colour. When full it glows, and the magic ball can already show between the hands as a hint.
+- **Link with feature 4.** The super charge (hold the pose, a blink resets it) can share this bar: a full bar plus holding the pose charges the super beam.
+
+**Check.** On the webcam: `hands_up` with a part-filled bar fires nothing; after enough hits it fires once and the bar empties. Log `charge` per player (`log_fields`) to tune the fill rates so a beam comes every ~20–30 s of play.
+
+### 10. Weapon pick-ups (e.g. a laser gun)
+
+**What.** Weapons drop into the arena like the consumables of feature 6. A player who grabs one gets a stronger attack for a limited time or number of shots. First weapon: a laser gun that fires a fast laser on each punch instead of the normal fire bolt.
+
+**Owners.** Task 4: weapon items, the equipped state and the weapon attacks in `interaction/game.py`. Task 5: weapon sprites and the laser drawing.
+
+**Design.**
+
+- **Spawning and grabbing:** as for the items in feature 6 (falling from the top, lying on the floor, grabbed with a wrist), but rarer (every ~20 s) and at most one weapon in the arena at a time.
+- **Equipped state,** a new `GamePlayer.weapon`: the weapon's type and its ammo (e.g. 5 shots) or time left (e.g. 10 s). The weapon is drawn at the punching hand (`punching_hand()`). Out of ammo, it disappears.
+- **Laser gun:**
+  - a punch fires a laser instead of a fire bolt: faster (~3 frame widths/s or instant) and more damage (~15);
+  - the reset rule and "one action at a time" still apply.
+  - Sprites: "Laser Shoot Animation #1" by dinhaz (itch.io; no licence stated, credit it in the README). `LaserGun_Shoot.png` from that page for the shot. `LaserGun_Burn..png` (in git history, commit `62febc0`) for a held burn. The laser drawing tried during the merge (muzzle on the hand, the burn tiled to its length, hue-turned per team) can be rebuilt from that sheet.
+- **More weapons later:** a paint bucket (a short-range splash that paints a large area), a shield bubble (blocks the next 3 hits).
+
+**Check.** Only one player can take a weapon; the ammo counts down and the weapon disappears at 0; the normal bolt comes back afterwards.
+
+### 11. Aiming: a pointing laser and attacks towards the opponent
+
+**What.** Attacks no longer fly only sideways towards the middle of the frame: they go where the player aims, towards the opponent. A thin pointing laser from the hand (or from the magic ball) shows the aim before and while firing.
+
+**Owners.**
+- Task 4: aim direction and 2D movement and hits in `interaction/game.py`.
+- Task 2: arm direction from the keypoints.
+- Task 5: the pointing laser and rotated sprites.
+
+**Design.**
+
+- **Aim direction.** For a punch: the punching arm's direction, shoulder → wrist (`punching_hand()` already finds the arm). For the beam: from the ball (between the hands) towards the opponent's torso. Aim assist: if the arm points within ~20° of the opponent's torso (shoulder midpoint to hip level, `body_position()`), snap to it, so a roughly correct punch hits.
+- **Towards the opponent, not the middle.** Today `_act()` fires right for a player in the left half of the frame and left otherwise. That fails when both players stand in the same half. Use the direction to the other player instead.
+- **2D game logic.**
+  - `Projectile` gets a velocity vector instead of `direction`.
+  - Hits test the path since the last frame (a segment) against the target's body box in 2D.
+  - The beam becomes a segment from the ball to its tip. It hits a box within `beam_hit_radius_h` of that segment (point-to-segment distance).
+  - Bolt ends and splats use the 2D impact point.
+- **Pointing laser.**
+  - **Before a punch:** while an arm is extended (straight but not yet a punch), a thin dashed line in the team colour runs from the wrist along the aim direction until it meets a body box or the frame edge.
+  - **Beam charge:** the same line from the ball towards the target.
+  - It fades with the gesture's state, and it is drawn only for the aiming player, to keep the frame readable.
+- **Sprites.** Rotate the fire blast and the beam band along the direction (`cv2.warpAffine`, like `paste()` in `face/effects.py`); the magic ball needs no rotation.
+
+**Check.** Bolts and beams hit an opponent who stands higher or lower (e.g. crouching) or in the same half of the frame; the pointing laser matches where the attack actually flies; aim assist does not snap to a player behind the shooter.
 
 ## Technical follow-ups from the Task 1 merge
 

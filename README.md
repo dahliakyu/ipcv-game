@@ -133,3 +133,10 @@ merge through a PR.
 Ultralytics YOLO (AGPL-3.0), MediaPipe (Apache 2.0) and the YuNet face
 detector from the OpenCV model zoo (MIT) are used as pretrained models; all
 are fine for coursework and are listed in the AI and external-tools statement.
+
+Sprites from third parties:
+
+| File | Source | Licence |
+| --- | --- | --- |
+| `assets/magic_effect/` (power-attack ball and beam) | "Magic Attack" by NYKNCK, itch.io, https://nyknck.itch.io/magic-attack (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
+| `assets/spiral/` (red and blue spiral frames) | "Magic Animation" by NYKNCK, itch.io, https://nyknck.itch.io/magic (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |

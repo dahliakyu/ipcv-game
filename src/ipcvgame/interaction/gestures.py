@@ -7,10 +7,17 @@ keypoints and validity from ``Motion``; all distances are in shoulder widths
 from the ``gestures:`` config.
 
 ``GestureRecognizer`` turns the rules into events: hands up and arms crossed
-must hold for ``confirm_s`` (``Debounce`` in bodypose.py), and a punch stays on
+must hold for ``confirm_s`` (``Debounce`` in bodypose.py) and then stay on
+until their rule has failed for ``release_s``, and a punch stays on
 for ``punch_hold_s`` after its last detection (``punch_until``). One event is
 sent when a gesture turns on (the rising edge), so one punch gives one ``punch``
 event; punches less than ``punch_hold_s`` apart count as one.
+
+One action at a time: after an event the player must return to a normal
+position, with none of the three gestures on, before any gesture can send an
+event again. A gesture that turns on before that sends nothing, so raising
+the arms through the punch pose cannot fire a punch and a beam. If several
+gestures turn on in the same frame, only the first in ``GESTURES`` sends one.
 """
 
 from __future__ import annotations
@@ -22,6 +29,8 @@ from ipcvgame.core.geometry import angle_at
 from ipcvgame.core.types import FrameState, GestureEvent, Motion
 from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, player_color
 
+# Also the priority when several turn on in the same frame: the major attack
+# first, then the shield, then the punch.
 GESTURES = ("hands_up", "arms_crossed", "punch")
 
 
@@ -149,14 +158,20 @@ class _PlayerState:
     def __init__(self):
         # Start of the current run of frames where the rule holds; None = not holding.
         self.since: dict[str, float | None] = {"hands_up": None, "arms_crossed": None}
+        # Last time the rule held, so an active gesture survives short dropouts.
+        self.last_seen: dict[str, float] = {"hands_up": -np.inf, "arms_crossed": -np.inf}
         self.punch_until = -np.inf  # the punch counts as on until this time
         self.active = dict.fromkeys(GESTURES, False)
+        # False after an event, until the player is back in a normal position
+        # (no gesture on): only then can the next gesture send an event.
+        self.ready = True
 
 
 class GestureRecognizer:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.confirm_s = float(cfg["confirm_s"])
+        self.release_s = float(cfg["release_s"])
         self.punch_hold_s = float(cfg["punch_hold_s"])
         self._state: dict[int, _PlayerState] = {}
 
@@ -171,18 +186,30 @@ class GestureRecognizer:
             raw = detect_all(m.kpts, m.valid, self.cfg)
             on = {}
             for name in ("hands_up", "arms_crossed"):
-                if not raw[name]:
+                if raw[name]:
+                    st.last_seen[name] = t
+                    if st.since[name] is None:
+                        st.since[name] = t
+                elif not st.active[name]:
                     st.since[name] = None
-                elif st.since[name] is None:
-                    st.since[name] = t
-                on[name] = st.since[name] is not None and t - st.since[name] >= self.confirm_s
+                if st.active[name]:
+                    # On: stays on until the rule has failed for release_s.
+                    on[name] = t - st.last_seen[name] <= self.release_s
+                    if not on[name]:
+                        st.since[name] = None
+                else:
+                    # Off: turns on once the rule has held for confirm_s.
+                    on[name] = st.since[name] is not None and t - st.since[name] >= self.confirm_s
             if raw["punch"]:
                 st.punch_until = t + self.punch_hold_s
             on["punch"] = t < st.punch_until
-            for name in GESTURES:
-                if on[name] and not st.active[name]:
-                    events.append(GestureEvent(pid=pid, name=name, t=t, conf=1.0))
-                st.active[name] = on[name]
+            started = [name for name in GESTURES if on[name] and not st.active[name]]
+            if started and st.ready:
+                events.append(GestureEvent(pid=pid, name=started[0], t=t, conf=1.0))
+                st.ready = False
+            st.active = on
+            if not any(on.values()):
+                st.ready = True
         return events
 
     def reset(self, pid: int | None = None) -> None:
@@ -201,18 +228,22 @@ class GestureRecognizer:
                 continue
             a = st.active
             text = f"H:{int(a['hands_up'])} C:{int(a['arms_crossed'])} P:{int(a['punch'])}"
+            if not st.ready:
+                text += " reset first"
             x1, y2 = int(p.bbox[0]), int(p.bbox[3])
             draw_text(canvas, text, (x1, min(y2 + 25, canvas.shape[0] - 5)), (255, 255, 0))
         lines = [f"EVENT P{e.pid} {e.name}" for e in state.events]
         draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
 
     def log_fields(self, state: FrameState) -> dict:
-        """Per-player CSV columns gest_p<pid>_<gesture> (1 while on) and
+        """Per-player CSV columns gest_p<pid>_<gesture> (1 while on),
+        gest_p<pid>_ready (1 when a new gesture can send an event) and
         gest_p<pid>_events (names of this frame's events, joined by '+')."""
         row: dict = {}
         for pid, st in sorted(self._state.items()):
             pre = f"gest_p{pid}_"
             for name in GESTURES:
                 row[pre + name] = int(st.active[name])
+            row[pre + "ready"] = int(st.ready)
             row[pre + "events"] = "+".join(e.name for e in state.events if e.pid == pid)
         return row
