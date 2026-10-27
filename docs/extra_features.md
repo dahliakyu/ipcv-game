@@ -11,7 +11,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 1. **Gestures (Task 4, with Task 2 signals).** Done: `interaction/gestures.py` sends `punch`, `hands_up` and `arms_crossed` events (merge log, Task 4, steps 1–4).
 2. **Game logic (Task 4).** Done up to the status update: `interaction/game.py` runs the game from those events (merge log, Task 4, steps 5–8 and Task 4 modifications).
 3. **Rendering (Task 5).** Move `garb/rest/renderer.py` into `scene/renderer.py`, drawing at face anchors instead of its own `head_x`/`head_y` from the pose.
-4. **Identity (Task 3).** See the open issues in [merge_log.md](merge_log.md#open-issues-found-during-the-merge).
+4. **Identity (Task 3).** Done: `identity/tracker.py` runs BoT-SORT and OSNet re-identification (merge log, Task 3).
 
 ### What the face stage already gives you
 
@@ -245,6 +245,40 @@ The features build on the Colour Clash game; the teammates' original code lives 
 - **Sprites.** Rotate the fire blast and the beam band along the direction (`cv2.warpAffine`, like `paste()` in `face/effects.py`); the magic ball needs no rotation.
 
 **Check.** Bolts and beams hit an opponent who stands higher or lower (e.g. crouching) or in the same half of the frame; the pointing laser matches where the attack actually flies; aim assist does not snap to a player behind the shooter.
+
+### 12. Game start: instructions and pose calibration
+
+**What.** A game UI around the round: a start screen, a short instruction and calibration phase in which each player learns and performs the three moves, a countdown, and a result screen. Today the game starts the moment the players are seen.
+
+**Owners.**
+- Task 4: the game phases in `interaction/game.py` (a state machine) and the calibration rules.
+- Task 5: the screens in the renderer.
+- Task 3: storing each player's appearance during calibration.
+- Task 2: body measurements from the keypoints.
+
+**Design.**
+
+- **Phases:** `waiting` → `calibration` → `countdown` → `playing` → `result` → back to `waiting` (key `r`, or both players with hands up for ~2 s). Damage, bolts and beams only count in `playing`.
+- **Waiting.** "Player 1: stand on the left / Player 2: on the right", with each player's box ticked in the team colour once identity has them (`status == "active"`), both faces visible.
+- **Instructions with calibration.** For each move (punch, hands up, arms crossed), show a small picture of the pose and its effect; each player performs it once and it is ticked off when the gesture event arrives. Nothing fires during this phase, so it doubles as a practice round.
+- **Pose calibration** while the players stand in a neutral pose, facing the camera, for ~2 s:
+  - shoulder width and arm length per player (median over the frames), so gesture thresholds in shoulder widths can be checked per player, e.g. a short arm still reaches `punch_min_reach`;
+  - the shoulder width at this distance is the reference for `Player.pos` depth (pinhole model);
+  - a clean OSNet vector per player (standing apart, front-facing): it replaces the first-sight vector, which may be from walking in at an angle.
+- **Countdown.** 3-2-1 in the middle of the frame; then `playing`.
+- **Result.** Winner in their team colour, final health, "hands up to play again".
+
+**Check.** Two new players get through the instructions in under ~30 s; a player who does not perform a move is reminded; the calibration values are logged per player (`log_fields`) and stay stable when the round restarts.
+
+## Technical follow-ups from the Task 3 merge
+
+| Item | Why | Where |
+| --- | --- | --- |
+| Crossing, occlusion and re-entry clips | Identity was checked on edited copies of the session clip (blacked out; halves swapped), not on real crossings | `data/clips/`; `tools/eval_identity.py` with hand labels |
+| `reid_threshold` per weights | With the Hugging Face weights, same-player similarities on the fitness test clip are often under 0.6 | `identity:` config |
+| Webcam check of identity | Re-entry, the coat fix (`min_face_conf`) and a player turning away live | `--until identity` |
+| `track_buffer` in frames | Ultralytics counts frames: the occluded time is 1 s at 30 FPS but 1.7 s at 17 FPS | `identity.botsort` |
+| P1 / P2 order | The first player confirmed is P1 (as in `bodypose.py`); with feature 12, the calibration can assign P1 to the left player | `identity/tracker.py` |
 
 ## Technical follow-ups from the Task 1 merge
 

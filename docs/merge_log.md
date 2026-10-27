@@ -61,10 +61,10 @@ The identity code (`PlayerIdentityTracker` in `Colour Clash/Project/bodypose.py`
 
 These are not fixed yet; each belongs to the owner of the code. The `Colour Clash/` folder named below now lives in `garb/rest/` (ignored by git, local only).
 
-- **Two detectors per frame (Task 3, Task 2).** `Colour Clash/main.py` runs `yolo11n.pt` as a separate person detector for tracking and then `yolo26n-pose.pt` for keypoints. The architecture rule is one pose model per frame. YOLO-pose already returns person boxes, so tracking can run on those and `yolo11n.pt` can go.
-- **Stored appearance is never updated (Task 3).** In `PlayerIdentityTracker`, each player's OSNet vector is stored once, when the player is created. Lighting changes or a jacket coming off can then break re-identification. Matching is also greedy per track, not a joint assignment (Hungarian).
-- **`Colour Clash/Project/test_osnet.py` fails as written.** It calls `OSNetEmbeddingExtractor()` without the required `model_path` argument, and it opens the webcam.
-- **Working directory.** `Colour Clash/` has a space in its name and `Project/` has no `__init__.py`, so `main.py` only runs with `Colour Clash/` as the working directory. This goes away when the code moves into `src/ipcvgame/`.
+- **Two detectors per frame (Task 3, Task 2).** Fixed in the identity merge (step 3): BoT-SORT runs on the pose model's boxes.
+- **Stored appearance is never updated (Task 3).** Fixed in the identity merge (step 2). Matching is still greedy per track, not a joint assignment (Hungarian); with two players and linked tracks handled first, that rarely matters.
+- **`Colour Clash/Project/test_osnet.py` fails as written.** Replaced by `tests/test_identity.py` (step 1).
+- **Working directory.** Gone: the code now lives in `src/ipcvgame/`.
 
 ## Change Overviews
 
@@ -183,7 +183,27 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 #### Task 3: `Project/` (identity)
 
-Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exists. To be added when the identity merge happens.
+**Functions and classes**
+
+| In your code | Now in | Note |
+| --- | --- | --- |
+| `osnet.py` | `identity/osnet.py` | Unchanged (pre-merge copy of torchreid's file) |
+| `OSNetEmbeddingExtractor` (`osnet_embedding.py`) | `identity/embedding.py`, same name | Weights path and device from config |
+| `PlayerIdentityTracker` | `identity/tracker.py`, `IdentityTracker` (`backend: reid`) | Same attribute names: `embeddings` (your `players`), `track_to_player`, `pending_tracks` |
+| `PlayerIdentityTracker.update()` | `IdentityTracker._identify()` | Seconds; faces only; slow retry when slots are full |
+| `_find_player()` | `IdentityTracker._find_player()` | |
+| `forget_missing_tracks()` | `IdentityTracker.forget_missing_tracks()` | Drops a link only when BoT-SORT drops the track |
+| `main.py`: `person_detector.track(..., botsort.yaml)` with `yolo11n.pt` | `identity/tracks.py`, `BotSortTracks` | On the pose model's boxes; `yolo11n.pt` removed |
+| `main.py`: loop over tracks, crop size check, `excluded_player_ids` | `IdentityTracker.update(dets, frame)`, `_crop()` | Returns `Player`s with status and `reentered` |
+| `main.py`: `pose_processor.reset_player()` for lost players | `Player.reentered` → pipeline resets face, motion, gestures | |
+| "Identifying..." label | `IdentityTracker.draw_debug()` | `--until identity` |
+| `test_osnet.py` | `tests/test_identity.py` | No webcam; plus tests of the tracker |
+| (new) link check and vector update | `IdentityTracker._check_and_update()`, `_relink()` | |
+| (new) CSV columns | `IdentityTracker.log_fields()` | |
+| `identitytracker.py` | Not merged | Only started `bodypose.py`'s demo |
+| `models/osnet_x1_0_msmt17.pth` | `models/osnet_x1_0_msmt17_combineall.pth` | Same network and data, from Hugging Face (README) |
+
+**Constants:** `REID_THRESHOLD`, `NEW_PLAYER_CONFIRMATION`, `MAX_PLAYERS`, `MIN_PERSON_HEIGHT`, `MIN_PERSON_WIDTH` and `botsort.yaml` are in `configs/default.yaml`, `identity:` section; see steps 2 and 3 for the tables.
 
 ### Modifications: changes beyond moving code
 
@@ -235,10 +255,21 @@ Not merged into `src/ipcvgame/` yet; only the pre-merge OSNet change below exist
 - **The beam lasts its full duration (Task 4 modifications):** its tip stops at the frame edge instead of the beam ending there, so a target stepping into it later is also hit (once).
 - **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
 
-#### Task 3 (pre-merge)
+#### Task 3
 
-- **`torchreid` replaced by a copied `osnet.py`.** `osnet_embedding.py` imports it instead of `torchreid`. Embeddings are identical (max difference 0.0).
-- **`load_weights()` raises an error** when no layer of the weight file matches, instead of only warning and running with random weights.
+- **`torchreid` replaced by a copied `osnet.py` (pre-merge).** `osnet_embedding.py` imports it instead of `torchreid`. Embeddings are identical (max difference 0.0).
+- **`load_weights()` raises an error (pre-merge)** when no layer of the weight file matches, instead of only warning and running with random weights.
+- **One model per frame (step 3).** BoT-SORT runs on the pose model's boxes; `yolo11n.pt` is gone. A new track needs score 0.5 (your detector's limit); weaker boxes from 0.35 still continue a track. Camera-motion compensation is off (4.4 → 0.4 ms).
+- **Weights from Hugging Face.** Same network and training data as your file, with a public download and checksum.
+- **Occluded, then lost (step 2).** A player keeps their link while BoT-SORT still holds the track (`"occluded"`, predicted box); only when the track is dropped is the player `"lost"`, and `reentered` is set when they come back. Your code dropped the link and reset the pose state on every frame without the track.
+- **Two players** instead of 3; a new player takes the lowest free id.
+- **Seconds instead of frames:** the 5-frame confirmation is `new_player_s` (0.13 s).
+- **Linked tracks first (step 2):** a new track cannot take a player whose own track is visible.
+- **Slow retry (step 2):** a track that finds no player while both slots are taken tries again every 0.5 s, not every frame.
+- **Stored vectors are updated (step 2, new):** one player per frame, in turn, every 0.5 s, when their box overlaps no one, by 0.1 towards the fresh vector if it is still similar (≥ 0.5).
+- **Linked tracks are checked (step 5, new):** the same OSNet run moves or swaps a link when the crop looks more like the other player. On a copy of the session clip with the frame halves swapped, the players were wrong for 6 of 120 frames instead of 60.
+- **Faces only (step 5, new):** a track is identified only when the pose model sees a nose or an eye (`min_face_conf` 0.5), so a coat never becomes a player.
+- **Debug view and CSV columns (step 4):** track id and similarity per player; OSNet runs per frame; OSNet warm-up at start-up.
 
 ## Task 1: Face tracking and AR
 
@@ -1385,3 +1416,14 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 - a track carried onto an occluded player: the link moves, and the first player is found again on a new track;
 - both tracks carried onto the other player: the links are swapped and both are `reentered`;
 - one doubtful crop: no swap.
+
+#### Step 6 · Check and record
+
+**Changed:** `docs/merge_log.md`: Change Overviews for Task 3 (where your code is now, and what changed), and the open issues found before the merge marked as fixed.
+
+**Changed:** `docs/phase-1/status.md`
+- "Where we are": `identity/tracker.py` marked as merged; test count 200.
+- Task 3 section: "Stub today" replaced by what the tracker does now, with a checklist of what is done and still open.
+- Performance: the identity stage.
+
+**Changed:** `docs/extra_features.md`: identity marked as done in "finish the merge"; new feature 12 (game start: instructions and pose calibration); technical follow-ups from the identity merge.

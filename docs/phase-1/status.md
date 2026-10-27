@@ -17,12 +17,12 @@ This document covers what the pipeline looks like right now, what your stub does
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
-| `identity/tracker.py` | Task 3 | Stub | Left half = P1, right half = P2 |
+| `identity/tracker.py` | Task 3 | Done (merged 2026-10-27) | BoT-SORT on the pose boxes + OSNet re-identification; occluded/lost/re-entry |
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
 | `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
 | `interaction/game.py` | Task 4 | Stub | Prints events; Colour Clash game logic is the next merge |
 
-Tests: 102 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 200 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -124,7 +124,8 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | pose (YOLO26n-pose, fp16) | ~10 |
 | face (YuNet on head crops + MediaPipe for one player per frame) | ~10.5 on a small clip, ~19 on a 4K clip; MediaPipe is ~8 of that |
 | motion (EMA smoothing), gestures (rules) | ~0.1 each |
-| identity, game (stubs) | < 0.1 each |
+| identity (BoT-SORT + OSNet, one crop every few frames) | ~0.5 median, ~3 mean, ~13 on frames with an OSNet run |
+| game | < 0.1 |
 | render | ~1 |
 | **total** | **~11** |
 
@@ -181,16 +182,20 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 
 ### Task 3: Identity tracking — owner: ____________
 
-**Stub today:** P1 is the best-scoring detection whose box centre is in the left half of the screen, and P2 the best in the right half. A player with no detection keeps their last box with `status="lost"`, and gets `reentered=True` when a detection returns. There is no prediction, so crossing swaps the IDs, and `pos` is always `(0, 0)`.
+**Status (merged 2026-10-27 from `PlayerIdentityTracker` in `Project/bodypose.py` and `main.py`; details in [merge_log.md](../merge_log.md#task-3-identity-tracking)):** `IdentityTracker` (`identity.backend: reid`) gives each person a BoT-SORT track id on the pose model's own boxes (`identity/tracks.py`), and links tracks to players with OSNet appearance vectors (`identity/embedding.py`, weights from Hugging Face, see README):
 
-**To deliver:** stable Player 1 / Player 2 through crossing, occlusion and re-entry.
+- a new track with a visible face is compared with the stored players (cosine similarity ≥ 0.6); no match for 0.13 s makes it a new player, up to 2;
+- a player whose track BoT-SORT still holds is `occluded` (predicted box); when the track is dropped they are `lost`, and `reentered` is True on the frame OSNet finds them again;
+- one player per frame, in turn, every 0.5 s: OSNet checks the link (moves or swaps it if the crop looks like the other player) and updates the stored vector.
 
-- Own tracker: Kalman box prediction, Hungarian matching (`scipy.optimize.linear_sum_assignment`), colour-histogram appearance for re-entry.
-- Use all three statuses: `active`, `occluded` (predicted box, `det=None`), `lost`; set `reentered` exactly on the returning frame.
-- `pos` as `(x, depth)` in metres (calibration from shoulder width or box height).
-- Baseline comparison with Ultralytics ByteTrack.
-- Hand-label who is who in the shared clips; `tools/eval_identity.py` counts ID switches.
-- Thresholds in `identity:`; `log_fields` (match cost, histogram distance).
+`identity.backend: zones` brings back the left/right stub (no model needed; used by the tests).
+
+- [x] All three statuses, `reentered` on the returning frame; thresholds in `identity:`; `log_fields` (track, similarity, OSNet runs).
+- [x] Re-entry and position swaps checked on edited copies of `data/clips/session.mp4` (merge log, Task 3, step 5).
+- [ ] Record real crossing, occlusion and re-entry clips; hand-label who is who; `tools/eval_identity.py` counts ID switches.
+- [ ] Check `reid_threshold` (0.6) on re-entry clips: on the fitness test clip (similar clothes, lying down) same-player similarities are often lower.
+- [ ] `pos` as `(x, depth)` in metres (calibration from shoulder width or box height); still `(0, 0)`.
+- [ ] Optional: Hungarian matching instead of greedy; baseline comparison with plain ByteTrack.
 
 ### Task 4: Interaction — owner: ____________
 
@@ -265,6 +270,5 @@ Record with `python tools/record_clip.py <name>`. Each clip is stored with its `
 
 These are expected, and each goes away when its stub is replaced:
 
-- IDs swap whenever players cross the middle of the screen, and a third person in the middle is ignored.
 - Gestures fire, but the game only prints them to the console.
 - `Player.pos` is always `(0, 0)` in the CSV logs.
