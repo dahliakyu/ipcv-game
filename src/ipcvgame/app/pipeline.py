@@ -113,8 +113,9 @@ class Pipeline:
         return row
 
     def new_round(self) -> None:
-        """A new round with the same players (main.py's key r: game.reset())."""
-        self.game.reset()
+        """A new round with the same players (key r): from the countdown,
+        keeping their calibration."""
+        self.game.new_round()
 
     def reset(self) -> None:
         """Clear every module's state; identity finds the players again."""

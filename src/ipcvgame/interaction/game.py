@@ -12,6 +12,22 @@ shield blocks them. At 0 health the attacker wins and the game freezes.
 body box and position from the frame state, turns gesture events into actions
 (punch -> bolt, hands up -> beam, arms crossed -> shield), then advances the
 game by the real time since the last frame.
+
+Phases (feature 12, docs/extra_features.md), in ``Game.phase``:
+
+- ``waiting``: until P1 and P2 are both in view with a face (``ready_s``).
+- ``calibration``: each player performs the moves of ``CALIBRATION_MOVES``
+  in turn; a move's gesture event ticks it off instead of firing.
+- ``countdown``: ``countdown_s``, then a fresh round.
+- ``playing``: the only phase with combat (actions and ``advance()``).
+- ``result``: after a win; both players holding their hands up for
+  ``replay_hold_s`` start the next round from the countdown, keeping their
+  calibration. ``reset()`` (key R) goes back to ``waiting``.
+
+With ``intro: false`` there is no waiting, calibration or countdown: the game
+plays at once, as before (tests, clips recorded without the intro, e.g.
+``--set game.intro=false``). With ``round_players: 1`` only P1 is needed, to
+test the intro alone.
 """
 
 from __future__ import annotations
@@ -24,8 +40,29 @@ import numpy as np
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
-from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
+from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
 from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color, pt
+
+PHASES = ("waiting", "calibration", "countdown", "playing", "result")
+# The moves taught in the calibration phase, in this order (gesture event names).
+CALIBRATION_MOVES = ("punch", "hands_up", "arms_crossed")
+
+
+@dataclass
+class _Hold:
+    """How long a condition has held (s). Gaps up to gap_s where it fails do
+    not restart it, so a keypoint dropout of a frame or two is ignored."""
+    since: float | None = None
+    last: float = -np.inf
+
+    def update(self, on: bool, t: float, gap_s: float) -> float:
+        if on:
+            if self.since is None or t - self.last > gap_s:
+                self.since = t
+            self.last = t
+        elif self.since is not None and t - self.last > gap_s:
+            self.since = None
+        return 0.0 if self.since is None else self.last - self.since
 
 
 @dataclass
@@ -45,6 +82,10 @@ class GamePlayer:
     y: float = 0.0                       # px, hip level
     bounds: np.ndarray | None = None     # body box x1, y1, x2, y2 in px
     paint_splats: list[PaintSplat] = field(default_factory=list)
+    # Calibration: index of the current move in CALIBRATION_MOVES (all done
+    # at len), and the Frame.t it was shown at (for a reminder).
+    move: int = 0
+    move_t: float = 0.0
 
 
 @dataclass
@@ -116,8 +157,16 @@ class Game:
         self.shields: dict[int, Shield] = {}
         self.winner_id: int | None = None
         self._t: float | None = None  # Frame.t of the previous update
-        # Actions this frame as (pid, "bolt" | "beam" | "shield"), for the CSV.
+        # Actions this frame as (pid, "bolt" | "beam" | "shield"), and
+        # (pid, "learned_<move>") for a move ticked off in calibration; for the CSV.
         self.actions: list[tuple[int, str]] = []
+        self.intro = bool(cfg["intro"])
+        self.phase = "waiting" if self.intro else "playing"
+        self.phase_t: float | None = None   # Frame.t the phase started at; None = at the next update
+        self.countdown_s = float(cfg["countdown_s"])
+        # The players a round needs: P1 and P2, or P1 alone (round_players: 1).
+        self.round_players = tuple(range(1, int(cfg["round_players"]) + 1))
+        self._hold = _Hold()                 # the condition that ends this phase
         # Phase lengths and the beam's hit band, for drawing (the renderer
         # reads them here instead of from the game: config).
         self.beam_charge_s = float(cfg["beam_charge_s"])
@@ -306,12 +355,85 @@ class Game:
                     player.x, player.y = pos
                     positions[pid] = pos
 
+        if self.phase_t is None:
+            self.phase_t = t
         self.actions = []
-        for e in state.events:
-            if e.pid in positions:
-                self._act(e.pid, e.name, state.motion[e.pid], positions)
+        if self.phase == "playing":
+            for e in state.events:
+                if e.pid in positions:
+                    self._act(e.pid, e.name, state.motion[e.pid], positions)
+            self.advance(dt, visible)
+            if self.winner_id is not None:
+                self._enter("result", t)
+        elif self.phase == "calibration":
+            for e in state.events:
+                self._tick(e.pid, e.name, t)
+        self._next_phase(state, t)
 
-        self.advance(dt, visible)
+    # ----------------------------------------------------------------- phases
+
+    def _enter(self, phase: str, t: float | None) -> None:
+        self.phase, self.phase_t, self._hold = phase, t, _Hold()
+        if phase == "calibration":
+            for pid in self.round_players:
+                player = self.get_player(pid)
+                player.move, player.move_t = 0, t if t is not None else 0.0
+
+    def _start_round(self, t: float | None) -> None:
+        """A fresh round: from the countdown, or at once without the intro."""
+        self._clear_round()
+        self._enter("countdown" if self.intro else "playing", t)
+
+    def _next_phase(self, state: FrameState, t: float) -> None:
+        """Move to the next phase once this one's condition is met."""
+        cfg = self.cfg
+        if self.phase == "waiting":
+            ready = all(self._in_view(state, pid) for pid in self.round_players)
+            if self._hold.update(ready, t, cfg["hold_gap_s"]) >= cfg["ready_s"]:
+                self._enter("calibration", t)
+        elif self.phase == "calibration":
+            if all(self.current_move(pid) is None for pid in self.round_players):
+                self._start_round(t)
+        elif self.phase == "countdown":
+            if self.phase_elapsed() >= self.countdown_s:
+                self._enter("playing", t)
+        elif self.phase == "result":
+            up = all(self._hands_up(state, pid) for pid in self.round_players)
+            if self._hold.update(up, t, cfg["hold_gap_s"]) >= cfg["replay_hold_s"]:
+                self._start_round(t)
+
+    def phase_elapsed(self) -> float:
+        """Seconds since the current phase started (0 before the first update)."""
+        if self._t is None or self.phase_t is None:
+            return 0.0
+        return self._t - self.phase_t
+
+    def current_move(self, pid: int) -> str | None:
+        """The calibration move pid has to perform next; None when all are done."""
+        move = self.players[pid].move if pid in self.players else 0
+        return CALIBRATION_MOVES[move] if move < len(CALIBRATION_MOVES) else None
+
+    def _tick(self, pid: int, gesture: str, t: float) -> None:
+        """Calibration: the player's current move is ticked off by its event;
+        other events are ignored, and nothing fires."""
+        if pid in self.round_players and gesture == self.current_move(pid):
+            player = self.get_player(pid)
+            player.move, player.move_t = player.move + 1, t
+            self.actions.append((pid, f"learned_{gesture}"))
+
+    @staticmethod
+    def _in_view(state: FrameState, pid: int) -> bool:
+        """pid is seen by the identity stage and has a face."""
+        p, face = state.players.get(pid), state.faces.get(pid)
+        return p is not None and p.status == "active" and face is not None and face.valid
+
+    def _hands_up(self, state: FrameState, pid: int) -> bool:
+        """Both of pid's wrists above the head this frame (the gesture rule)."""
+        p, m = state.players.get(pid), state.motion.get(pid)
+        if p is None or p.status != "active" or m is None:
+            return False
+        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
+        return sw is not None and detect_hands_up(m.kpts, m.valid, sw, self.cfg)
 
     def torso(self, m: Motion) -> tuple[float, float, float, float] | None:
         """Shoulder midpoint x, shoulder level y, hip level y and shoulder
@@ -381,14 +503,27 @@ class Game:
             self.activate_shield(player.x, player.y, direction, pid)
             self.actions.append((pid, "shield"))
 
+    def new_round(self) -> None:
+        """A fresh round with the same players (key r): they keep their
+        positions and calibration; with the intro it starts from the countdown."""
+        self._start_round(self._t)
+
     def reset(self, pid: int | None = None) -> None:
-        """None: start a fresh round while preserving current player positions.
-        A pid: that player starts fresh (full health, no paint, no shield)."""
+        """None: everything starts over (key R): a fresh round, the
+        calibration forgotten, and with the intro back to waiting; player
+        positions are kept. A pid: that player starts fresh (full health, no
+        paint, no shield)."""
         if pid is not None:
             if pid in self.players:
                 self._refresh(self.players[pid])
             self.shields.pop(pid, None)
             return
+        self._clear_round()
+        for player in self.players.values():
+            player.move, player.move_t = 0, 0.0
+        self._enter("waiting" if self.intro else "playing", self._t)
+
+    def _clear_round(self) -> None:
         for player in self.players.values():
             self._refresh(player)
         self.projectiles.clear()
@@ -454,21 +589,26 @@ class Game:
             cv2.ellipse(canvas, center, axes, 0, 0, 360, player_color(pid),
                         3 if shield.remaining > 0 else 1, cv2.LINE_AA)
 
-        lines = [f"P{pid} {action}" for pid, action in self.actions]
+        lines = [f"phase {self.phase} {self.phase_elapsed():.1f} s"]
+        if self.phase == "calibration":
+            lines += [f"P{pid} next: {self.current_move(pid) or 'done'}" for pid in self.round_players]
+        lines += [f"P{pid} {action}" for pid, action in self.actions]
         if self.winner_id is not None:
             lines.append(f"P{self.winner_id} wins")
         draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
 
     def log_fields(self, state: FrameState) -> dict:
-        """CSV columns: game_p<pid>_health, game_p<pid>_shield (1 while it
-        blocks), game_p<pid>_actions (this frame's actions joined by '+'),
-        game_bolts and game_beams (in flight), game_winner (pid or empty)."""
-        row: dict = {}
+        """CSV columns: game_phase; game_p<pid>_health, game_p<pid>_shield (1
+        while it blocks), game_p<pid>_actions (this frame's actions joined by
+        '+'), game_p<pid>_move (next calibration move, empty when all are
+        done); game_bolts and game_beams (in flight), game_winner (pid or empty)."""
+        row: dict = {"game_phase": self.phase}
         for pid, player in sorted(self.players.items()):
             pre = f"game_p{pid}_"
             row[pre + "health"] = player.health
             row[pre + "shield"] = int(self.shielded(pid))
             row[pre + "actions"] = "+".join(a for p, a in self.actions if p == pid)
+            row[pre + "move"] = self.current_move(pid) or ""
         row["game_bolts"] = len(self.projectiles)
         row["game_beams"] = len(self.beams)
         row["game_winner"] = self.winner_id if self.winner_id is not None else ""

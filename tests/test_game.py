@@ -5,14 +5,15 @@ import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
-from ipcvgame.interaction.game import Game, PaintSplat, Shield
+from ipcvgame.core.types import Face, Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
+from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, PaintSplat, Shield
 from ipcvgame.scene.draw import player_color
 
 
 @pytest.fixture
 def game() -> Game:
-    return Game(load_config()["game"])
+    """Without the intro: playing from the first frame."""
+    return Game({**load_config()["game"], "intro": False})
 
 
 @pytest.fixture
@@ -405,3 +406,157 @@ def test_attacks_fly_towards_the_other_player(game, xs, p1_dir):
 def test_alone_attacks_fly_towards_the_middle(game):
     game.update(frame_state(0.0, events=[(1, "hands_up")], xs=(800.0, 200.0), lost=(2,)))
     assert game.beams[0].direction == -1          # right half, no one else in view
+
+
+# --- Phases (feature 12): waiting -> calibration -> countdown -> playing -> result
+
+@pytest.fixture
+def intro() -> Game:
+    return Game({**load_config()["game"], "intro": True})
+
+
+def with_faces(state: FrameState, pids=(1, 2)) -> FrameState:
+    """A tracked face for each active player in pids."""
+    for pid in pids:
+        p = state.players.get(pid)
+        if p is not None and p.status == "active":
+            c = np.array([p.bbox[0] + 100.0, 250.0])
+            state.faces[pid] = Face(pid=pid, valid=True, landmarks=None, center=c, scale=60.0,
+                                    roll=0.0, yaw=0.0, anchors={"above_head": c - (0, 80)})
+    return state
+
+
+def hands_up(state: FrameState, pids=(1, 2)) -> FrameState:
+    """The nose below the raised wrists (y 200): hands up for pids."""
+    for pid in pids:
+        state.motion[pid].kpts[sk.NOSE] = (state.motion[pid].kpts[sk.L_SHOULDER][0] - 50, 250)
+    return state
+
+
+def run(game: Game, t0: float, t1: float, make=lambda t: frame_state(t), dt: float = 0.1) -> float:
+    """Update the game every dt from t0 up to and including t1; returns t1."""
+    for i in range(round((t1 - t0) / dt) + 1):
+        game.update(make(t0 + i * dt))
+    return t1
+
+
+def calibrated(game: Game, t: float = 0.0) -> float:
+    """Through waiting and calibration into the countdown; returns the time."""
+    t = run(game, t, t + game.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
+    assert game.phase == "calibration"
+    for move in CALIBRATION_MOVES:
+        t += 0.1
+        game.update(frame_state(t, events=[(1, move), (2, move)]))
+    assert game.phase == "countdown"
+    return t
+
+
+def test_intro_waits_for_both_players_with_faces(intro):
+    assert intro.phase == "waiting"
+    run(intro, 0.0, 3.0)                                            # no faces
+    assert intro.phase == "waiting"
+    run(intro, 3.1, 6.0, lambda t: with_faces(frame_state(t), pids=(1,)))   # P2 has no face
+    assert intro.phase == "waiting"
+    run(intro, 6.1, 6.1 + intro.cfg["ready_s"] - 0.2, lambda t: with_faces(frame_state(t)))
+    assert intro.phase == "waiting"                                 # not long enough yet
+    run(intro, 6.1 + intro.cfg["ready_s"] - 0.1, 6.1 + intro.cfg["ready_s"],
+        lambda t: with_faces(frame_state(t)))
+    assert intro.phase == "calibration"
+
+
+def test_hold_survives_short_gaps():
+    from ipcvgame.interaction.game import _Hold
+    h = _Hold()
+    assert h.update(True, 0.0, 0.3) == 0.0
+    assert h.update(True, 0.1, 0.3) == pytest.approx(0.1)
+    assert h.update(False, 0.2, 0.3) == pytest.approx(0.1)         # a short gap: held, not growing
+    assert h.update(True, 0.35, 0.3) == pytest.approx(0.35)        # still the same hold
+    h.update(False, 0.5, 0.3)
+    assert h.update(False, 0.7, 0.3) == 0.0                         # gap too long: over
+    assert h.update(True, 0.8, 0.3) == 0.0                          # starts again
+
+
+def test_calibration_ticks_moves_in_order_and_fires_nothing(intro):
+    t = run(intro, 0.0, intro.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
+    assert intro.current_move(1) == intro.current_move(2) == "punch"
+    intro.update(frame_state(t + 0.1, events=[(1, "hands_up")]))   # not the current move
+    assert intro.current_move(1) == "punch" and intro.actions == []
+    intro.update(frame_state(t + 0.2, events=[(1, "punch")]))
+    assert intro.current_move(1) == "hands_up" and intro.get_player(1).move_t == t + 0.2
+    assert intro.actions == [(1, "learned_punch")]
+    for move in ("hands_up", "arms_crossed"):
+        intro.update(frame_state(t + 0.3, events=[(1, move)]))
+    assert intro.current_move(1) is None and intro.current_move(2) == "punch"
+    assert intro.phase == "calibration"                             # P2 not done yet
+    assert intro.projectiles == [] and intro.beams == [] and intro.shields == {}
+
+
+def test_countdown_then_playing(intro):
+    t = calibrated(intro)
+    intro.update(frame_state(t + 0.1, events=[(1, "punch")]))
+    assert intro.projectiles == []                                  # nothing fires in the countdown
+    t = run(intro, t + 0.2, t + intro.countdown_s)
+    assert intro.phase == "playing"
+    intro.update(frame_state(t + 0.1, events=[(1, "punch")]))
+    assert intro.actions == [(1, "bolt")]
+
+
+def test_win_shows_result_and_hands_up_starts_the_next_round(intro):
+    t = calibrated(intro)
+    t = run(intro, t + 0.1, t + intro.countdown_s)
+    intro.get_player(2).health = intro.cfg["bolt_damage"]
+    intro.update(frame_state(t + 0.1, events=[(1, "punch")]))
+    t = run(intro, t + 0.2, t + 1.0)
+    assert intro.phase == "result" and intro.winner_id == 1
+    hold = intro.cfg["replay_hold_s"]
+    t = run(intro, t + 0.1, t + 0.1 + hold, lambda t: hands_up(frame_state(t), pids=(1,)))
+    assert intro.phase == "result"                                  # the winner alone
+    t = run(intro, t + 0.1, t + 0.1 + hold - 0.2, lambda t: hands_up(frame_state(t)))
+    assert intro.phase == "result"                                  # not long enough yet
+    t = run(intro, t + 0.1, t + 0.2, lambda t: hands_up(frame_state(t)))
+    assert intro.phase == "countdown"                               # calibration is kept
+    assert intro.winner_id is None and intro.get_player(2).health == intro.max_health
+    assert intro.current_move(1) is None and intro.current_move(2) is None
+
+
+def test_new_round_and_reset_with_intro(intro):
+    calibrated(intro)
+    intro.get_player(1).health = 30
+    intro.new_round()
+    assert intro.phase == "countdown" and intro.get_player(1).health == intro.max_health
+    assert intro.current_move(1) is None                            # calibration kept
+    intro.reset()
+    assert intro.phase == "waiting" and intro.current_move(1) == "punch"
+
+
+def test_without_intro_rounds_start_at_once(game):
+    assert game.phase == "playing"
+    game.new_round()
+    assert game.phase == "playing"
+    game.reset()
+    assert game.phase == "playing"
+
+
+def test_phase_in_log_and_debug_view(intro):
+    t = run(intro, 0.0, intro.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
+    row = intro.log_fields(frame_state(t))
+    assert row["game_phase"] == "calibration" and row["game_p1_move"] == "punch"
+    canvas = np.zeros((H, W, 3), np.uint8)
+    intro.draw_debug(canvas, frame_state(t))
+    assert canvas.any()
+
+
+def test_solo_intro_needs_only_p1():
+    solo = Game({**load_config()["game"], "intro": True, "round_players": 1})
+    alone = lambda t: with_faces(frame_state(t, lost=(2,)))   # noqa: E731
+    t = run(solo, 0.0, solo.cfg["ready_s"], alone)
+    assert solo.phase == "calibration"
+    for move in CALIBRATION_MOVES:
+        t += 0.1
+        s = alone(t)
+        s.events = [GestureEvent(1, move, t, 1.0), GestureEvent(2, move, t, 1.0)]
+        solo.update(s)
+    assert solo.phase == "countdown"
+    assert all(pid == 1 for pid, _ in solo.actions)          # only P1 is calibrated
+    run(solo, t + 0.1, t + solo.countdown_s, alone)
+    assert solo.phase == "playing"

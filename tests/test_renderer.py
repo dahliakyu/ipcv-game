@@ -21,7 +21,7 @@ def renderer(**over) -> Renderer:
 
 @pytest.fixture
 def game() -> Game:
-    return Game(CFG["game"])
+    return Game({**CFG["game"], "intro": False})
 
 
 def face_at(x: float, y: float, scale: float) -> Face:

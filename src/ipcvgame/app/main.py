@@ -11,8 +11,15 @@
 Every run writes a per-frame CSV to logs/ (recorder.log in the config; --no-log
 to skip). For recording test clips without the pipeline, use tools/record_clip.py.
 
-Keys: q / Esc quit, p pause, r new round (same players), R (shift) reset all
-module state (players are identified again).
+Keys: q / Esc quit, p pause, r new round (same players, from the countdown),
+R (shift) reset all module state (players are identified again and the game
+goes back to waiting).
+
+    python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
+        # no waiting, calibration or countdown: play from the first frame
+        # (same as --set game.intro=false), for clips recorded without the intro
+    python -m ipcvgame.app.main --solo
+        # the intro with one player (game.round_players=1), to test it alone
 """
 
 from __future__ import annotations
@@ -38,6 +45,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="run up to this stage and show its debug overlay")
     ap.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="KEY=VALUE", help="config override, e.g. pose.det_conf=0.5")
+    ap.add_argument("--no-intro", action="store_true",
+                    help="start playing at once, without waiting, calibration or countdown "
+                         "(game.intro=false), e.g. for test clips")
+    ap.add_argument("--solo", action="store_true",
+                    help="the intro and rounds need only P1 (game.round_players=1), to test alone")
     ap.add_argument("--headless", action="store_true", help="no window (tests, benchmarks)")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--log", default=None, metavar="CSV",
@@ -58,6 +70,10 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("--record-view without a path needs --record")
         raw = Path(args.record)
         args.record_view = str(raw.with_name(raw.stem + "_view" + raw.suffix))
+    if args.no_intro:
+        args.overrides.append("game.intro=false")
+    if args.solo:
+        args.overrides.append("game.round_players=1")
     cfg = load_config(args.config, args.overrides)
     pipeline = Pipeline(cfg, until=args.until)
     window = cfg["render"].get("window_name", "IPCV game")
