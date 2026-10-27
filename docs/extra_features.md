@@ -286,6 +286,56 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 **Check.** A player with splats raises and lowers their arms: the splats stay on the shirt (log the splat positions relative to the shoulder midpoint; they should not move by more than a few px). Leaning and stepping sideways: the splats move with the torso.
 
+### 14. Both players attacking at the same time
+
+**What.** Make simultaneous attacks fair and visible. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
+- bolts and beams fly through each other, and both hits land;
+- when both hits would finish the round in the same frame, the attack fired first wins: `_apply_damage()` ignores everything once `winner_id` is set, so the order of the `projectiles` list decides.
+
+**Owners.** Task 4: collisions and the tie rule in `interaction/game.py`. Task 5: the clash effects in the renderer.
+
+**Design.**
+
+- **Bolt meets bolt:** two bolts of different players whose paths cross in a frame (x segments overlap, y within the bolt's height) cancel each other; draw both break-ups (`BoltEnd`) at the meeting point, plus a burst in both team colours.
+- **Bolt meets beam:** the beam absorbs the bolt (the beam is the stronger attack); the bolt breaks up at the beam's tip.
+- **Beam meets beam:** the tips stop where they meet and push against each other for the rest of their duration (a "beam struggle"), with a flash at the meeting point; neither player is hit. Optional: the player who keeps their hands up longer, or whose charge is higher (feature 9), pushes the meeting point towards the other.
+- **Final blows in the same frame:** apply all of a frame's damage first, then decide: both at 0 → a draw ("DRAW", both colours), else the one with health left wins. Needs a `result` instead of only `winner_id` (also used by feature 12's result screen).
+
+**Check.** Unit tests: two bolts fired at each other cancel in the middle; a bolt into a beam disappears; two beams stop at their meeting point; two finishing hits in one frame give a draw. On the webcam: both punch at once and see the clash.
+
+### 15. Major attack orb in four parts (Smash Bros style)
+
+**What.** The major attack (hands up) is unlocked by collecting its orb in four parts, like the assembled weapons in Smash Bros (the Dragoon or Daybreak parts). Parts appear in the arena one at a time; a player who holds all four can fire the major attack once.
+
+**Owners.** Task 4: parts, collecting, dropping and the unlock rule in `interaction/game.py`. Task 5: part sprites (the magic ball cut into quarters) and the HUD.
+
+**Design.**
+
+- **Spawning:** one part at a time at a random free spot in the upper half of the frame (reachable with a raised hand), every ~5–8 s while fewer than four parts are in play; it slowly bobs.
+- **Collecting:** a wrist (smoothed keypoint, `state.motion`) within ~0.5 shoulder widths of the part, held for ~0.2 s, picks it up, as for the items in feature 6.
+- **Holding:** each player's parts are shown as a 4-slot orb icon by their health bar, in their team colour; the quarters fill in as they are collected.
+- **Dropping:** a beam hit, or 3 bolt hits in a row, knocks one part out of the player; it flies off and lands as a part to collect again, so the other player can steal it.
+- **Unlock:** with all four, `hands_up` fires the major attack and the slots empty. Without them, `hands_up` does nothing (with "not ready" feedback), and the one-action-at-a-time reset still applies.
+- **Relation to feature 9:** this replaces the charge bar as the way to unlock the major attack; pick one of the two, or use the bar for a smaller attack.
+
+**Check.** Parts only disappear when collected; a player cannot hold more than four; a dropped part can be picked up by either player; the major attack fires only with four parts.
+
+### 16. Major attack as paint splashing down from above
+
+**What.** Instead of the horizontal magic beam, the major attack throws paint up and lets it rain down on the other player: the magic ball rises above the caster, bursts, and paint splashes down over the opponent.
+
+**Owners.** Task 4: the attack's timing, area and hits in `interaction/game.py` (replaces `PaintBeam`). Task 5: ball, burst, falling drops and floor splashes in the renderer.
+
+**Design.**
+
+- **Phases:** charge (the ball grows between the hands, as now, ~0.35 s) → rise (the ball flies up out of the top of the frame, ~0.3 s) → rain (paint drops fall over the opponent for ~1 s) → splash marks fade on the floor.
+- **Where it falls:** a band centred on the opponent's body box at the moment of the burst, about 1.5 box widths wide, so the opponent can dodge by stepping out of it after the warning (a shadow or target mark on the floor during the rise).
+- **Hits:** each drop tests its path since the last frame against the target's box (as the bolt does); every hit adds a splat on the box and a little damage (e.g. 2 per drop, at most the old beam's 12 per attack). The shield blocks drops while it is up.
+- **Look:** drops in the caster's team colour, falling with gravity, slightly random sizes; splash sprites where they hit the floor (the bottom of the body box, or the frame bottom) or the player.
+- **Replaces** `beam_ball` / `beam_band` drawing for the major attack; the magic ball frames can stay for the charge and rise. Feature 14's beam-meets-beam rule then becomes "drops falling on a raised shield".
+
+**Check.** The rain falls where the opponent stood at the burst; stepping out of the band during the warning avoids most drops; damage per attack never exceeds the cap; the shield blocks it.
+
 ## Technical follow-ups from the Task 3 merge
 
 | Item | Why | Where |
