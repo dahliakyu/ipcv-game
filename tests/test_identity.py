@@ -2,8 +2,11 @@ import numpy as np
 import pytest
 import torch
 
+from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import REPO_ROOT, load_config
+from ipcvgame.core.types import Frame, PoseDetection
 from ipcvgame.identity.osnet import load_weights, osnet_x1_0
+from ipcvgame.identity.tracker import IdentityTracker, Tracks
 
 WEIGHTS = REPO_ROOT / load_config()["identity"]["reid_weights"]
 needs_weights = pytest.mark.skipif(not WEIGHTS.is_file(), reason="OSNet weights not downloaded (README)")
@@ -48,3 +51,212 @@ def test_extractor_missing_weights(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         OSNetEmbeddingExtractor(tmp_path / "missing.pth")
+
+
+# --------------------------------------------------------------------------
+# IdentityTracker logic, with a fake OSNet and a scripted tracker.
+
+H, W = 200, 400
+BLUE, GREEN, RED = (255, 0, 0), (0, 255, 0), (0, 0, 255)
+
+
+class FakeOSNet:
+    """Vector = the crop's mean colour, length 1: crops of one colour match
+    (similarity 1), different pure colours do not (0)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def extract(self, image):
+        self.calls += 1
+        v = image.reshape(-1, 3).mean(0)
+        return v / np.linalg.norm(v)
+
+
+class ScriptedTracker:
+    def __init__(self):
+        self.next: Tracks = Tracks([])
+        self.resets = 0
+
+    def update(self, dets, frame):
+        return self.next
+
+    def reset(self):
+        self.resets += 1
+
+
+def det(x1, x2=None) -> PoseDetection:
+    x2 = x1 + 60 if x2 is None else x2
+    return PoseDetection(np.array([x1, 20, x2, 180.0]), np.zeros((sk.K, 2)), np.ones(sk.K), 0.9)
+
+
+def scene(t, people) -> Frame:
+    """people: list of (det, colour); each box is filled with its colour."""
+    img = np.full((H, W, 3), 1, np.uint8)
+    for d, c in people:
+        x1, y1, x2, y2 = d.bbox.astype(int)
+        img[y1:y2, x1:x2] = c
+    return Frame(img, int(t * 100), t)
+
+
+CFG = {"backend": "reid", "max_players": 2, "reid_threshold": 0.6, "new_player_s": 0.13,
+       "min_crop_h": 40, "min_crop_w": 20, "retry_s": 0.5, "update_every_s": 0.5,
+       "update_weight": 0.1, "update_min_sim": 0.5, "update_max_iou": 0.0}
+
+
+def make(**over):
+    tr = ScriptedTracker()
+    ident = IdentityTracker({**CFG, **over}, embedder=FakeOSNet(), tracker=tr)
+    return ident, tr
+
+
+def step(ident, tr, t, people, active, lost=None):
+    """active: track ids for people, in order; lost: {track_id: box}."""
+    dets = [d for d, _ in people]
+    tr.next = Tracks(list(zip(active, range(len(dets)), strict=True)), lost or {})
+    return ident.update(dets, scene(t, people))
+
+
+def test_new_player_after_confirmation():
+    ident, tr = make()
+    a = det(20)
+    assert step(ident, tr, 0.0, [(a, BLUE)], [1]) == {}
+    assert step(ident, tr, 0.1, [(a, BLUE)], [1]) == {}
+    players = step(ident, tr, 0.15, [(a, BLUE)], [1])
+    assert players[1].status == "active" and players[1].det is a and not players[1].reentered
+
+
+def test_linked_track_skips_osnet():
+    ident, tr = make(update_every_s=100.0)
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    calls = ident.embedding_extractor.calls
+    for t in (0.2, 0.25, 0.3):
+        assert step(ident, tr, t, [(a, BLUE)], [1])[1].status == "active"
+    assert ident.embedding_extractor.calls == calls
+
+
+def test_occluded_then_lost_then_reentered():
+    ident, tr = make()
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    predicted = np.array([30, 20, 90, 180.0])
+    p = step(ident, tr, 0.2, [], [], lost={1: predicted})[1]
+    assert p.status == "occluded" and p.det is None
+    np.testing.assert_allclose(p.bbox, predicted)
+    p = step(ident, tr, 0.3, [], [])[1]                      # the tracker dropped track 1
+    assert p.status == "lost" and not p.reentered
+    p = step(ident, tr, 0.4, [(det(200), BLUE)], [7])[1]     # new track, same look
+    assert p.status == "active" and p.reentered
+    assert not step(ident, tr, 0.45, [(det(200), BLUE)], [7])[1].reentered
+
+
+def test_same_track_back_from_occluded_is_not_reentered():
+    ident, tr = make()
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    step(ident, tr, 0.2, [], [], lost={1: a.bbox})
+    p = step(ident, tr, 0.25, [(a, BLUE)], [1])[1]
+    assert p.status == "active" and not p.reentered
+
+
+def test_new_track_takes_over_from_held_track():
+    """A player found on a new track while the tracker still holds the old
+    one (occluded): the link moves, and it is not a re-entry."""
+    ident, tr = make()
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    step(ident, tr, 0.2, [], [], lost={1: a.bbox})
+    p = step(ident, tr, 0.25, [(det(200), BLUE)], [2], lost={1: a.bbox})[1]
+    assert p.status == "active" and not p.reentered
+    assert ident.track_to_player == {2: 1}
+
+
+def test_two_players_and_a_bystander_who_is_retried_slowly():
+    ident, tr = make(update_every_s=100.0)
+    a, b, c = det(20), det(150), det(300)
+    people = [(a, BLUE), (b, GREEN)]
+    for t in (0.0, 0.15):
+        players = step(ident, tr, t, people, [1, 2])
+    assert set(players) == {1, 2}
+    people.append((c, RED))
+    calls = ident.embedding_extractor.calls
+    for t in np.arange(0.2, 0.65, 0.05):
+        players = step(ident, tr, t, people, [1, 2, 3])
+    assert set(players) == {1, 2}                       # max_players: no P3
+    assert ident.embedding_extractor.calls - calls == 1   # first try, retry_s not reached yet
+    step(ident, tr, 0.75, people, [1, 2, 3])
+    assert ident.embedding_extractor.calls - calls == 2
+
+
+def test_player_in_use_is_not_given_to_another_track():
+    """bodypose.py excluded_player_ids: a new track that looks like P1 does
+    not get P1 while P1's own track is visible."""
+    ident, tr = make()
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    players = step(ident, tr, 0.2, [(a, BLUE), (det(200), BLUE)], [1, 5])
+    assert players[1].det is a and ident.track_to_player == {1: 1}
+
+
+def test_small_crop_is_not_identified():
+    ident, tr = make()
+    tiny = PoseDetection(np.array([20, 20, 30, 50.0]), np.zeros((sk.K, 2)), np.ones(sk.K), 0.9)
+    for t in (0.0, 0.15, 0.3):
+        assert step(ident, tr, t, [(tiny, BLUE)], [1]) == {}
+    assert ident.embedding_extractor.calls == 0
+
+
+def test_vector_update_blends_and_takes_turns():
+    ident, tr = make()
+    a, b = det(20), det(150)
+    people = [(a, BLUE), (b, GREEN)]
+    for t in (0.0, 0.15):
+        step(ident, tr, t, people, [1, 2])
+    stored = {pid: v.copy() for pid, v in ident.embeddings.items()}
+    bluish = (255, 60, 0)                               # P1's look changes a little
+    people = [(a, bluish), (b, GREEN)]
+    step(ident, tr, 0.7, people, [1, 2])                # P1's turn
+    assert not np.allclose(ident.embeddings[1], stored[1])
+    np.testing.assert_allclose(ident.embeddings[2], stored[2])
+    fresh = FakeOSNet().extract(np.full((4, 4, 3), bluish, np.uint8))
+    expected = 0.9 * stored[1] + 0.1 * fresh
+    np.testing.assert_allclose(ident.embeddings[1], expected / np.linalg.norm(expected), atol=1e-6)
+    step(ident, tr, 0.75, people, [1, 2])               # P2's turn
+    assert ident.last_update_t[2] == 0.75
+
+
+def test_vector_update_skipped_when_overlapping_or_too_different():
+    ident, tr = make()
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    stored = ident.embeddings[1].copy()
+    step(ident, tr, 0.7, [(a, BLUE), (det(60), GREEN)], [1, 9])     # boxes overlap
+    np.testing.assert_allclose(ident.embeddings[1], stored)
+    assert ident.last_update_t[1] == 0.15
+    step(ident, tr, 0.8, [(a, RED)], [1])                            # similarity 0 < 0.5
+    np.testing.assert_allclose(ident.embeddings[1], stored)
+    assert ident.last_update_t[1] == 0.8
+
+
+def test_reset():
+    ident, tr = make()
+    a, b = det(20), det(150)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE), (b, GREEN)], [1, 2])
+    ident.reset(1)
+    assert set(ident.embeddings) == {2} and 1 not in ident.players
+    assert ident._free_id() == 1
+    ident.reset()
+    assert ident.players == {} and ident.embeddings == {} and tr.resets == 1
+
+
+def test_unknown_backend():
+    with pytest.raises(ValueError):
+        IdentityTracker({**CFG, "backend": "nope"})

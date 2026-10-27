@@ -1220,6 +1220,10 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 
   The two x1.0 files separate the players equally well (gap 0.07–0.08 on the fitness clip, where both wear black shirts and jeans and change posture, and 0.35–0.36 on the jump clip). OSNet-AIN, which the model zoo reports as better on unseen datasets, separates them worse on both clips (0.07 and 0.29) and needs a second network file, so it is not used. The 0.6 threshold is kept for now. With the chosen weights, only 36% of the fitness clip's same-player similarities reach it (the jump clip: 100%), so it is checked again on re-entry clips.
 - **Kept from `bodypose.py`:** greedy matching per track with excluded ids, the 0.6 threshold, the minimum crop size, the OSNet x1.0 network and its preprocessing.
+- **Small changes found while merging (step 2):**
+  - tracks already linked to a player are handled before new tracks, so a new track cannot take a player whose own track is visible this frame (`main.py` handled tracks in detection order and threw such a clash away afterwards);
+  - a track that matched no player while both player slots are taken (a bystander) tries OSNet again only every 0.5 s; `bodypose.py` tried every frame, ~10 ms each time;
+  - a new player takes the lowest free id instead of a counter, so `reset(pid)` frees that id.
 - **Not in this merge:** `Player.pos` stays `(0, 0)`.
 
 **Where each part goes.**
@@ -1231,7 +1235,9 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 | `Project/models/osnet_x1_0_msmt17.pth` | `models/osnet_x1_0_msmt17_combineall.pth` | Same network and data, from Hugging Face; README download command |
 | `Project/models/yolo11n.pt` | Removed | BoT-SORT runs on the pose boxes |
 | `PlayerIdentityTracker` | `identity/tracker.py`, `IdentityTracker` | Same steps; occluded/lost and `reentered`; vector update |
-| `_find_player()`, `update()` | `IdentityTracker`, same names | Numbers from config; confirmation in seconds |
+| `_find_player()` | `IdentityTracker._find_player()` | Threshold from config |
+| `update()` | `IdentityTracker._identify()` | Confirmation in seconds; slow retry when slots are full; lowest free id |
+| `main.py` loop over tracks | `IdentityTracker.update(dets, frame)` | Linked tracks first; builds the `Player`s |
 | `forget_missing_tracks()` | `IdentityTracker` | Links drop when BoT-SORT drops the track, not when it is missing for a frame |
 | `person_detector.track(..., botsort.yaml)` in `main.py` | `IdentityTracker`, Ultralytics `BOTSORT` on the `PoseDetection` boxes | `yolo11n.pt` removed |
 | `botsort.yaml` | `identity.botsort:` config | Each value with a reason; two changed (above) |
@@ -1272,3 +1278,42 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 - `load_weights()` raises when no layer matches;
 - with the real weights: vectors have length 1 and a crop matches itself better than another crop (skipped when the weights are not downloaded);
 - a missing weights file raises.
+
+#### Step 2 · Config and identity logic
+
+**Changed:** `src/ipcvgame/identity/tracker.py`: `IdentityTracker` now holds `PlayerIdentityTracker` from `bodypose.py` as `backend: reid`, with the same names: `embeddings` (your `players`), `track_to_player`, `pending_tracks`, `_find_player()`, `forget_missing_tracks()`. Your `update()` is `_identify()`. The tracker comes in step 3; until then the config keeps `backend: zones`.
+
+Compared with `bodypose.py`:
+- **Same rules:** a linked track keeps its player without OSNet; a new track's crop (≥ 40 × 20 px) is matched to the most similar stored player at ≥ 0.6, skipping players already used this frame; otherwise it becomes a new player after being seen for a while.
+- **Seconds instead of frames:** `NEW_PLAYER_CONFIRMATION` (5 frames) became `new_player_s` (0.13 s). A pending track must be seen on every frame; a frame without it starts the wait again, as in your `forget_missing_tracks()`.
+- **Two players** instead of 3 (`max_players`). A new player takes the lowest free id, not the next number, so `reset(pid)` frees the id.
+- **Occluded, then lost:** `forget_missing_tracks()` drops a link only when the tracker no longer holds the track at all. While it holds it as lost, the player is `"occluded"` with the tracker's predicted box. Your code dropped the link on the first frame without the track and reset the player's pose state; now nothing is reset until the player is `"lost"`, and `reentered` is True on the frame OSNet links a new track to a lost player.
+- **Link moves to a new track:** when OSNet finds a player on a new track while their old track is still held (occluded), the old link is dropped. That is not a re-entry.
+- **Linked tracks first:** `main.py` went through the tracks in detection order, so a new track could take a player whose own track came later in the list; that track then lost its player for the frame. Now linked tracks are handled first and their players are excluded for new tracks.
+- **Slow retry:** in your code a track that found no player while all slots were taken was dropped from `pending_tracks` and tried again on the next frame, so a bystander cost an OSNet run every frame. Now it retries after `retry_s` (0.5 s).
+- **Stored vectors are updated (new):** `_update_embedding()`. One active player per frame, in turn, at most every 0.5 s, and only when their box overlaps no other detection. If the fresh vector's similarity to the stored one is at least 0.5, the stored vector moves 0.1 of the way towards it (and is scaled back to length 1). Your code stored the first vector and never changed it.
+- **Players as `Player`s:** `update(dets, frame)` returns `dict[pid, Player]` from `core/types.py` (box, detection, status, `reentered`); `pos` stays `(0, 0)`.
+- **The left/right stub** stays as `backend: zones`, unchanged except that it reads `max_players` (was `num_players`).
+- **`draw_debug`:** player boxes with status (dashed when not active), green "Identifying..." boxes for tracks without a player (your label), and the stored player ids.
+
+**Changed:** `configs/default.yaml`, `identity:` section
+
+| Key | Value | In `bodypose.py` |
+| --- | --- | --- |
+| `backend` | `zones` until step 3 | (new; `reid` = your tracker) |
+| `max_players` | 2 | `MAX_PLAYERS = 3` |
+| `reid_threshold` | 0.6 | `REID_THRESHOLD` |
+| `new_player_s` | 0.13 s | `NEW_PLAYER_CONFIRMATION = 5` frames at 30 FPS |
+| `min_crop_h`, `min_crop_w` | 40, 20 px | `MIN_PERSON_HEIGHT`, `MIN_PERSON_WIDTH` |
+| `retry_s` | 0.5 s | (new; every frame) |
+| `update_every_s`, `update_weight`, `update_min_sim`, `update_max_iou` | 0.5 s, 0.1, 0.5, 0.0 | (new; no update) |
+
+`num_players` became `max_players`; `docs/phase-1/status.md`'s `--set` example follows.
+
+**Added:** `tests/test_identity.py`, 12 tests with a fake OSNet (the vector is the crop's mean colour) and a scripted tracker:
+- a new player after `new_player_s`; a linked track skips OSNet;
+- occluded → lost → re-entered with the same look; the same track back from occluded is not a re-entry; a new track takes over from a held one;
+- two players and a bystander who never becomes P3 and is retried only after `retry_s`;
+- a player in use is not given to another track; a too-small crop is not identified;
+- the vector update blends by `update_weight` and players take turns; it is skipped when boxes overlap or the crop is too different;
+- `reset()` and `reset(pid)`; an unknown backend raises.

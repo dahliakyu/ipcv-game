@@ -62,7 +62,7 @@ Every module has the same methods; replace the body, keep the signature.
 
 ### Config
 
-`configs/default.yaml` has one section per module: `source`, `pose`, `identity`, `motion`, `face`, `gestures`, `game`, `recorder`, `render`. Every threshold goes in your section with a comment explaining its value. You can override any value from the command line without editing the file: `--set identity.num_players=2`.
+`configs/default.yaml` has one section per module: `source`, `pose`, `identity`, `motion`, `face`, `gestures`, `game`, `recorder`, `render`. Every threshold goes in your section with a comment explaining its value. You can override any value from the command line without editing the file: `--set identity.max_players=2`.
 
 There are no cross-section reads: since the Colour Clash merge, `FaceTracker` reads its own `face.kpt_conf_threshold` instead of `motion.kpt_conf_threshold`.
 
