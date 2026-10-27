@@ -1427,3 +1427,60 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 - Performance: the identity stage.
 
 **Changed:** `docs/extra_features.md`: identity marked as done in "finish the merge"; new feature 12 (game start: instructions and pose calibration); technical follow-ups from the identity merge.
+
+## Task 5: Renderer
+
+### Plan
+
+**Source.** `renderer.py` (`Renderer.render()` and its helpers) and the palette picture it loads, plus the keys in `main.py`. The game logic it reads (`game.py`) is already merged into `interaction/game.py`.
+
+**What the code does.**
+
+- **Camera image:** shrunk to half size and scaled back up with the nearest pixel, for a blocky retro look; everything else is drawn sharp on top.
+- **Game objects** (all in team colours): bolts as two rectangles, the paint beam as a pulsing square while charging and then a thick line, the shield as the palette picture with a team-colour outline, a white flash and a splash of white dots.
+- **Paint on the players:** each splat is a small pixel cross on the body box; the crosses grow as the player's health drops (`coverage` = 1 − health / 100).
+- **Health:** a bar above the head (`head_x`, `head_y` from `bodypose.py`) with "PLAYER N" and an outline.
+- **HUD:** a dark bar at the top with "COLOUR CLASH" and the controls ("HANDS UP: PAINT BEAM   PUNCH: BOLT   Q: QUIT"), or "STEP INTO VIEW" when nobody is seen; "Q: QUIT" at the bottom.
+- **End of the game:** a dark panel in the middle, "PLAYER N WINS!" in the winner's colour and "R: RESTART   Q: QUIT". In `main.py`, key `r` after a win calls `game.reset()`: a new round with the same players.
+
+**What our code does now.**
+
+- The default view (`Renderer.draw()`) shows player boxes, skeletons, face effects and timings, but no game objects.
+- The game is only visible in `--until game` (`Game.draw_debug()`): the fire blast, magic ball and beam, and ring of fire sprites (Task 4 modifications), splats as filled circles, a health bar below the body and one line of text for the winner.
+- **End of the game looks frozen.** `Game.advance()` stops once someone wins (as in `game.py`), so bolts, their break-up sparks and beams stay where they were, under the winner text, while the camera keeps running. Splats drawn as large circles pile up into blobs.
+- Key `r` resets the whole pipeline, including identity, so P1 and P2 can swap colours in the next round.
+
+**Decisions (Task 5 owner, 2026-10-27).**
+
+- **The renderer draws the game.** The sprite effects, splats, health bars and HUD move to the renderer (Task 5). `interaction/game.py` keeps only the game logic, so the Task 4 owner explains rules, not drawing. `--until game` goes back to simple shapes (bolt dots, beam lines with their hit band, shield ellipses, health numbers) for debugging the logic; the default view is the game.
+- **Health bar below the body** (Task 4 modifications), restyled with `renderer.py`'s outline and "PLAYER N" label.
+- **Splats as `renderer.py`'s pixel crosses** that grow as health drops, instead of the debug circles. They still float with the body box; sticking them to the torso is feature 13 in `docs/extra_features.md`.
+- **Pixel look on:** `render.pixel_size: 2` (`renderer.py`'s half size); 1 turns it off.
+- **End of the game (Task 5 owner):** the panel from `renderer.py`; bolts, sparks and beams in flight are not drawn once there is a winner, and the frame behind the panel is dimmed, so nothing appears frozen. Key `r` starts a new round (`game.reset()`, as in `main.py`) at any time; `R` (shift) resets the whole pipeline, including identity. Restarting by a gesture is part of feature 12.
+- **No skeletons or boxes in the game view** (`renderer.py` drew none): the player is named on their health bar. `render.show_skeleton` brings the skeletons back for testing.
+- **Not merged:** `renderer.py`'s own bolt, beam and shield drawing and the palette picture; the sprites from the Task 4 modifications replace them.
+
+**Where each part goes.**
+
+| In the code | Goes to | Change |
+| --- | --- | --- |
+| `Renderer.render()` | `scene/renderer.py`, `Renderer.draw(state, game)` | Pixels; reads `Game` state and `state.faces` |
+| Pixelated camera image | `Renderer.draw()` | `render.pixel_size` |
+| `_draw_player_paint()` | `scene/renderer.py`, same name | Splat colour from the attacker's pid |
+| `_draw_player_health()` | `scene/renderer.py`, same name | Below the body (Task 4 modification) |
+| Top bar, controls, "STEP INTO VIEW" | `scene/renderer.py`, `_draw_hud()` | Our three gestures named |
+| `_draw_game_over()` | `scene/renderer.py`, same name | Dimmed frame; objects in flight hidden |
+| `_draw_shield()`, `_draw_shield_splash()`, `_draw_paint_beam()`, bolt rectangles, palette `.jpg` | Not merged | Replaced by the fire ring, magic beam and fire blast |
+| (ours) sprite loading and drawing in `Game` (`_bolt_effect()`, `_beam_effect()`, `_shield_effect()`, `ring_geometry()`, `bar_geometry()`) | `scene/renderer.py` | Config keys move from `game:` to `render:` |
+| `main.py`: key `r` after a win | `app/main.py`: `r` = new round, `R` = full reset | |
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Sprites to the renderer: loading and drawing of the fire blast, magic beam and fire ring, the ring and health-bar geometry, and their config keys move from `Game` to the renderer; `Game.draw_debug()` back to simple shapes.
+2. Game view: pixel look, splats as pixel crosses, health bars, no skeletons or boxes, face effects on top.
+3. HUD and end of the game: top bar with controls or "STEP INTO VIEW", the game-over panel, keys `r` and `R`.
+4. Check and record: runs on the clips with `--record-view`, Change Overviews, `docs/phase-1/status.md`, `docs/extra_features.md`.
+
+**Verification.** Unit tests for each step (drawing on made-up frames, keys). Views recorded with `--record-view` on `data/clips/session.mp4` and the test clips. The Task 5 owner checks the game, including the end of a round, on the webcam.
+
+### Changes
