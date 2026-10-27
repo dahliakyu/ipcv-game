@@ -462,16 +462,32 @@ render:
   # Player boxes and skeletons in the game view, for testing; renderer.py
   # drew none (the player is named on their health bar).
   show_skeleton: false
-  # Paint splats (renderer.py): each is a cross of 5 cells. A cell is
-  # [base, growth] of the body box: base + growth x coverage, where coverage =
-  # 1 - health / max_health, so splats grow as the player loses. Values from
-  # renderer.py (width 0.02 + 0.025 c, height 0.015 + 0.025 c).
-  splat_cell_w: [0.02, 0.025]
-  splat_cell_h: [0.015, 0.025]
+  # Paint splats (renderer.py): each is a cross of 5 cells, drawn on the
+  # torso (shoulder width x shoulders to hips). A cell is [base, growth] of
+  # the torso: base + growth x coverage, where coverage = 1 - health /
+  # max_health, so splats grow as the player loses. renderer.py used
+  # 0.02 + 0.025 c of the box width and 0.015 + 0.025 c of its height; the
+  # box is ~2 shoulder widths wide and ~2.5 torso heights tall, so the same
+  # sizes are about double in torso units.
+  splat_cell_w: [0.04, 0.05]
+  splat_cell_h: [0.04, 0.06]
   # Health bar height and its "PLAYER N" label height, as fractions of the
   # frame height: renderer.py's 10 px bar and 0.8-scale label at 480p.
   bar_h: 0.021
   bar_font_h: 0.017
+  # The bar's length is smoothed with this time constant (s): the face width
+  # it comes from jitters by a few px per frame and drops to the shoulder
+  # fallback on frames without a face. 1 s still follows a player walking
+  # towards or away from the camera.
+  bar_length_tau_s: 1.0
+  # Top bar (renderer.py: 34 px at 480p) with "COLOUR CLASH" and the
+  # controls; font scales are renderer.py's at 480p and grow with the frame.
+  hud_h: 0.07
+  hud_title_scale: 1.4
+  hud_text_scale: 1.0
+  # End of the game: the frame behind renderer.py's panel is darkened to this
+  # fraction, so the panel stands out and nothing looks frozen.
+  game_over_dim: 0.5
   # Health bar below the body (Task 4 modifications): its length depends on
   # the player's distance to the camera but not on their arms. 2.5 face
   # widths (Face.scale) is a little wider than the shoulders. Without a face,

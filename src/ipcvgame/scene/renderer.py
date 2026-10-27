@@ -1,9 +1,11 @@
 """Task 5 — game renderer, from Colour Clash renderer.py.
 
 The game view, in drawing order: the camera frame (pixelated, as in
-renderer.py), each player's paint splats (renderer.py's pixel crosses), the
+renderer.py), each player's paint splats (renderer.py's pixel crosses, on the
+torso), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
-beam, ring of fire shields), face effects, health bars and a timing HUD. The
+beam, ring of fire shields), face effects, health bars, renderer.py's top bar
+with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
@@ -21,6 +23,7 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
+from ipcvgame.core.filters import EMA
 from ipcvgame.core.types import FrameState
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import Game, Shield
@@ -30,6 +33,8 @@ from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.magic_beam import MagicBeam
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
+# renderer.py's controls line, with our three gestures and what they fire.
+CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 
 
 class Renderer:
@@ -41,6 +46,10 @@ class Renderer:
         self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
+        self._bar_len: dict[int, EMA] = {}       # smoothed health-bar length per player
+
+    def reset(self) -> None:
+        self._bar_len.clear()
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
         canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
@@ -56,32 +65,104 @@ class Renderer:
                    if p.status == "active" and pid in game.players and game.players[pid].bounds is not None]
         for pid in visible:
             player = game.players[pid]
-            self._draw_player_paint(canvas, player.bounds, player.paint_splats,
-                                    1.0 - player.health / game.max_health)
-        self.draw_game(canvas, state, game)
+            self._draw_player_paint(canvas, self.paint_area(pid, state, game), player.paint_splats,
+                                    1.0 - player.health / game.max_health, game.splat_band)
+        if game.winner_id is None:
+            # After a win the game stops (game.py), so bolts and beams in
+            # flight would stand still: they are not drawn.
+            self.draw_game(canvas, state, game)
         self.face_effects.draw(canvas, state.faces)
         for pid in visible:
             self._draw_player_health(canvas, pid, state, game)
+        top = self._draw_hud(canvas, has_player=bool(visible), game_over=game.winner_id is not None)
+        if game.winner_id is not None:
+            self._draw_game_over(canvas, game.winner_id)
         if self.show_timings:
-            draw_timings(canvas, state.timings)
+            draw_timings(canvas, state.timings, (10, top + 20))
         return canvas
+
+    # -------------------------------------------------------------------- HUD
+
+    def _scale(self, canvas: np.ndarray, key: str) -> float:
+        """A renderer.py font scale (for 480p) at this frame height."""
+        return self.cfg[key] * canvas.shape[0] / 480.0
+
+    def _draw_hud(self, canvas: np.ndarray, has_player: bool, game_over: bool) -> int:
+        """renderer.py's top bar: "COLOUR CLASH" in P1's colour, and the
+        controls on the right, or "STEP INTO VIEW" while nobody is seen; the
+        keys at the bottom. Returns the bar's height (px)."""
+        h, w = canvas.shape[:2]
+        bar = int(self.cfg["hud_h"] * h)
+        title, text = self._scale(canvas, "hud_title_scale"), self._scale(canvas, "hud_text_scale")
+        thick = max(1, int(round(text)))
+        cv2.rectangle(canvas, (0, 0), (w, bar), (27, 16, 17), -1)
+        cv2.putText(canvas, "COLOUR CLASH", (12, int(bar * 0.68)), cv2.FONT_HERSHEY_PLAIN, title,
+                    player_color(1), thick, cv2.LINE_8)
+        status = CONTROLS if has_player else "STEP INTO VIEW"
+        (tw, _), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_PLAIN, text, thick)
+        cv2.putText(canvas, status, (w - tw - 12, int(bar * 0.65)), cv2.FONT_HERSHEY_PLAIN, text, WHITE,
+                    thick, cv2.LINE_8)
+        if not game_over:
+            cv2.putText(canvas, "R: NEW ROUND   Q: QUIT", (12, h - 12), cv2.FONT_HERSHEY_PLAIN, text, WHITE,
+                        thick, cv2.LINE_8)
+        return bar
+
+    def _draw_game_over(self, canvas: np.ndarray, winner_id: int) -> None:
+        """renderer.py's end panel: the frame dimmed, a dark panel in the
+        middle framed in the winner's colour, "PLAYER N WINS!" and the keys."""
+        h, w = canvas.shape[:2]
+        canvas[:] = (canvas * self.cfg["game_over_dim"]).astype(np.uint8)
+        k = h / 480.0
+        panel_w, panel_h = min(w - 24, int(380 * k)), int(84 * k)
+        left, top = (w - panel_w) // 2, h // 2 - panel_h // 2
+        color = player_color(winner_id)
+        corners = (left, top), (left + panel_w, top + panel_h)
+        cv2.rectangle(canvas, *corners, (27, 16, 17), -1)
+        cv2.rectangle(canvas, *corners, color, max(2, int(3 * k)), cv2.LINE_8)
+        cv2.putText(canvas, f"PLAYER {winner_id} WINS!", (left + int(28 * k), top + int(38 * k)),
+                    cv2.FONT_HERSHEY_PLAIN, 2 * k, color, max(1, int(2 * k)), cv2.LINE_8)
+        cv2.putText(canvas, "R: NEW ROUND   Q: QUIT", (left + int(28 * k), top + int(66 * k)),
+                    cv2.FONT_HERSHEY_PLAIN, k, WHITE, max(1, int(k)), cv2.LINE_8)
 
     # ------------------------------------------------------ paint and health
 
-    def _draw_player_paint(self, canvas: np.ndarray, bounds: np.ndarray, splats: list,
-                           coverage: float) -> None:
-        """renderer.py: each splat is a pixel cross (5 cells) inside the body
-        box, in the attacker's colour. The cells grow as the player's health
-        drops (coverage = 1 - health / max_health), so a beaten player looks
-        more painted."""
+    def paint_area(self, pid: int, state: FrameState, game: Game) -> tuple[float, float, float, float]:
+        """Where the player's paint is drawn (x1, y1, x2, y2 px): the torso,
+        between the shoulders and from the shoulder line to the hips, so the
+        splats stay on the shirt when an arm goes out. renderer.py drew them
+        in the body box, which widens with the arms, so they slid off the
+        body. Without a shoulder width: the box's splat band."""
+        m = state.motion.get(pid)
+        torso = game.torso(m) if m is not None else None
+        if torso is not None:
+            x, shoulder_y, hip_y, sw = torso
+            return x - sw / 2, shoulder_y, x + sw / 2, hip_y
+        left, top, right, bottom = game.players[pid].bounds
+        lo, hi = game.splat_band
+        w, h = right - left, bottom - top
+        return left + lo * w, top + lo * h, left + hi * w, top + hi * h
+
+    def _draw_player_paint(self, canvas: np.ndarray, area: tuple, splats: list, coverage: float,
+                           band: tuple[float, float]) -> None:
+        """renderer.py: each splat is a pixel cross (5 cells) in the
+        attacker's colour. The cells grow as the player's health drops
+        (coverage = 1 - health / max_health), so a beaten player looks more
+        painted.
+
+        Changed: the game keeps splats inside a band of the body box
+        (game.splat_band); that band is stretched over `area` (the torso), and
+        the cells are fractions of the area, not of the box."""
         h, w = canvas.shape[:2]
-        left, top, right, bottom = (int(v) for v in bounds)
-        box_w, box_h = max(1, right - left), max(1, bottom - top)
+        left, top, right, bottom = (int(v) for v in area)
+        area_w, area_h = max(1, right - left), max(1, bottom - top)
+        lo, hi = band
         (cw0, cw1), (ch0, ch1) = self.cfg["splat_cell_w"], self.cfg["splat_cell_h"]
-        cell_w = max(2, int(box_w * (cw0 + cw1 * coverage)))
-        cell_h = max(2, int(box_h * (ch0 + ch1 * coverage)))
+        cell_w = max(2, int(area_w * (cw0 + cw1 * coverage)))
+        cell_h = max(2, int(area_h * (ch0 + ch1 * coverage)))
         for splat in splats:
-            cx, cy = left + int(splat.x * box_w), top + int(splat.y * box_h)
+            u = min(max((splat.x - lo) / (hi - lo), 0.0), 1.0)
+            v = min(max((splat.y - lo) / (hi - lo), 0.0), 1.0)
+            cx, cy = left + int(u * area_w), top + int(v * area_h)
             for ox, oy in ((-1, 0), (0, -1), (0, 0), (0, 1), (1, 0)):
                 x, y = cx + ox * cell_w, cy + oy * cell_h
                 x0, y0 = max(left, 0, x), max(top, 0, y)
@@ -95,6 +176,12 @@ class Renderer:
         body, kept inside the frame (Task 4 modifications)."""
         h, w = canvas.shape[:2]
         (cx, cy), length = self.bar_geometry(pid, state, game)
+        # The face width jitters and the bar falls back to the shoulder width
+        # when the face is missed, so the raw length jumps: smooth it.
+        ema = self._bar_len.setdefault(pid, EMA(self.cfg["bar_length_tau_s"]))
+        if state.players[pid].reentered:
+            ema.reset()
+        length = float(ema(np.array([length]), state.frame.t)[0])
         bar_h = max(4, int(self.cfg["bar_h"] * h))
         font = self.cfg["bar_font_h"] * h / 10.0          # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
         label_h = int(12 * font)
@@ -238,9 +325,9 @@ def pixelate(image: np.ndarray, size: int) -> np.ndarray:
     return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
-def draw_timings(canvas: np.ndarray, timings: dict[str, float]) -> None:
+def draw_timings(canvas: np.ndarray, timings: dict[str, float], org: tuple[int, int] = (10, 24)) -> None:
     """Per-stage ms of the previous frame, plus FPS from its total."""
     lines = [f"{k:>9s} {v:6.1f} ms" for k, v in timings.items() if k != "total"]
     if "total" in timings and timings["total"] > 0:
         lines.append(f"{'total':>9s} {timings['total']:6.1f} ms  ({1000 / timings['total']:.0f} FPS)")
-    draw_lines(canvas, lines)
+    draw_lines(canvas, lines, org)

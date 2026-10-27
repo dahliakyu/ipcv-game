@@ -1454,7 +1454,8 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 
 - **The renderer draws the game.** The sprite effects, splats, health bars and HUD move to the renderer (Task 5). `interaction/game.py` keeps only the game logic, so the Task 4 owner explains rules, not drawing. `--until game` goes back to simple shapes (bolt dots, beam lines with their hit band, shield ellipses, health numbers) for debugging the logic; the default view is the game.
 - **Health bar below the body** (Task 4 modifications), restyled with `renderer.py`'s outline and "PLAYER N" label.
-- **Splats as `renderer.py`'s pixel crosses** that grow as health drops, instead of the debug circles. They still float with the body box; sticking them to the torso is feature 13 in `docs/extra_features.md`.
+- **Splats as `renderer.py`'s pixel crosses** that grow as health drops, instead of the debug circles.
+- **Paint on the torso and a steady health bar (after the Task 5 owner's check in step 3).** The game keeps splats in a band of the body box, and the renderer draws that band on the torso (shoulders to hips), so the paint no longer slides off the body when an arm goes out. The health bar's length is smoothed. Recording where on the torso a hit really landed stays as feature 13 in `docs/extra_features.md`.
 - **Pixel look on:** `render.pixel_size: 2` (`renderer.py`'s half size); 1 turns it off.
 - **End of the game (Task 5 owner):** the panel from `renderer.py`; bolts, sparks and beams in flight are not drawn once there is a winner, and the frame behind the panel is dimmed, so nothing appears frozen. Key `r` starts a new round (`game.reset()`, as in `main.py`) at any time; `R` (shift) resets the whole pipeline, including identity. Restarting by a gesture is part of feature 12.
 - **No skeletons or boxes in the game view** (`renderer.py` drew none): the player is named on their health bar. `render.show_skeleton` brings the skeletons back for testing.
@@ -1479,7 +1480,8 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 1. Sprites to the renderer: loading and drawing of the fire blast, magic beam and fire ring, the ring and health-bar geometry, and their config keys move from `Game` to the renderer; `Game.draw_debug()` back to simple shapes.
 2. Game view: pixel look, splats as pixel crosses, health bars, no skeletons or boxes, face effects on top.
 3. HUD and end of the game: top bar with controls or "STEP INTO VIEW", the game-over panel, keys `r` and `R`.
-4. Check and record: runs on the clips with `--record-view`, Change Overviews, `docs/phase-1/status.md`, `docs/extra_features.md`.
+4. Fixes from the check: paint on the torso; smoothed health-bar length.
+5. Check and record: runs on the clips with `--record-view`, Change Overviews, `docs/phase-1/status.md`, `docs/extra_features.md`.
 
 **Verification.** Unit tests for each step (drawing on made-up frames, keys). Views recorded with `--record-view` on `data/clips/session.mp4` and the test clips. The Task 5 owner checks the game, including the end of a round, on the webcam.
 
@@ -1525,3 +1527,31 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 | `bar_h`, `bar_font_h` | 0.021, 0.017 of the frame height | 10 px bar, label at scale 0.8, at 480p |
 
 **Added:** `tests/test_renderer.py`: the pixel blocks; paint crosses in the attacker's colour, inside the box and growing with damage; health-bar fill, and no bar for a lost player.
+
+#### Step 3 · HUD and end of the game
+
+**Changed:** `src/ipcvgame/scene/renderer.py`
+- **Top bar** (`_draw_hud()`) from `renderer.py`: a dark bar with "COLOUR CLASH" in P1's colour, and on the right the controls or "STEP INTO VIEW" while nobody is seen; the keys at the bottom. Changed: the controls name our three gestures ("PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"; `renderer.py` had no shield), and sizes scale with the frame. The timings moved below the bar.
+- **End of the game** (`_draw_game_over()`) from `renderer.py`: the dark panel framed in the winner's colour with "PLAYER N WINS!" and the keys. New: the frame behind it is darkened (`game_over_dim`), and bolts, their break-ups, beams and shields are no longer drawn once there is a winner. The game stops then (`game.py`'s rule), so they stood still in mid-air, which looked like a frozen game.
+
+**Changed:** `src/ipcvgame/app/pipeline.py` and `app/main.py`: key `r` calls `Pipeline.new_round()` (`game.reset()`: full health, no paint, same players), as `main.py` did after a win, but at any time. `R` (shift) resets every module, as `r` did before, so the players are identified again. `README.md` lists the keys.
+
+**Changed:** `configs/default.yaml`, `render:` section: `hud_h` (0.07 of the frame height: `renderer.py`'s 34 px at 480p), `hud_title_scale` and `hud_text_scale` (1.4 and 1.0 at 480p, as in `renderer.py`), `game_over_dim` (0.5).
+
+**Added:** `tests/test_renderer.py`: the top bar is drawn; after a win the panel is in the winner's colour and the bolt is not drawn; `new_round()` keeps the players and `reset()` clears them.
+
+#### Step 4 · Fixes from the check: paint on the torso, steady health bar
+
+Two problems the Task 5 owner saw in the game view after step 3.
+
+**The paint moved off the body.** The game keeps splats as fractions of the body box (`game.py`), and the box widens when an arm goes out, so the splats slid with it onto the arm or the background.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: `paint_area()` gives the torso (between the shoulders, from the shoulder line to the hips, from `Game.torso()`), or the box's splat band without a shoulder width. `_draw_player_paint()` stretches the game's splat band (`game.splat_band`, 0.38–0.62 of the box) over that area, and sizes the cells by it. On `data/clips/session.mp4` the paint area's centre moves half as much from frame to frame as the box band did (95th percentile 8 against 16 px for P1, 3.8 against 11.9 px for P2); what is left is the body moving.
+
+**The health bar changed length.** Its length comes from the face width, which jitters by a few px, and falls back to 1.3 shoulder widths on frames without a face.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the length goes through the shared `EMA` filter per player (`bar_length_tau_s`, 1 s), reset when the player re-enters and on `R`. On the session clip the frame-to-frame change went from 10.5 to 3.4 px (95th percentile) for P1, and from 3.8 to 1.3 px for P2.
+
+**Changed:** `src/ipcvgame/interaction/game.py`: `Game.splat_band` (read-only, for drawing). `configs/default.yaml`: `splat_cell_w` / `splat_cell_h` are fractions of the torso now ([0.04, 0.05] and [0.04, 0.06]: `renderer.py`'s sizes, as the box is ~2 shoulder widths wide and ~2.5 torso heights tall); `bar_length_tau_s: 1.0` (new).
+
+**Added:** `tests/test_renderer.py`: the paint area stays the same when the box widens, with the box band as fallback; the bar length is smoothed when the face is missed.

@@ -124,6 +124,7 @@ class Game:
         self.beam_life_s = self.beam_charge_s + float(cfg["beam_duration_s"])
         self.shield_fade_s = float(cfg["shield_fade_s"])
         self.bolt_end_s = float(cfg["bolt_end_s"])
+        self.splat_band = (float(cfg["splat_band"][0]), float(cfg["splat_band"][1]))
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:

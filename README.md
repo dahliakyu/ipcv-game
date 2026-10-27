@@ -69,7 +69,8 @@ python tools/run_module.py --until identity --source data/clips/crossing.mp4
 python -m ipcvgame.app.main --set pose.det_conf=0.5           # config override
 ```
 
-Keys: `q`/`Esc` quit, `p` pause, `r` reset module state.
+Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players), `R` (shift)
+reset all module state (players are identified again).
 `--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
 module and shows only its `draw_debug` overlay. `--headless --max-frames N`
 runs without a window.

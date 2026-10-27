@@ -112,6 +112,12 @@ class Pipeline:
                 row.update(fn(state))
         return row
 
+    def new_round(self) -> None:
+        """A new round with the same players (main.py's key r: game.reset())."""
+        self.game.reset()
+
     def reset(self) -> None:
+        """Clear every module's state; identity finds the players again."""
         for m in (self.pose, self.identity, self.motion, self.face, self.gestures, self.game):
             m.reset()
+        self.renderer.reset()

@@ -11,7 +11,8 @@
 Every run writes a per-frame CSV to logs/ (recorder.log in the config; --no-log
 to skip). For recording test clips without the pipeline, use tools/record_clip.py.
 
-Keys: q / Esc quit, p pause, r reset all module state.
+Keys: q / Esc quit, p pause, r new round (same players), R (shift) reset all
+module state (players are identified again).
 """
 
 from __future__ import annotations
@@ -115,6 +116,8 @@ def main(argv: list[str] | None = None) -> None:
                 if key == ord("p"):
                     paused = not paused
                 if key == ord("r"):
+                    pipeline.new_round()
+                if key == ord("R"):
                     pipeline.reset()
             if args.max_frames is not None and n >= args.max_frames:
                 break
