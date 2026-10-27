@@ -1505,3 +1505,23 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 - `tests/test_game.py`: the health-bar, ring and sprite tests moved out; one test for `torso()` and the drawing values.
 - `tests/test_renderer.py` (new): every object drawn, plain shapes without sprites, the health-bar and ring geometry tests from `test_game.py`.
 - `tests/test_fire_bolt.py`, `test_fire_ring.py`, `test_magic_beam.py`: the per-team sprite tests use the renderer.
+
+#### Step 2 · Game view
+
+**Changed:** `src/ipcvgame/scene/renderer.py`, `Renderer.draw()`, in `renderer.py`'s order: camera image, paint, game objects, then (new) face effects, then health bars and timings.
+- **Pixel look:** `pixelate()`, `renderer.py`'s shrink and nearest-pixel upscale, by `pixel_size` (2). Sprites, face effects and text are drawn sharp on top.
+- **Paint:** `_draw_player_paint()` from `renderer.py`: a cross of 5 cells per splat, inside the body box. The cells grow with coverage (1 − health / max health), so a beaten player looks more painted. Changed: the colour comes from the attacker's pid (`player_color(splat.owner_id)`), not a colour stored in the splat; the sizes are in the config. They replace the debug circles that piled up into blobs.
+- **Health bar:** `_draw_player_health()` from `renderer.py` (dark backing, "PLAYER N", off-white outline, fill in the team colour), but below the body at `bar_geometry()`'s place (Task 4 modifications) instead of above the head. Bar and label heights scale with the frame instead of `renderer.py`'s fixed 10 px.
+- **Only visible players** get paint and a health bar (`renderer.py` drew only detected players).
+- **No skeletons or boxes** unless `show_skeleton` is on.
+
+**Changed:** `configs/default.yaml`, `render:` section
+
+| Key | Value | In `renderer.py` |
+| --- | --- | --- |
+| `pixel_size` | 2 | Half size, `INTER_NEAREST` back up |
+| `show_skeleton` | `false` | (none drawn) |
+| `splat_cell_w`, `splat_cell_h` | [0.02, 0.025], [0.015, 0.025] | `0.02 + 0.025 * coverage`, `0.015 + 0.025 * coverage` |
+| `bar_h`, `bar_font_h` | 0.021, 0.017 of the frame height | 10 px bar, label at scale 0.8, at 480p |
+
+**Added:** `tests/test_renderer.py`: the pixel blocks; paint crosses in the attacker's colour, inside the box and growing with damage; health-bar fill, and no bar for a lost player.

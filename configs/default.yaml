@@ -454,6 +454,24 @@ render:
   # nothing changes there.
   debug_face_effects: true
   # --- Game look (moved from game: in the renderer merge; merge_log, Task 5).
+  # Retro look from renderer.py: the camera image is shrunk by this factor
+  # and scaled back up with the nearest pixel (2 = renderer.py's half size,
+  # 2 x 2 px blocks; ~1 ms at 720p). Sprites and text are drawn sharp on top.
+  # 1 = off.
+  pixel_size: 2
+  # Player boxes and skeletons in the game view, for testing; renderer.py
+  # drew none (the player is named on their health bar).
+  show_skeleton: false
+  # Paint splats (renderer.py): each is a cross of 5 cells. A cell is
+  # [base, growth] of the body box: base + growth x coverage, where coverage =
+  # 1 - health / max_health, so splats grow as the player loses. Values from
+  # renderer.py (width 0.02 + 0.025 c, height 0.015 + 0.025 c).
+  splat_cell_w: [0.02, 0.025]
+  splat_cell_h: [0.015, 0.025]
+  # Health bar height and its "PLAYER N" label height, as fractions of the
+  # frame height: renderer.py's 10 px bar and 0.8-scale label at 480p.
+  bar_h: 0.021
+  bar_font_h: 0.017
   # Health bar below the body (Task 4 modifications): its length depends on
   # the player's distance to the camera but not on their arms. 2.5 face
   # widths (Face.scale) is a little wider than the shoulders. Without a face,

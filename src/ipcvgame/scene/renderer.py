@@ -1,9 +1,11 @@
-"""Task 5 — game renderer.
+"""Task 5 — game renderer, from Colour Clash renderer.py.
 
-The game view: the camera frame, the game's objects drawn with their sprites
-(fire blast bolts, magic ball and beam, ring of fire shields), face effects and
-a timing HUD. The game logic (interaction/game.py) only keeps state; this
-module decides how it looks (renderer merge, docs/merge_log.md, Task 5).
+The game view, in drawing order: the camera frame (pixelated, as in
+renderer.py), each player's paint splats (renderer.py's pixel crosses), the
+game's objects drawn with their sprites (fire blast bolts, magic ball and
+beam, ring of fire shields), face effects, health bars and a timing HUD. The
+game logic (interaction/game.py) only keeps state; this module decides how it
+looks (renderer merge, docs/merge_log.md, Task 5).
 
 Sprites are in each team's colour: the frames' own colours belong to one
 player (*_effect_owner), and every other player gets a copy with every hue
@@ -27,28 +29,86 @@ from ipcvgame.scene.fire_bolt import FireBolt
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.magic_beam import MagicBeam
 
+WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
+
 
 class Renderer:
     def __init__(self, cfg: dict, face_effects: FaceEffects):
         self.cfg = cfg
         self.face_effects = face_effects
         self.show_timings = bool(cfg.get("show_timings", True))
+        self.show_skeleton = bool(cfg.get("show_skeleton", False))
         self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
-        canvas = state.frame.image.copy()
-        for pid, p in state.players.items():
-            if p.status == "active":
-                draw_bbox(canvas, p.bbox, player_color(pid), f"P{pid}")
-        for pid, m in state.motion.items():
-            draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
+        canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
+        if self.show_skeleton:
+            for pid, p in state.players.items():
+                if p.status == "active":
+                    draw_bbox(canvas, p.bbox, player_color(pid), f"P{pid}")
+            for pid, m in state.motion.items():
+                draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
+        # Paint and health only for players the identity stage sees now
+        # (renderer.py drew only detected players).
+        visible = [pid for pid, p in sorted(state.players.items())
+                   if p.status == "active" and pid in game.players and game.players[pid].bounds is not None]
+        for pid in visible:
+            player = game.players[pid]
+            self._draw_player_paint(canvas, player.bounds, player.paint_splats,
+                                    1.0 - player.health / game.max_health)
         self.draw_game(canvas, state, game)
         self.face_effects.draw(canvas, state.faces)
+        for pid in visible:
+            self._draw_player_health(canvas, pid, state, game)
         if self.show_timings:
             draw_timings(canvas, state.timings)
         return canvas
+
+    # ------------------------------------------------------ paint and health
+
+    def _draw_player_paint(self, canvas: np.ndarray, bounds: np.ndarray, splats: list,
+                           coverage: float) -> None:
+        """renderer.py: each splat is a pixel cross (5 cells) inside the body
+        box, in the attacker's colour. The cells grow as the player's health
+        drops (coverage = 1 - health / max_health), so a beaten player looks
+        more painted."""
+        h, w = canvas.shape[:2]
+        left, top, right, bottom = (int(v) for v in bounds)
+        box_w, box_h = max(1, right - left), max(1, bottom - top)
+        (cw0, cw1), (ch0, ch1) = self.cfg["splat_cell_w"], self.cfg["splat_cell_h"]
+        cell_w = max(2, int(box_w * (cw0 + cw1 * coverage)))
+        cell_h = max(2, int(box_h * (ch0 + ch1 * coverage)))
+        for splat in splats:
+            cx, cy = left + int(splat.x * box_w), top + int(splat.y * box_h)
+            for ox, oy in ((-1, 0), (0, -1), (0, 0), (0, 1), (1, 0)):
+                x, y = cx + ox * cell_w, cy + oy * cell_h
+                x0, y0 = max(left, 0, x), max(top, 0, y)
+                x1, y1 = min(right, w, x + cell_w - 1), min(bottom, h, y + cell_h - 1)
+                if x0 < x1 and y0 < y1:
+                    cv2.rectangle(canvas, (x0, y0), (x1, y1), player_color(splat.owner_id), -1, cv2.LINE_8)
+
+    def _draw_player_health(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game) -> None:
+        """renderer.py's health bar (dark backing, "PLAYER N", white outline,
+        fill in the team colour), at the place from bar_geometry(): below the
+        body, kept inside the frame (Task 4 modifications)."""
+        h, w = canvas.shape[:2]
+        (cx, cy), length = self.bar_geometry(pid, state, game)
+        bar_h = max(4, int(self.cfg["bar_h"] * h))
+        font = self.cfg["bar_font_h"] * h / 10.0          # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        label_h = int(12 * font)
+        left = int(min(max(cx - length / 2, 4), w - length - 4))
+        right = left + int(length)
+        top = int(min(cy + bar_h, h - bar_h - 4))
+        color = player_color(pid)
+        cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), (27, 16, 17), -1)
+        cv2.putText(canvas, f"PLAYER {pid}", (left, top - 3), cv2.FONT_HERSHEY_PLAIN, font, color, 1,
+                    cv2.LINE_8)
+        cv2.rectangle(canvas, (left, top), (right, top + bar_h), WHITE, 1, cv2.LINE_8)
+        fill = int((right - left - 2) * max(0, game.players[pid].health) / game.max_health)
+        if fill > 0:
+            cv2.rectangle(canvas, (left + 1, top + 1), (left + fill, top + bar_h - 1), color, -1, cv2.LINE_8)
 
     # ----------------------------------------------------------- game objects
 
@@ -166,6 +226,16 @@ class Renderer:
         return self._team_copy(self._rings, cfg["shield_effect_owner"], owner_id, lambda shift: FireRing(
             cfg["shield_sprite"], cfg["shield_form_frames"], cfg["shield_loop_frames"],
             cfg["shield_form_s"], cfg["shield_sprite_fps"], shift))
+
+
+def pixelate(image: np.ndarray, size: int) -> np.ndarray:
+    """renderer.py's retro look: shrink by `size` and scale back up with the
+    nearest pixel, so every size x size block has one colour. 1 = a copy."""
+    if size <= 1:
+        return image.copy()
+    h, w = image.shape[:2]
+    small = cv2.resize(image, (max(1, w // size), max(1, h // size)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
 
 
 def draw_timings(canvas: np.ndarray, timings: dict[str, float]) -> None:
