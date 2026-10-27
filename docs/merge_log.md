@@ -1210,6 +1210,8 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
   - motion compensation off (`gmc_method: none`): the webcam does not move. Measured: same track ids, 4.4 → 0.4 ms per frame;
   - a new track needs score 0.5 (`new_track_thresh`), like `main.py`'s detector, while detections from 0.35 (`pose.det_conf`) still continue an existing track. `main.py` dropped every box under 0.5 before BoT-SORT.
 - **Stored vectors are updated (new).** While a player is active and their box overlaps no other detection, their vector is blended with a fresh OSNet vector at intervals, if the two are still similar enough to be the same person. One player per frame, in turn, so OSNet adds at most one crop (~10 ms on the GPU) to a frame.
+- **Linked tracks are checked (new, after the clip test in step 5).** The same OSNet run also checks the link: if the crop looks more like the other player, the links are corrected. `bodypose.py` never checked a linked track, so when BoT-SORT carried a track onto the other player, the wrong player stayed linked.
+- **Faces only (new, after a webcam test in step 5).** A track is identified only when the pose model sees a face (nose or eyes), so a coat the pose model takes for a person never becomes a player.
 - **OSNet weights from Hugging Face.** `osnet_x1_0_msmt17_combineall` from the authors' repo ([kaiyangzhou/osnet](https://huggingface.co/kaiyangzhou/osnet)), saved as `models/osnet_x1_0_msmt17_combineall.pth`. It is the same network trained on the same data (all 4,101 MSMT17 identities) as `Project/models/osnet_x1_0_msmt17.pth`, but it has a public download with a checksum. The old file matches no file in that repo, probably because it came from torchreid's Google Drive zoo, which needs `gdown`. Compared on the two test clips (stored vector from the first frame, as in `bodypose.py`; similarity to the same player vs to the other player):
 
   | Weights | Fitness clip: same / other | Jump clip: same / other | ms per crop |
@@ -1253,9 +1255,10 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 2. Config and identity logic: the `identity:` section, `IdentityTracker` with confirmation, re-identification, max players, occluded/lost, `reentered` and the vector update. Tests with a fake OSNet and fake tracks.
 3. BoT-SORT on the pose boxes: `BOTSORT` fed with `PoseDetection`s, predicted boxes for occluded players. Tests with synthetic moving boxes.
 4. Debug view, `log_fields` and warm-up: boxes with status and track id, "Identifying..." for pending tracks; CSV columns; one OSNet call at start-up (the first takes 84 ms).
-5. Check and record: run on the clips, Change Overviews, `docs/phase-1/status.md`.
+5. Fixes from the clip and webcam tests: link check and correction; faces only.
+6. Check and record: Change Overviews, open issues, `docs/phase-1/status.md`.
 
-**Verification.** Unit tests for every step and runs on `data/test_clips/`. The two clips have no crossing, occlusion or re-entry, so ID switches can only be counted once such clips are recorded. The Task 5 owner checks re-entry live on the webcam.
+**Verification.** Unit tests for every step and runs on `data/test_clips/` and the recorded `data/clips/session.mp4`. None of the clips has crossing, occlusion or re-entry, so step 5 uses edited copies of `session.mp4` (one player blacked out for 3.5 s; the two halves of the frame swapped for 3.5 s). ID switches on real crossings can only be counted once such clips are recorded. The Task 5 owner checks re-entry live on the webcam.
 
 ### Changes
 
@@ -1355,3 +1358,30 @@ Compared with `bodypose.py`:
 - **Warm-up (new):** one OSNet run on a blank crop at start-up, when the weights are loaded. On `data/clips/session.mp4` the first frame's identity stage went from 115 ms to 22 ms (two players identified in it).
 
 **Added:** `tests/test_identity.py`: the CSV columns for a linked player, a pending track and a lost player, and the debug view draws.
+
+#### Step 5 · Fixes from the clip and webcam tests
+
+Two problems that `bodypose.py` has too, found by testing the merged tracker.
+
+**Swapped players stayed swapped.** On a copy of `data/clips/session.mp4` with the two halves of the frame swapped for 60 frames, BoT-SORT carried P1's track onto the other player (their box landed where P1 had been). A linked track never runs OSNet again, in `bodypose.py` as in step 2, so P1 stayed on the wrong person for all 60 frames. The vector update's OSNet run had already seen it (similarity 0.45 to P1, under `update_min_sim`, so nothing was blended in).
+
+**Changed:** `src/ipcvgame/identity/tracker.py`: `_update_embedding()` became `_check_and_update()`, and runs before the `Player`s are built:
+- If the crop looks more like another stored player (at least `reid_threshold`, and more than like its own player):
+  - that player is active too: their crop is checked as well, and the two links are swapped only if it looks more like this player. One doubtful crop cannot move two players.
+  - that player is not active (occluded or lost): the link moves to them, and this player loses their link (lost). Tracks waiting for a free player try again right away instead of after `retry_s`.
+- Players whose link changed get `reentered` on that frame, so the face, motion and gesture stages drop their state: the position jumped.
+- Otherwise, the vector update as before.
+
+On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames around the two jumps (was 60): one frame at the first jump, five at the second, until P2's next check.
+
+**A coat became a player.** On the webcam, the pose model took a coat for a person. With one player in view, it took the free second slot after 0.13 s, and kept it. On `session.mp4`, such extra detections (a coat, a chair) score up to 0.56 with confident shoulders (median 0.92), but the best face keypoint (nose or eyes) has a median confidence of 0.15; the real players have 1.00 (5th percentile 0.97).
+
+**Changed:** `src/ipcvgame/identity/tracker.py`: a track without a player is identified (OSNet, a new player) only when its best face keypoint reaches `min_face_conf`. OSNet does not run on the coat at all. A player who comes back facing away is found once they face the camera.
+
+**Changed:** `configs/default.yaml`, `identity:` section: `min_face_conf: 0.5` (new); the `update_every_s` comment names the check.
+
+**Added:** `tests/test_identity.py`, 4 tests:
+- a detection without a face is never identified, and OSNet does not run;
+- a track carried onto an occluded player: the link moves, and the first player is found again on a new track;
+- both tracks carried onto the other player: the links are swapped and both are `reentered`;
+- one doubtful crop: no swap.

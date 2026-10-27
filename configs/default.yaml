@@ -78,9 +78,16 @@ identity:                 # Task 3 — Colour Clash identity (bodypose.py Player
   # bystander, or a player OSNet does not recognise yet) tries again after
   # this long. bodypose.py tried every frame: ~10 ms of OSNet each time.
   retry_s: 0.5
-  # Stored vector update (new; merge_log, Task 3 plan). One active player per
-  # frame, in turn, at most this often. Every 0.5 s keeps OSNet at about one
-  # crop per 15 frames per player.
+  # A track is identified (OSNet, new player) only when its best face
+  # keypoint (nose or eyes) has at least this confidence. On the session
+  # clip, real players had 1.00 (5th percentile 0.97) and the extra
+  # detections (a coat, a chair) a median of 0.15, while their shoulders were
+  # as confident as a player's. Players face the camera in the game.
+  min_face_conf: 0.5
+  # Check of linked tracks and stored vector update (new; merge_log, Task 3).
+  # One active player per frame, in turn, at most this often: a track the
+  # tracker carried onto the other player is found within about this long.
+  # Every 0.5 s keeps OSNet at about one crop per 15 frames per player.
   update_every_s: 0.5
   # The stored vector moves this fraction of the way towards the fresh one:
   # with an update every 0.5 s it follows a change (lighting, a jacket off)

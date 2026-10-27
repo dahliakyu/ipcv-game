@@ -99,7 +99,7 @@ def scene(t, people) -> Frame:
     return Frame(img, int(t * 100), t)
 
 
-CFG = {"backend": "reid", "max_players": 2, "reid_threshold": 0.6, "new_player_s": 0.13,
+CFG = {"backend": "reid", "max_players": 2, "reid_threshold": 0.6, "new_player_s": 0.13, "min_face_conf": 0.5,
        "min_crop_h": 40, "min_crop_w": 20, "retry_s": 0.5, "update_every_s": 0.5,
        "update_weight": 0.1, "update_min_sim": 0.5, "update_max_iou": 0.0}
 
@@ -344,3 +344,53 @@ def test_log_fields_and_debug_view():
     row = ident.log_fields(FrameState(scene(0.8, []), players, {}, {}, [], {}))
     assert row["identity_p1_track"] == ""
     assert row["identity_new_best_sim"] == pytest.approx(0.0, abs=1e-6)   # red vs P1's blue
+
+
+def test_no_face_never_identified():
+    """A coat: the pose model finds a 'person' without a face."""
+    ident, tr = make()
+    coat = det(20)
+    coat.conf[[sk.NOSE, sk.L_EYE, sk.R_EYE]] = 0.1
+    for t in (0.0, 0.15, 0.3, 1.0):
+        assert step(ident, tr, t, [(coat, BLUE)], [1]) == {}
+    assert ident.embedding_extractor.calls == 0
+
+
+def test_check_moves_link_to_occluded_player():
+    """The tracker carried P1's track onto P2 (P2's own track is held as
+    lost): the link moves to P2, P1 is lost, and P1's own person is found
+    again on a new track."""
+    ident, tr = make()
+    a, b = det(20), det(250)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE), (b, GREEN)], [1, 2])
+    players = step(ident, tr, 0.7, [(det(250), GREEN), (det(20), BLUE)], [1, 3], lost={2: b.bbox})
+    assert players[2].status == "active" and players[2].reentered and players[2].det.bbox[0] == 250
+    assert players[1].status in ("active", "lost")
+    assert ident.track_to_player[1] == 2
+    players = step(ident, tr, 0.75, [(det(250), GREEN), (det(20), BLUE)], [1, 3], lost={2: b.bbox})
+    assert players[1].status == "active" and players[1].det.bbox[0] == 20
+    assert ident.track_to_player == {1: 2, 3: 1}
+
+
+def test_check_swaps_two_active_players():
+    """Both tracks carried onto the other player (e.g. at a crossing): swap."""
+    ident, tr = make()
+    a, b = det(20), det(250)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE), (b, GREEN)], [1, 2])
+    players = step(ident, tr, 0.7, [(det(20), GREEN), (det(250), BLUE)], [1, 2])
+    assert players[1].det.bbox[0] == 250 and players[2].det.bbox[0] == 20
+    assert players[1].reentered and players[2].reentered
+    assert ident.track_to_player == {1: 2, 2: 1}
+
+
+def test_check_does_not_swap_on_one_doubtful_crop():
+    """P1's crop looks like P2, but P2's crop still looks like P2: no swap."""
+    ident, tr = make()
+    a, b = det(20), det(250)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE), (b, GREEN)], [1, 2])
+    players = step(ident, tr, 0.7, [(det(20), GREEN), (det(250), GREEN)], [1, 2])
+    assert ident.track_to_player == {1: 1, 2: 2}
+    assert not players[1].reentered and not players[2].reentered

@@ -20,10 +20,15 @@ Changed from bodypose.py (merge_log, Task 3):
   track is the player "lost"; when OSNet links a new track to them,
   `reentered` is True for that frame. bodypose.py dropped the link on every
   frame without the track.
-- Stored vectors are updated: one active player per frame, in turn, at most
-  every update_every_s, when their box overlaps no other detection and the
-  fresh vector is still similar (update_min_sim). The stored vector moves
-  update_weight of the way towards it.
+- Linked tracks are checked: one active player per frame, in turn, at most
+  every update_every_s, when their box overlaps no other detection, OSNet
+  runs on their crop. If it looks more like the other player, the links are
+  swapped (the tracker carried a track onto the wrong person). Otherwise, if
+  still similar (update_min_sim), the stored vector moves update_weight of
+  the way towards it.
+- Only tracks with a visible face (nose or eyes, min_face_conf) are
+  identified, so a coat the pose model takes for a person never becomes a
+  player.
 - Linked tracks are handled before new ones, so a new track cannot take a
   player whose own track is visible this frame.
 - A track that found no player while every player slot is taken retries only
@@ -41,9 +46,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ipcvgame.core import skeleton as sk
 from ipcvgame.core.geometry import bbox_center, bbox_iou, crop
 from ipcvgame.core.types import Frame, FrameState, Player, PoseDetection
 from ipcvgame.scene.draw import draw_bbox, draw_text, player_color
+
+# A track is identified only when one of these is visible (min_face_conf).
+FACE_KPTS = [sk.NOSE, sk.L_EYE, sk.R_EYE]
 
 
 @dataclass
@@ -124,6 +133,8 @@ class IdentityTracker:
             if pid is not None:
                 seen[pid] = dets[i]
 
+        relinked = self._check_and_update(frame, seen)
+
         occluded = {pid: tracks.lost[tid] for tid, pid in self.track_to_player.items()
                     if tid in tracks.lost and pid not in seen}
         for pid in sorted(set(self.players) | set(seen)):
@@ -133,15 +144,13 @@ class IdentityTracker:
                 self.players[pid] = Player(
                     pid=pid, status="active", det=det, bbox=det.bbox.copy(),
                     pos=np.zeros(2),  # (x, depth) in metres not estimated yet
-                    reentered=prev is not None and prev.status == "lost",
+                    reentered=prev is not None and (prev.status == "lost" or pid in relinked),
                 )
             else:
                 status = "occluded" if pid in occluded else "lost"
                 bbox = occluded[pid].copy() if pid in occluded else prev.bbox.copy()
                 self.players[pid] = Player(pid=pid, status=status, det=None, bbox=bbox,
                                            pos=prev.pos.copy(), reentered=False)
-
-        self._update_embedding(frame)
         return dict(self.players)
 
     def forget_missing_tracks(self, tracks: Tracks) -> None:
@@ -192,6 +201,8 @@ class IdentityTracker:
         slots_full = self._free_id() is None
         if pending is not None and slots_full and t - pending.last_try_t < self.cfg["retry_s"]:
             return None
+        if det.conf[FACE_KPTS].max() < self.cfg["min_face_conf"]:
+            return None     # no face: a coat or chair the pose model took for a person
         person = self._crop(frame, det)
         if person is None:
             return None
@@ -219,21 +230,28 @@ class IdentityTracker:
         self.last_update_t[player_id] = t
         return player_id
 
-    def _update_embedding(self, frame: Frame) -> None:
-        """Blend one active player's stored vector with a fresh one (new).
-        Players take turns, so OSNet adds at most one crop per frame."""
-        active = sorted(pid for pid, p in self.players.items() if p.status == "active")
-        if not active:
-            return
+    def _check_and_update(self, frame: Frame, seen: dict[int, PoseDetection]) -> set[int]:
+        """One active player per frame, in turn (new): OSNet on their crop.
+
+        - Wrong person: the crop looks more like another stored player (at
+          least reid_threshold, and more than like its own), e.g. after the
+          tracker carried a track onto the other player. If that player is
+          active too and their crop looks more like this one, the two links
+          are swapped; if that player is not active, the link moves to them
+          and this player loses it. bodypose.py never checked a linked track.
+        - Same person, similar enough (update_min_sim): the stored vector
+          moves update_weight of the way towards the fresh one.
+
+        Returns the players whose link changed; their per-player state must
+        be reset like on a re-entry (their position jumped).
+        """
+        active = sorted(seen)
         for k in range(len(active)):
             pid = active[(self._update_turn + k) % len(active)]
             if frame.t - self.last_update_t.get(pid, -np.inf) < self.cfg["update_every_s"]:
                 continue
-            det = self.players[pid].det
-            others = [d for d in self._dets if d is not det]
-            if any(bbox_iou(det.bbox, d.bbox) > self.cfg["update_max_iou"] for d in others):
-                continue        # another person in the crop would blend into the vector
-            person = self._crop(frame, det)
+            det = seen[pid]
+            person = self._clear_crop(frame, det)
             if person is None:
                 continue
             self._update_turn = (self._update_turn + k + 1) % len(active)
@@ -241,12 +259,53 @@ class IdentityTracker:
             fresh = self._embed(person)
             sim = float(fresh @ self.embeddings[pid])
             self._sim[pid] = sim
-            if sim < self.cfg["update_min_sim"]:
-                return          # too different: maybe not this player after all
-            w = self.cfg["update_weight"]
-            v = (1 - w) * self.embeddings[pid] + w * fresh
-            self.embeddings[pid] = v / np.linalg.norm(v)
-            return
+            other, other_sim = self._most_similar_other(fresh, pid)
+            if other is not None and other_sim >= self.cfg["reid_threshold"] and other_sim > sim:
+                return self._relink(frame, seen, pid, other)
+            if sim >= self.cfg["update_min_sim"]:
+                w = self.cfg["update_weight"]
+                v = (1 - w) * self.embeddings[pid] + w * fresh
+                self.embeddings[pid] = v / np.linalg.norm(v)
+            return set()
+        return set()
+
+    def _clear_crop(self, frame: Frame, det: PoseDetection) -> np.ndarray | None:
+        """The crop, unless another detection overlaps it (IoU above
+        update_max_iou): the other person would be in it."""
+        others = [d for d in self._dets if d is not det]
+        if any(bbox_iou(det.bbox, d.bbox) > self.cfg["update_max_iou"] for d in others):
+            return None
+        return self._crop(frame, det)
+
+    def _most_similar_other(self, embedding: np.ndarray, pid: int) -> tuple[int | None, float]:
+        sims = {q: float(embedding @ v) for q, v in self.embeddings.items() if q != pid}
+        if not sims:
+            return None, -1.0
+        q = max(sims, key=sims.get)
+        return q, sims[q]
+
+    def _relink(self, frame: Frame, seen: dict[int, PoseDetection], pid: int, other: int) -> set[int]:
+        """The track linked to pid shows `other`: move or swap the links."""
+        track_of = self._track_of()
+        tid = track_of[pid]
+        if other in seen:
+            # Swap only if the other track also shows pid, so one doubtful crop
+            # cannot move two players.
+            person = self._clear_crop(frame, seen[other])
+            if person is None:
+                return set()
+            fresh = self._embed(person)
+            if float(fresh @ self.embeddings[pid]) <= float(fresh @ self.embeddings[other]):
+                return set()
+            self.track_to_player[tid], self.track_to_player[track_of[other]] = other, pid
+            seen[pid], seen[other] = seen[other], seen[pid]
+            return {pid, other}
+        self.track_to_player = {t: p for t, p in self.track_to_player.items() if p != other}
+        self.track_to_player[tid] = other
+        seen[other] = seen.pop(pid)
+        for pending in self.pending_tracks.values():
+            pending.last_try_t = -np.inf     # pid is free to be found again right away
+        return {other}
 
     # ----------------------------------------------------------------- zones
 
