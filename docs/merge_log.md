@@ -1252,3 +1252,23 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 **Verification.** Unit tests for every step and runs on `data/test_clips/`. The two clips have no crossing, occlusion or re-entry, so ID switches can only be counted once such clips are recorded. The Task 5 owner checks re-entry live on the webcam.
 
 ### Changes
+
+#### Step 1 · OSNet into `identity/`
+
+**Added:** `src/ipcvgame/identity/osnet.py`: `Project/osnet.py` moved unchanged (the network and `load_weights()`); only the header names the new place and weights file. Its upstream code style is kept, so ruff's `UP` and `B` rules are off for this one file (`pyproject.toml`).
+
+**Added:** `src/ipcvgame/identity/embedding.py`: `OSNetEmbeddingExtractor` from `Project/osnet_embedding.py`, same preprocessing (BGR → RGB, 256 × 128, ImageNet mean and std) and the same length-1 vector.
+- The weights path and device come from the config (`"auto"` = CUDA if available), and a relative path is taken from the repo root.
+- A missing weights file raises an error that points to the README.
+- Nothing is printed on load.
+- Checked against `osnet_embedding.py` on a crop from `data/clips/session.mp4` with the same weights: identical vectors (max difference 0.0).
+
+**Changed:** `configs/default.yaml`, `identity:` section: `reid_weights` (`models/osnet_x1_0_msmt17_combineall.pth`) and `reid_device` (`auto`).
+
+**Changed:** `requirements.txt`: the identity comment names `identity/osnet.py` and the Hugging Face weights.
+
+**Added:** `tests/test_identity.py`, replacing `Project/test_osnet.py` (4 tests, no webcam):
+- the network gives 512 numbers;
+- `load_weights()` raises when no layer matches;
+- with the real weights: vectors have length 1 and a crop matches itself better than another crop (skipped when the weights are not downloaded);
+- a missing weights file raises.
