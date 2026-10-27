@@ -163,3 +163,4 @@ Sprites from third parties:
 | --- | --- | --- |
 | `assets/magic_effect/` (power-attack ball and beam) | "Magic Attack" by NYKNCK, itch.io, https://nyknck.itch.io/magic-attack (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
 | `assets/beam/` (normal-attack fire blast) | "Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, https://nyknck.itch.io/fx061 (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
+| `assets/shield/FX019/` (shield ring of fire), `assets/shield/FX017/` (unused) | Pixel effect packs FX019 and FX017 by NYKNCK, itch.io, https://nyknck.itch.io (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |

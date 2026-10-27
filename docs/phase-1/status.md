@@ -2,7 +2,7 @@ Sep 28, 2026 · @el created with help of Claude Opus 5.5
 
 # Phase 1 status: what exists, what each of us does next
 
-The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module started as a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone. The Colour Clash merge is now replacing the stubs with the teammates' code (see the table and [merge_log.md](../merge_log.md)).
+The phase-1 skeleton from the [setup guide](setup-guide.md) now runs end to end on the webcam and on recorded clips. Task 5 code (`core/`, `io/`, `scene/`, `app/`, `tools/`) is complete for phase 1. Every other module started as a **stub** that follows the contracts, so each owner can replace their stub without waiting for anyone. The Colour Clash merge has replaced the stubs of Tasks 1, 3 and 4 and the smoothing of Task 2 with the teammates' code (see the table and [merge_log.md](../merge_log.md)).
 
 This document covers what the pipeline looks like right now, what your stub does and what you need to deliver, and the open items the team still has to fill in.
 
@@ -20,7 +20,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `identity/tracker.py` | Task 3 | Done (merged 2026-10-27) | BoT-SORT on the pose boxes + OSNet re-identification; occluded/lost/re-entry |
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
 | `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
-| `interaction/game.py` | Task 4 | Stub | Prints events; Colour Clash game logic is the next merge |
+| `interaction/game.py` | Task 4 | Done (merged 2026-10-26) | Colour Clash game logic from `game.py`: bolts, beams, blocking shields, paint, winner; drawn by `scene/renderer.py` |
 
 Tests: 209 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
@@ -205,14 +205,27 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 - **`arms_crossed`:** wrists swapped left/right in front of the chest.
 - **`punch`:** one arm straight, reaching at least 1 shoulder width to the side, with the wrist at least level with its shoulder (0.2 shoulder widths of slack); the other arm bent. Since the merge, reach is measured sideways and low arms are excluded, so neither a hanging arm nor an arm held low is a punch.
 
-Hands up and crossed must hold for 0.03 s to turn on, and stay on until their rule has failed for 0.3 s (so a short keypoint dropout doesn't fire twice); a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. After any event the player must return to a normal position (no gesture on) before the next gesture can fire, so two actions never fire together. `Game.update` still prints events to the console.
+Hands up and crossed must hold for 0.03 s to turn on, and stay on until their rule has failed for 0.3 s (so a short keypoint dropout doesn't fire twice); a punch stays on for 0.5 s after its last detected frame. One `GestureEvent` is sent when a gesture turns on, so one punch gives one event. After any event the player must return to a normal position (no gesture on) before the next gesture can fire, so two actions never fire together.
 
 - [x] Rule-based gestures on `Motion`, using only `valid` keypoints; thresholds in `gestures:`.
 - [x] Hold times per player; one event per gesture. Cooldowns belong to the game (`game.py`'s bolt had 1.8 s; now 0).
 - [x] `log_fields`: `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch`, `_events`.
 - [ ] `tools/eval_gestures.py`: needs clips with real, labelled gestures (the two test clips have none).
-- [ ] `game.py`: the Colour Clash game logic (next merge).
 - [ ] Later: a trained punch classifier, see `docs/extra_features.md`, feature 8.
+
+**Game (merged 2026-10-26 from `game.py` and `main.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic), design changes in "Task 4: Modifications"):** `Game.update(state)` turns each gesture event into an action:
+
+- **`punch` → bolt:** a fire blast from the punching hand, sideways towards the middle of the frame (as in `main.py`), 10 damage, 1 frame width per second;
+- **`hands_up` → beam:** a magic ball between the hands charges for 0.35 s, then a beam grows across the frame for 0.8 s, 12 damage, each player hit once; one beam per player at a time;
+- **`arms_crossed` → shield:** a ring of fire on the chest for 1 s that blocks bolts and beams, then fades.
+
+A hit lowers health (100) and adds paint splats; at 0 the attacker wins and the round stops until `r` (a new round with the same players). Only `active` players can be hit; time comes from `Frame.t`. Positions are pixels; speeds and sizes are fractions of the frame in `game:`. The game keeps only state; `scene/renderer.py` draws it, and `--until game` shows it as plain shapes.
+
+- [x] Combat from `game.py` in pixels, with its tests; the shield blocks (new).
+- [x] Events to actions from `main.py`; bolts from the punching hand; one action at a time.
+- [x] `log_fields`: `game_p<pid>_health`, `_shield`, `_actions`, `game_bolts`, `game_beams`, `game_winner`.
+- [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 14); further features 9–16 there.
 
 ### Task 5: Integration — owner: @el
 
@@ -270,5 +283,4 @@ Record with `python tools/record_clip.py <name>`. Each clip is stored with its `
 
 These are expected, and each goes away when its stub is replaced:
 
-- Gestures fire, but the game only prints them to the console.
 - `Player.pos` is always `(0, 0)` in the CSV logs.

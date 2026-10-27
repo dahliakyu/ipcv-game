@@ -2,7 +2,7 @@ Oct 25, 2026 · @el created with help of Claude Opus 5.5
 
 # Merge log: the teammates' Colour Clash code into the shared codebase
 
-This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline` and goes to `main` in a single PR when it is complete.
+This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline` and goes to `main` in a single PR when it is complete.
 
 Each entry names the files it touched, so owners can check what changed in their own code.
 
@@ -57,9 +57,9 @@ The identity code (`PlayerIdentityTracker` in `Colour Clash/Project/bodypose.py`
 
 **Action for anyone who installed it:** `torchreid`, `gdown` and `tensorboard` are no longer needed and can be removed with `pip uninstall torchreid gdown tensorboard tensorboard-data-server`.
 
-### Open issues found during the merge
+### Open issues found before the merge
 
-These are not fixed yet; each belongs to the owner of the code. The `Colour Clash/` folder named below now lives in `garb/rest/` (ignored by git, local only).
+Found while preparing the merge, in the `Colour Clash/` folder (now `garb/rest/`, ignored by git, local only). Each was fixed in its task's merge, as noted.
 
 - **Two detectors per frame (Task 3, Task 2).** Fixed in the identity merge (step 3): BoT-SORT runs on the pose model's boxes.
 - **Stored appearance is never updated (Task 3).** Fixed in the identity merge (step 2). Matching is still greedy per track, not a joint assignment (Hungarian); with two players and linked tracks handled first, that rarely matters.
@@ -96,8 +96,8 @@ A quick reference for each teammate: where your code now lives, and what was cha
 | `Metrics` | `face/tracker.py`, `FaceTracker.log_fields()` + `tools/eval_face.py`, `evaluate()` | Jitter = `second_difference()` |
 | `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: `docs/evaluation.md` |
 | `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline (Task 5) |
-| Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` reset) | |
-| `draw_status()` (name + HP bar) | Not ported | Game UI; planned in `docs/extra_features.md` |
+| Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` new round, `R` full reset) | |
+| `draw_status()` (name + HP bar) | `scene/renderer.py`, `_draw_player_health()` | Game UI: "PLAYER N" and the health bar below the body (renderer merge) |
 | `Track.predicted()`, `Track.vel` | Removed | Only used for matching |
 | Keys `s`, `d`, `l`, `x`, `1`/`2` | Removed | Conditions come from clip names; HP demo is game logic |
 
@@ -120,7 +120,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `OneEuro(1.5, 0.1)` | `filter_min_cutoff`, `filter_beta`, `filter_d_cutoff` |
 | `HAT`, `MUSTACHE` (`hat.png`, `mustache.png`) | `hat_sprite`, `mustache_sprite` → `assets/face/` |
 | `CAP_W`, `CAP_H`, `CAMERA_INDEX` | `source:` section (`width`, `height`, `uri`) |
-| `MAX_PLAYERS` | `identity:` section (`num_players`), Task 3 |
+| `MAX_PLAYERS` | `identity:` section (`max_players`), Task 3 |
 | `COLORS` | `scene/draw.py`, `PLAYER_COLORS`, Task 5 |
 | `MATCH_FACTOR`, `LIGHTS`, `EXPOSURE` | Removed (matching replaced; conditions from clip names; exposure not ported) |
 
@@ -139,9 +139,9 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `BodyPoseProcessor.reset_player()` | `MotionFilter.reset(pid)` + `GestureRecognizer.reset(pid)` | Also on re-entry |
 | `hands_were_up`, `arms_were_crossed` in `main.py` | `GestureRecognizer.update()` | Rising-edge `GestureEvent`s |
 | Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
-| `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Game positions (step 7) |
+| `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` / `torso()` + `_act()` | Game positions (step 7) |
 | `hand_x/y` | `interaction/game.py`, `punching_hand()` | Bolts now start at the punching hand (Task 4 modifications) |
-| `head_x/y` | Not ported | The renderer will use face anchors |
+| `head_x/y` | Not ported | `renderer.py`'s health bar above the head is below the body now (Task 4 modifications); face effects use face anchors |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
 **Constants** (`configs/default.yaml`)
@@ -172,14 +172,14 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `main.py`: game loop part (bounds, positions, gesture edges → `attack()` / `beam_attack()` / `activate_shield()`, `dt`, `game.update()`) | `interaction/game.py`, `Game.update(state)` + `_act()` | Events instead of per-frame flags; `dt` from `Frame.t` |
 | `bodypose.py`: `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` + `_act()` | Pixels, from the smoothed keypoints |
 | `test_game.py` | `tests/test_game.py` | Same tests in px, plus new ones |
-| (new) debug view, CSV columns | `interaction/game.py`, `Game.draw_debug()` + `log_fields()` | `--until game`; the full drawing is the renderer merge |
-| (new) magic ball and beam | `scene/magic_beam.py`, `MagicBeam`; `scene/draw.py`, `blend_rgba()`, `main_hue()`, `shift_hue()` | Task 4 modifications; one hue-turned copy per team |
-| (new) fire blast for the bolt | `scene/fire_bolt.py`, `FireBolt`; `Projectile.age`, `BoltEnd` | Task 4 modifications; one hue-turned copy per team |
-| (new) ring of fire for the shield | `scene/fire_ring.py`, `FireRing`; `Game.ring_geometry()` | Task 4 modifications; one hue-turned copy per team |
+| (new) debug view, CSV columns | `interaction/game.py`, `Game.draw_debug()` + `log_fields()` | `--until game`, plain shapes; the game's look is drawn by `scene/renderer.py` |
+| (new) magic ball and beam | `scene/magic_beam.py`, `MagicBeam`, drawn by `scene/renderer.py`; `scene/draw.py`, `blend_rgba()`, `main_hue()`, `shift_hue()` | Task 4 modifications; one hue-turned copy per team |
+| (new) fire blast for the bolt | `scene/fire_bolt.py`, `FireBolt`, drawn by `scene/renderer.py`; `Projectile.age`, `BoltEnd` | Task 4 modifications; one hue-turned copy per team |
+| (new) ring of fire for the shield | `scene/fire_ring.py`, `FireRing`, drawn by `scene/renderer.py` (`ring_geometry()`) | Task 4 modifications; one hue-turned copy per team |
 | `Game.player`, `Game.shield` | Removed | Single-player shortcuts, unused |
 | `PLAYER_COLORS` | `scene/draw.py`, `PLAYER_COLORS` / `player_color()` | The one colour table |
 
-**Constants:** all in `configs/default.yaml`, `game:` section; see step 5 for the table.
+**Constants:** all in `configs/default.yaml`, `game:` section; see step 5 for the table. The sprite and health-bar keys added in the Task 4 modifications moved to `render:` in the renderer merge (step 1).
 
 #### Task 3: `Project/` (identity)
 
@@ -205,7 +205,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Constants:** `REID_THRESHOLD`, `NEW_PLAYER_CONFIRMATION`, `MAX_PLAYERS`, `MIN_PERSON_HEIGHT`, `MIN_PERSON_WIDTH` and `botsort.yaml` are in `configs/default.yaml`, `identity:` section; see steps 2 and 3 for the tables.
 
-#### `renderer.py` (game view)
+#### Renderer: `renderer.py` (game view)
 
 | In your code | Now in | Note |
 | --- | --- | --- |
@@ -269,6 +269,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - **The beam is drawn as a magic ball and beam (Task 4 modifications, new):** sprite frames instead of `renderer.py`'s paint beam, in each player's team colour.
 - **The beam lasts its full duration (Task 4 modifications):** its tip stops at the frame edge instead of the beam ending there, so a target stepping into it later is also hit (once).
 - **The shield blocks (step 6, new):** while it is up (not during the fade), bolts are absorbed and beams pass that player without damage; in `game.py` the shield was only drawn.
+- **Drawing moved to the renderer (renderer merge):** the fire blast, magic ball and beam, ring of fire and health bar above are drawn by `scene/renderer.py`, with their config keys in `render:`; `game.py`'s rules are all that is left in `interaction/game.py`.
 
 #### Task 3
 
@@ -772,7 +773,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 
 **Decisions (Task 5 owner, 2026-10-25).**
 
-- **One sideways punch fires one bolt.** The 1.8 s cooldown goes (`game.bolt_cooldown_s: 0`, the key stays). The gesture stage already sends one event per punch, at most one every 0.5 s. What the bolt looks like (a paint stroke) is part of the renderer merge.
+- **One sideways punch fires one bolt.** The 1.8 s cooldown goes (`game.bolt_cooldown_s: 0`, the key stays). The gesture stage already sends one event per punch, at most one every 0.5 s. What the bolt looks like was decided later (Task 4 modifications: a fire blast).
 - **The shield blocks.** While it is up (1 s, not counting the fade), bolts and beams that reach the player do no damage and leave no paint. A blocked bolt disappears; a blocked beam does not try that player again.
 - **One colour table:** the colours from `game.py` (P1 red, P2 blue) replace `PLAYER_COLORS` in `scene/draw.py`, and the game, renderer and debug views all use it. Splats store the attacker's pid; the colour is looked up when drawing.
 - **Pixels.** Positions are pixels in the mirrored frame, like in every other module. Speeds and sizes are in the config as fractions of the frame width or height, so the game plays the same at any resolution.
@@ -791,7 +792,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 | `reset()` | `Game.reset(pid=None)` | `None` = new round; a pid = that player starts fresh |
 | `player`, `shield` (single-player shortcuts) | Removed | Not used anywhere |
 | `test_game.py` (7 tests) | `tests/test_game.py` | Same tests, pytest, pixels |
-| Key `r` after a win | `app/main.py`, key `r` | Already resets the whole pipeline, at any time |
+| Key `r` after a win | `app/main.py`, key `r` | Already resets the whole pipeline, at any time (since the renderer merge: a new round, and `R` resets everything) |
 
 **Steps.** Numbered after the gesture steps; each gets an entry under Changes below.
 
@@ -1032,9 +1033,20 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 
 **Added:** 2 tests in `tests/test_game.py`: the debug view draws a bolt, a beam, a shield, splats and the winner without errors; the CSV columns.
 
+#### Step 9 · Check and record
+
+Done after the identity and renderer merges, so the status describes the game as it is now.
+
+**Changed:** `docs/phase-1/status.md`
+- "Where we are": `interaction/game.py` marked as merged (it still said "Stub, prints events").
+- Task 4 section: the game (actions, damage, round end, keys), with a checklist of what is done and still open (balance on the webcam, simultaneous attacks and the other backlog features). "`Game.update` still prints events" removed.
+- Known limitations: "the game only prints them" removed.
+
+**Change Overviews** for `game.py` were filled in step by step (steps 5–8) and updated after the renderer merge.
+
 ## Task 4: Modifications
 
-Game-design changes by the Task 5 owner after the merge steps above, starting from the webcam tests (2026-10-26). Each entry names the files it touched.
+Game-design changes by the Task 5 owner after the merge steps above, starting from the webcam tests (2026-10-26). Each entry names the files it touched. The drawing described here (sprites, `_bolt_effect()` and the other loaders, `ring_geometry()`, `bar_geometry()`) and its config keys moved from `Game` and `game:` to `scene/renderer.py` and `render:` in the renderer merge (Task 5: Renderer, step 1).
 
 ### Bolt from the hand, health bar below the body
 
