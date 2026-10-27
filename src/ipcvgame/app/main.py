@@ -5,6 +5,8 @@
     python -m ipcvgame.app.main --until identity         # debug one module
     python -m ipcvgame.app.main --headless --max-frames 100 --set pose.backend=none
     python -m ipcvgame.app.main --record data/clips/session.mp4   # also save the raw input
+    python -m ipcvgame.app.main --until game --record data/clips/s.mp4 --record-view
+        # raw input to s.mp4 and the shown view (effects, overlays) to s_view.mp4
 
 Every run writes a per-frame CSV to logs/ (recorder.log in the config; --no-log
 to skip). For recording test clips without the pipeline, use tools/record_clip.py.
@@ -42,11 +44,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--no-log", action="store_true", help="do not write the per-frame CSV")
     ap.add_argument("--record", default=None, metavar="MP4",
                     help="also record the raw input frames to this clip")
+    ap.add_argument("--record-view", nargs="?", const="", default=None, metavar="MP4",
+                    help="also record the shown view (overlays, effects, timings) to this clip; "
+                         "without a path: <--record clip>_view.mp4")
     return ap.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.record_view == "":
+        if not args.record:
+            raise SystemExit("--record-view without a path needs --record")
+        raw = Path(args.record)
+        args.record_view = str(raw.with_name(raw.stem + "_view" + raw.suffix))
     cfg = load_config(args.config, args.overrides)
     pipeline = Pipeline(cfg, until=args.until)
     window = cfg["render"].get("window_name", "IPCV game")
@@ -72,6 +82,13 @@ def main(argv: list[str] | None = None) -> None:
             clip = stack.enter_context(ClipRecorder(
                 args.record, cfg["source"].get("fps", 30), source.size,
                 mirrored=source.mirror, fourcc=rec_cfg.get("fourcc", "mp4v")))
+        view_clip = None
+        if args.record_view:
+            # The view is stored as shown (mirrored): it is for watching, not
+            # for replaying through the pipeline like the raw clip.
+            view_clip = stack.enter_context(ClipRecorder(
+                args.record_view, cfg["source"].get("fps", 30), source.size,
+                mirrored=False, fourcc=rec_cfg.get("fourcc", "mp4v")))
         paused = False
         frames = iter(source)
         canvas = None
@@ -83,6 +100,8 @@ def main(argv: list[str] | None = None) -> None:
                 if clip is not None:
                     clip.write(frame)
                 state, canvas = pipeline.step(frame)
+                if view_clip is not None:
+                    view_clip.write(replace(frame, image=canvas))
                 if logger is not None:
                     # state.timings is the previous frame's; log this frame's own.
                     logger.log(replace(state, timings=pipeline.prof.last()),
@@ -106,6 +125,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"log: {logger.path}")
     if args.record:
         print(f"clip: {args.record}")
+    if args.record_view:
+        print(f"view clip: {args.record_view}")
     summary = pipeline.prof.summary()
     print(f"processed {n} frames; mean ms per stage:")
     for k, v in summary.items():

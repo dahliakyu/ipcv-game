@@ -65,7 +65,14 @@ runs without a window.
 ```bash
 python tools/record_clip.py crossing          # space = start/stop -> data/clips/crossing.mp4
 python -m ipcvgame.app.main --record data/clips/session.mp4   # record while the game runs
+python -m ipcvgame.app.main --until game --record data/clips/session.mp4 --record-view
+                                              # + the shown view -> data/clips/session_view.mp4
 ```
+
+`--record-view [MP4]` saves the window's view (effects, debug overlays,
+timings) as shown, mirrored; it is for watching and the report, not for
+replaying through the pipeline. The debug views from `--until face` on draw
+the face effects under their overlay (`render.debug_face_effects`).
 
 Clips are stored raw (un-mirrored) with a `<clip>.timestamps.csv` sidecar of
 real capture times; `VideoFile` replays those times so filters see the true dt.

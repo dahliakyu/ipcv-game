@@ -96,6 +96,8 @@ class Pipeline:
                 canvas = self.renderer.draw(state, self.game)
             else:
                 canvas = frame.image.copy()
+                if self.cfg["render"].get("debug_face_effects", True):
+                    self.renderer.face_effects.draw(canvas, state.faces)
                 self.debug_module[self.until].draw_debug(canvas, state)
                 draw_timings(canvas, state.timings)
         prof.end_frame()

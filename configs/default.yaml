@@ -426,3 +426,8 @@ render:
   window_name: IPCV game
   # Show per-stage timings and FPS in the corner of the game window.
   show_timings: true
+  # Debug views (--until face, gestures, game): draw the face effects (hat,
+  # mustache) under the module's overlay, so the game debug view shows the
+  # effects and the game together until the renderer draws the game. Views
+  # before the face stage have no faces, so nothing changes there.
+  debug_face_effects: true

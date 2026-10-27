@@ -3,6 +3,7 @@ import csv
 import cv2
 import numpy as np
 
+from ipcvgame.app.main import main
 from ipcvgame.core.types import Frame, FrameState, Player
 from ipcvgame.io.recorder import ClipRecorder, RunLogger, timestamps_path
 from ipcvgame.io.source import VideoFile
@@ -37,6 +38,32 @@ def test_clip_roundtrip_mirror_and_timestamps(tmp_path):
     assert frames[0].image[:, W // 2:].mean() > frames[0].image[:, : W // 2].mean()
     dts = np.diff([f.t for f in frames])
     np.testing.assert_allclose(dts, np.diff(times), atol=1e-5)
+
+
+def first_frame(path) -> np.ndarray:
+    cap = cv2.VideoCapture(str(path))
+    ok, img = cap.read()
+    cap.release()
+    assert ok
+    return img
+
+
+def test_record_raw_and_view(tmp_path):
+    """--record keeps the raw input, --record-view (no path) the shown view
+    next to it as <clip>_view.mp4, mirrored as on screen."""
+    src = tmp_path / "src.mp4"
+    with ClipRecorder(src, 30, (W, H), mirrored=False) as rec:
+        for i in range(5):
+            rec.write(gradient_frame(i, i / 30))     # bright half on the right in the file
+    raw = tmp_path / "out.mp4"
+    main(["--source", str(src), "--until", "game", "--headless", "--no-log",
+          "--set", "pose.backend=none", "--set", "face.backend=stub",
+          "--record", str(raw), "--record-view"])
+    view = tmp_path / "out_view.mp4"
+    assert view.exists() and timestamps_path(view).exists()
+    r, v = first_frame(raw), first_frame(view)
+    assert r[:, W // 2:].mean() > r[:, : W // 2].mean()      # raw: as in the source file
+    assert v[:, : W // 2].mean() > v[:, W // 2:].mean()      # view: mirrored, as shown
 
 
 def player(pid: int, status: str = "active") -> Player:
