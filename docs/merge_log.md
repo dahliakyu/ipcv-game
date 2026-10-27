@@ -262,6 +262,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - **No bolt cooldown (step 5):** `bolt_cooldown_s` is 0, so every punch fires a bolt.
 - **One action at a time (Task 4 modifications, new):** after any action the player must return to a normal position (no gesture on) before the next one; gestures starting together send only the highest priority (hands up, arms crossed, punch); no bolt while the player's own beam is alive.
 - **One beam per raise (Task 4 modifications):** hands up and arms crossed stay on through dropouts shorter than `release_s` (0.3 s), and a player cannot start a beam while their previous one is alive; `game.py` had no limit.
+- **Attacks fly towards the other player (Task 4 modifications):** sideways towards the nearest other player in view, not towards the middle of the frame as in `main.py`, so switching sides no longer sends attacks the wrong way; the middle rule is the fallback.
 - **Slower bolt (Task 4 modifications):** `bolt_speed_w` 1.0 frame widths/s instead of `game.py`'s 1.4, so the bolt is easier to see coming and shield.
 - **Bolts start at the punching hand (Task 4 modifications)** instead of the body box edge at hip height; the box edge is the fallback without a visible wrist.
 - **The shield is drawn as a ring of fire (Task 4 modifications, new):** sprite frames per team instead of `renderer.py`'s shield picture, on the player's chest and sized to their shoulders.
@@ -1252,6 +1253,14 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
   - each team gets its own ring from the real frames.
 - `tests/test_game.py`: the ring sits on the chest at 2.6 shoulder widths, and the fallback without shoulders.
 
+
+### Attacks fly towards the other player
+
+On the webcam, after the players had switched sides, a beam sometimes flew away from the opponent. `_act()` used `main.py`'s rule: fire right from the left half of the frame, left from the right half. That is only right while each player keeps to their own half.
+
+**Changed:** `src/ipcvgame/interaction/game.py`: new `Game.facing(pid, positions)`. Bolts, beams and the shield face the nearest other player in view (their shoulder midpoint). The old rule, towards the middle, is the fallback when nobody else is in view or both stand at the same x. Attacks still fly sideways only; aiming in 2D stays as feature 11.
+
+**Added:** `tests/test_game.py`: beams fly at the other player in four layouts (normal, switched, both in the right half, both in the left half), and towards the middle with nobody else in view.
 
 ## Task 3: Identity tracking
 

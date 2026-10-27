@@ -309,7 +309,7 @@ class Game:
         self.actions = []
         for e in state.events:
             if e.pid in positions:
-                self._act(e.pid, e.name, state.motion[e.pid])
+                self._act(e.pid, e.name, state.motion[e.pid], positions)
 
         self.advance(dt, visible)
 
@@ -326,6 +326,22 @@ class Game:
         hip_y = lower_body_y(k, v, shoulder_y, sw, self.cfg)
         return float(center_x), float(shoulder_y), float(hip_y), float(sw)
 
+    def facing(self, pid: int, positions: dict[int, tuple[float, float]]) -> int:
+        """Sideways direction of pid's attacks: +1 = right, -1 = left.
+
+        Towards the nearest other player in view (their shoulder midpoint),
+        so attacks still fly at the opponent after the players have switched
+        sides or stand in the same half. main.py fired towards the middle of
+        the frame (right from the left half), which sent attacks away from the
+        opponent in those cases; that rule stays as the fallback when no one
+        else is in view, or both stand at the same x."""
+        x = positions[pid][0]
+        others = [p[0] for q, p in positions.items() if q != pid and p[0] != x]
+        if others:
+            nearest = min(others, key=lambda ox: abs(ox - x))
+            return 1 if nearest > x else -1
+        return 1 if x < self.frame_w / 2 else -1
+
     def body_position(self, m: Motion) -> tuple[float, float] | None:
         """Shoulder midpoint x and hip level y in px (``center_x`` and
         ``torso_y`` in bodypose.py), or None without a usable shoulder width."""
@@ -340,11 +356,10 @@ class Game:
         """1 while the shield blocks, then down to 0 over shield_fade_s."""
         return 1.0 if shield.remaining > 0 else max(0.0, 1.0 + shield.remaining / self.shield_fade_s)
 
-    def _act(self, pid: int, gesture: str, m: Motion) -> None:
+    def _act(self, pid: int, gesture: str, m: Motion, positions: dict[int, tuple[float, float]]) -> None:
         """Turn one gesture event into a game action, as ``main.py`` did."""
         player = self.get_player(pid)
-        # Towards the middle: a player on the left half fires to the right.
-        direction = 1 if player.x < self.frame_w / 2 else -1
+        direction = self.facing(pid, positions)
         if gesture == "punch":
             # The bolt starts at the punching hand; without a visible wrist, at
             # the edge of the body box facing the other player, at hip height.

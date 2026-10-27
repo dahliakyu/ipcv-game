@@ -387,3 +387,21 @@ def test_torso_and_drawing_values(game):
     assert game.shield_opacity(shield) == pytest.approx(0.5)
     shield.remaining = -game.shield_fade_s * 2
     assert game.shield_opacity(shield) == 0.0
+
+
+@pytest.mark.parametrize("xs, p1_dir", [
+    ((200.0, 800.0), 1),      # P1 left of P2: fires right
+    ((800.0, 200.0), -1),     # switched sides: P1 fires left, towards P2
+    ((600.0, 900.0), 1),      # both in the right half: P1 still fires right, at P2
+    ((400.0, 100.0), -1),     # both in the left half: P1 fires left, at P2
+])
+def test_attacks_fly_towards_the_other_player(game, xs, p1_dir):
+    game.update(frame_state(0.0, events=[(1, "hands_up")], xs=xs))
+    assert game.beams[0].direction == p1_dir
+    game.update(frame_state(0.1, events=[(2, "hands_up")], xs=xs))
+    assert game.beams[1].direction == -p1_dir
+
+
+def test_alone_attacks_fly_towards_the_middle(game):
+    game.update(frame_state(0.0, events=[(1, "hands_up")], xs=(800.0, 200.0), lost=(2,)))
+    assert game.beams[0].direction == -1          # right half, no one else in view

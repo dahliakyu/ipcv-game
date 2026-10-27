@@ -215,7 +215,7 @@ Hands up and crossed must hold for 0.03 s to turn on, and stay on until their ru
 
 **Game (merged 2026-10-26 from `game.py` and `main.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic), design changes in "Task 4: Modifications"):** `Game.update(state)` turns each gesture event into an action:
 
-- **`punch` → bolt:** a fire blast from the punching hand, sideways towards the middle of the frame (as in `main.py`), 10 damage, 1 frame width per second;
+- **`punch` → bolt:** a fire blast from the punching hand, sideways towards the other player, 10 damage, 1 frame width per second;
 - **`hands_up` → beam:** a magic ball between the hands charges for 0.35 s, then a beam grows across the frame for 0.8 s, 12 damage, each player hit once; one beam per player at a time;
 - **`arms_crossed` → shield:** a ring of fire on the chest for 1 s that blocks bolts and beams, then fades.
 
