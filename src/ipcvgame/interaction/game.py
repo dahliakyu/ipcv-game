@@ -25,10 +25,7 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import lower_body_y, shoulder_width
-from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, hue_of, player_color, pt
-from ipcvgame.scene.fire_bolt import FireBolt
-from ipcvgame.scene.fire_ring import FireRing
-from ipcvgame.scene.magic_beam import MagicBeam
+from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
 
 @dataclass
@@ -121,9 +118,12 @@ class Game:
         self._t: float | None = None  # Frame.t of the previous update
         # Actions this frame as (pid, "bolt" | "beam" | "shield"), for the CSV.
         self.actions: list[tuple[int, str]] = []
-        self._magic: dict[int, MagicBeam] = {}  # beam look per owner, loaded on first draw
-        self._fire: dict[int, FireBolt] = {}  # bolt look per owner, loaded on first draw
-        self._rings: dict[int, FireRing] = {}  # shield look per owner, loaded on first draw
+        # Phase lengths and the beam's hit band, for drawing (the renderer
+        # reads them here instead of from the game: config).
+        self.beam_charge_s = float(cfg["beam_charge_s"])
+        self.beam_life_s = self.beam_charge_s + float(cfg["beam_duration_s"])
+        self.shield_fade_s = float(cfg["shield_fade_s"])
+        self.bolt_end_s = float(cfg["bolt_end_s"])
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:
@@ -312,16 +312,32 @@ class Game:
 
         self.advance(dt, visible)
 
-    def body_position(self, m: Motion) -> tuple[float, float] | None:
-        """Shoulder midpoint x and hip level y in px (``center_x`` and
-        ``torso_y`` in bodypose.py), or None without a usable shoulder width."""
+    def torso(self, m: Motion) -> tuple[float, float, float, float] | None:
+        """Shoulder midpoint x, shoulder level y, hip level y and shoulder
+        width in px, or None without a usable shoulder width. Hips not
+        visible: hip_below_shoulders shoulder widths below the shoulders."""
         k, v = m.kpts, m.valid
         sw = shoulder_width(k, v, self.cfg["min_shoulder_px"])
         if sw is None:
             return None
         shoulder_y = (k[sk.L_SHOULDER][1] + k[sk.R_SHOULDER][1]) / 2.0
         center_x = (k[sk.L_SHOULDER][0] + k[sk.R_SHOULDER][0]) / 2.0
-        return float(center_x), float(lower_body_y(k, v, shoulder_y, sw, self.cfg))
+        hip_y = lower_body_y(k, v, shoulder_y, sw, self.cfg)
+        return float(center_x), float(shoulder_y), float(hip_y), float(sw)
+
+    def body_position(self, m: Motion) -> tuple[float, float] | None:
+        """Shoulder midpoint x and hip level y in px (``center_x`` and
+        ``torso_y`` in bodypose.py), or None without a usable shoulder width."""
+        torso = self.torso(m)
+        return None if torso is None else (torso[0], torso[2])
+
+    def beam_band_px(self) -> float:
+        """Half the height (px) of the band a beam hits (beam_hit_radius_h)."""
+        return self.cfg["beam_hit_radius_h"] * self.frame_h
+
+    def shield_opacity(self, shield: Shield) -> float:
+        """1 while the shield blocks, then down to 0 over shield_fade_s."""
+        return 1.0 if shield.remaining > 0 else max(0.0, 1.0 + shield.remaining / self.shield_fade_s)
 
     def _act(self, pid: int, gesture: str, m: Motion) -> None:
         """Turn one gesture event into a game action, as ``main.py`` did."""
@@ -371,14 +387,12 @@ class Game:
         player.paint_splats.clear()
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """The game state, in the attacker's or owner's colour, until the
-        renderer draws it properly: skeleton (thin), health bar and paint
-        splats on each body box, bolts (the fire blast and its break-up where
-        it ended, or a dot),
-        beams (the magic ball and beam, or a
-        line with a growing dot while charging), shields (ellipse beside the
-        player; thin while fading; or the fire ring around the chest), this
-        frame's actions, and the winner."""
+        """The game state as plain shapes, for checking the logic (the game's
+        look is drawn by the renderer): thin skeletons; body boxes with health
+        and shield; splats as dots; bolts as dots with a tail and an x where
+        they ended; beams as a line with their hit band (a growing circle while
+        charging); shields as an ellipse beside the player (thin while
+        fading); this frame's actions and the winner."""
         unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid), 1)
@@ -388,61 +402,35 @@ class Game:
                 continue
             left, top, right, bottom = player.bounds
             w, h = right - left, bottom - top
+            label = f"P{pid} {player.health}" + (" shield" if self.shielded(pid) else "")
+            draw_bbox(canvas, player.bounds, player_color(pid), label, dashed=True)
             for splat in player.paint_splats:
                 c = (left + splat.x * w, top + splat.y * h)
-                cv2.circle(canvas, pt(c), max(2, int(0.06 * w)), player_color(splat.owner_id), -1,
-                           cv2.LINE_AA)
-            # Health bar below the body, kept inside the frame.
-            (cx, cy), length = self.bar_geometry(pid, state)
-            x0, x1 = int(cx - length / 2), int(cx + length / 2)
-            y0 = min(int(cy + 2 * unit), canvas.shape[0] - 10)
-            cv2.rectangle(canvas, (x0, y0 - int(unit)), (x1, y0), (40, 40, 40), -1)
-            fill = x0 + int((x1 - x0) * player.health / self.max_health)
-            cv2.rectangle(canvas, (x0, y0 - int(unit)), (fill, y0), player_color(pid), -1)
-            label = f"P{pid} {player.health}"
-            if self.shielded(pid):
-                label += " shield"
-            draw_text(canvas, label, (x0, y0 - int(unit) - 6), player_color(pid))
+                cv2.circle(canvas, pt(c), 3, player_color(splat.owner_id), -1, cv2.LINE_AA)
 
-        bolt_h = int(self.cfg["bolt_sprite_h"] * canvas.shape[0])
         for end in self.bolt_ends:
-            fire = self._bolt_effect(end.owner_id)
-            k = fire.end_index(end.age) if fire is not None else None
-            if k is not None:
-                fire.draw(canvas, end.x, end.y, end.direction, k, bolt_h)
+            x, y, r = int(end.x), int(end.y), int(unit)
+            c = player_color(end.owner_id)
+            cv2.line(canvas, (x - r, y - r), (x + r, y + r), c, 2, cv2.LINE_AA)
+            cv2.line(canvas, (x - r, y + r), (x + r, y - r), c, 2, cv2.LINE_AA)
         for b in self.projectiles:
-            fire = self._bolt_effect(b.owner_id)
-            if fire is not None:
-                fire.draw(canvas, b.x, b.y, b.direction, fire.flight_index(b.age), bolt_h)
-                continue
             c = player_color(b.owner_id)
             cv2.circle(canvas, pt((b.x, b.y)), int(unit), c, -1, cv2.LINE_AA)
             cv2.line(canvas, pt((b.x, b.y)), pt((b.x - b.direction * 4 * unit, b.y)), c, 2, cv2.LINE_AA)
 
-        charge = self.cfg["beam_charge_s"]
-        life = charge + self.cfg["beam_duration_s"]
-        thickness = max(2, int(2 * self.cfg["beam_hit_radius_h"] * canvas.shape[0]))
-        ball_px = int(self.cfg["beam_ball_h"] * canvas.shape[0])
+        band = self.beam_band_px()
         for beam in self.beams:
             c = player_color(beam.owner_id)
-            magic = self._beam_effect(beam.owner_id)
-            if magic is not None:
-                magic.draw(canvas, beam.start_x, beam.x, beam.y, beam.direction, beam.age,
-                           charge, life, thickness, ball_px)
-            elif beam.age < charge:
-                r = int(unit * (1 + 2 * beam.age / charge))
+            if beam.age < self.beam_charge_s:
+                r = int(unit * (1 + 2 * beam.age / self.beam_charge_s))
                 cv2.circle(canvas, pt((beam.start_x, beam.y)), r, c, 2, cv2.LINE_AA)
-            else:
-                cv2.line(canvas, pt((beam.start_x, beam.y)), pt((beam.x, beam.y)), c, thickness,
+                continue
+            cv2.line(canvas, pt((beam.start_x, beam.y)), pt((beam.x, beam.y)), c, 2, cv2.LINE_AA)
+            for dy in (-band, band):
+                cv2.line(canvas, pt((beam.start_x, beam.y + dy)), pt((beam.x, beam.y + dy)), c, 1,
                          cv2.LINE_AA)
 
         for pid, shield in self.shields.items():
-            ring = self._shield_effect(pid)
-            if ring is not None:
-                center, diameter = self.ring_geometry(pid, shield, state)
-                fade = 1.0 if shield.remaining > 0 else 1.0 + shield.remaining / self.cfg["shield_fade_s"]
-                ring.draw(canvas, center, diameter, shield.age, max(fade, 0.0))
-                continue
             player = self.players.get(pid)
             h = (player.bounds[3] - player.bounds[1]) if player and player.bounds is not None else 40 * unit
             center = pt((shield.x + shield.direction * 6 * unit, shield.y - 0.25 * h))
@@ -451,109 +439,9 @@ class Game:
                         3 if shield.remaining > 0 else 1, cv2.LINE_AA)
 
         lines = [f"P{pid} {action}" for pid, action in self.actions]
-        draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
         if self.winner_id is not None:
-            draw_text(canvas, f"P{self.winner_id} wins - press r for a new round",
-                      (int(canvas.shape[1] * 0.3), canvas.shape[0] // 2),
-                      player_color(self.winner_id), 1.0)
-
-    def _bolt_effect(self, owner_id: int) -> FireBolt | None:
-        """The bolt's look for one player (game.bolt_sprite), loaded on first
-        use so the game logic runs without it; None = draw a plain dot.
-
-        The frames' own colours belong to player bolt_effect_owner; for any
-        other player every hue is turned so it takes their team colour."""
-        cfg = self.cfg
-        if not cfg.get("bolt_sprite"):
-            return None
-        if owner_id not in self._fire:
-            def load(hue_shift: int = 0) -> FireBolt:
-                return FireBolt(cfg["bolt_sprite"], cfg["bolt_sprite_launch"],
-                                cfg["bolt_sprite_flight"], cfg["bolt_sprite_fps"],
-                                cfg["bolt_end_s"], hue_shift)
-            owner = cfg["bolt_effect_owner"]
-            base = self._fire.get(owner) or load()
-            self._fire[owner] = base
-            if owner_id != owner:
-                self._fire[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
-        return self._fire[owner_id]
-
-    def ring_geometry(self, pid: int, shield: Shield, state: FrameState) -> tuple[tuple[float, float], float]:
-        """Centre and diameter (px) of the shield's fire ring: on the
-        player's chest (halfway between shoulders and hips), following them,
-        shield_ring_sw shoulder widths across; without a shoulder width, where
-        the shield went up and as wide as the body box."""
-        m = state.motion.get(pid)
-        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"]) if m is not None else None
-        if sw is not None:
-            shoulder_y = (m.kpts[sk.L_SHOULDER][1] + m.kpts[sk.R_SHOULDER][1]) / 2.0
-            x, hip_y = self.body_position(m)
-            return (x, (shoulder_y + hip_y) / 2.0), self.cfg["shield_ring_sw"] * sw
-        player = self.players.get(pid)
-        width = (player.bounds[2] - player.bounds[0]) if player and player.bounds is not None else 100.0
-        return (shield.x, shield.y), float(width)
-
-    def _shield_effect(self, owner_id: int) -> FireRing | None:
-        """The shield's look for one player (game.shield_sprite), loaded on
-        first use; None = draw the plain ellipse. Hue-turned for players other
-        than shield_effect_owner, as for the bolt and the beam."""
-        cfg = self.cfg
-        if not cfg.get("shield_sprite"):
-            return None
-        if owner_id not in self._rings:
-            def load(hue_shift: int = 0) -> FireRing:
-                return FireRing(cfg["shield_sprite"], cfg["shield_form_frames"],
-                                cfg["shield_loop_frames"], cfg["shield_form_s"],
-                                cfg["shield_sprite_fps"], hue_shift)
-            owner = cfg["shield_effect_owner"]
-            base = self._rings.get(owner) or load()
-            self._rings[owner] = base
-            if owner_id != owner:
-                self._rings[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
-        return self._rings[owner_id]
-
-    def _beam_effect(self, owner_id: int) -> MagicBeam | None:
-        """The beam's look for one player (game.beam_ball, game.beam_band),
-        loaded on first use so the game logic runs without it; None = draw a
-        plain line.
-
-        The pack's own colours belong to player beam_effect_owner; for any
-        other player every hue is turned so it takes their team colour."""
-        cfg = self.cfg
-        if not cfg.get("beam_ball"):
-            return None
-        if owner_id not in self._magic:
-            def load(hue_shift: int = 0) -> MagicBeam:
-                return MagicBeam(cfg["beam_ball"], cfg["beam_band"], cfg["beam_ramp_s"], hue_shift)
-            owner = cfg["beam_effect_owner"]
-            base = self._magic.get(owner) or load()
-            self._magic[owner] = base
-            if owner_id != owner:
-                self._magic[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
-        return self._magic[owner_id]
-
-    def bar_geometry(self, pid: int, state: FrameState) -> tuple[tuple[float, float], float]:
-        """Centre (px) and length (px) of the debug health bar.
-
-        It sits at the bottom of the body box, centred under the shoulders,
-        out of the way of beams fired from raised hands. Its length depends
-        only on the player's distance to the camera, not on their arms (the
-        body box grows with an extended arm): debug_bar_face_widths face
-        widths; without a face, debug_bar_shoulder_widths shoulder widths;
-        without either, the body box width."""
-        player = self.players[pid]
-        left, _, right, bottom = player.bounds
-        m = state.motion.get(pid)
-        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"]) if m is not None else None
-        x = player.x if sw is not None else (left + right) / 2.0
-        face = state.faces.get(pid)
-        if face is not None and face.scale > 0:
-            length = self.cfg["debug_bar_face_widths"] * face.scale
-        elif sw is not None:
-            length = self.cfg["debug_bar_shoulder_widths"] * sw
-        else:
-            length = float(right - left)
-        return (float(x), float(bottom)), length
+            lines.append(f"P{self.winner_id} wins")
+        draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
 
     def log_fields(self, state: FrameState) -> dict:
         """CSV columns: game_p<pid>_health, game_p<pid>_shield (1 while it

@@ -1484,3 +1484,24 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 **Verification.** Unit tests for each step (drawing on made-up frames, keys). Views recorded with `--record-view` on `data/clips/session.mp4` and the test clips. The Task 5 owner checks the game, including the end of a round, on the webcam.
 
 ### Changes
+
+#### Step 1 · Sprites to the renderer
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the renderer now draws the game objects (`draw_game()`), moved from `Game.draw_debug()`:
+- bolts as the fire blast and its break-up where they ended, beams as the magic ball and beam, shields as the ring of fire on the chest; plain shapes when a sprite is set to `null`;
+- `bolt_effect()`, `beam_effect()`, `shield_effect()`: the per-team sprite loading from `Game` (`_bolt_effect()` and the others). The three near-identical loaders share one helper, `_team_copy()`: the frames as they are for the owner, a hue-turned copy for every other player;
+- `ring_geometry()` and `bar_geometry()`, unchanged except that they read the torso from `Game.torso()`.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- No drawing code or sprite imports left beyond `draw_debug()`. It shows the game state as plain shapes for checking the logic: dashed body boxes with health and shield, splats as dots, bolts as dots with a tail and an x where they ended, beams as a line with their hit band, shields as ellipses, the actions and the winner.
+- New read-only values for drawing, so the renderer does not read the `game:` config: `beam_charge_s`, `beam_life_s`, `shield_fade_s`, `bolt_end_s`, `beam_band_px()`, `shield_opacity()`, and `torso()` (shoulder midpoint, shoulder and hip level, shoulder width), which `body_position()` now uses.
+
+**Changed:** `configs/default.yaml`
+- The sprite keys (`bolt_sprite*`, `bolt_effect_owner`, `beam_ball`, `beam_band`, `beam_ramp_s`, `beam_ball_h`, `beam_effect_owner`, `shield_sprite`, `shield_form_frames`, `shield_loop_frames`, `shield_form_s`, `shield_sprite_fps`, `shield_ring_sw`, `shield_effect_owner`) moved from `game:` to `render:`, with their comments.
+- `debug_bar_face_widths` / `debug_bar_shoulder_widths` became `render.bar_face_widths` / `bar_shoulder_widths`.
+- `bolt_end_s` stays in `game:`: the game keeps a bolt's end point that long.
+
+**Changed:** tests
+- `tests/test_game.py`: the health-bar, ring and sprite tests moved out; one test for `torso()` and the drawing values.
+- `tests/test_renderer.py` (new): every object drawn, plain shapes without sprites, the health-bar and ring geometry tests from `test_game.py`.
+- `tests/test_fire_bolt.py`, `test_fire_ring.py`, `test_magic_beam.py`: the per-team sprite tests use the renderer.

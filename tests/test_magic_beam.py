@@ -89,15 +89,22 @@ def test_blend_rgba_clips_and_blends():
     blend_rgba(canvas, sprite, 20, 20)                      # fully off: no error
 
 
-def test_game_gives_each_team_its_own_beam_colour():
-    from ipcvgame.interaction.game import Game
-    cfg = load_config()["game"]
+def game_renderer():
+    """The renderer with the real config and the stub face effects."""
+    from ipcvgame.face.effects import FaceEffects
+    from ipcvgame.scene.renderer import Renderer
+    full = load_config()
+    return Renderer(full["render"], FaceEffects({**full["face"], "backend": "stub"}))
+
+
+def test_renderer_gives_each_team_its_own_beam_colour():
+    cfg = load_config()["render"]
     if not list((REPO_ROOT / "assets/magic_effect").glob("M5025-*.png")):
         pytest.skip("magic_effect pack not in this checkout")
-    g = Game(cfg)
+    r = game_renderer()
     owner, other = cfg["beam_effect_owner"], 3 - cfg["beam_effect_owner"]
-    base = g._beam_effect(owner)
-    assert g._beam_effect(owner) is base and len(base.ball) == 26 and len(base.band) == 3
+    base = r.beam_effect(owner)
+    assert r.beam_effect(owner) is base and len(base.ball) == 26 and len(base.band) == 3
     for pid in (owner, other):
-        diff = abs(g._beam_effect(pid).hue - hue_of(player_color(pid)))
+        diff = abs(r.beam_effect(pid).hue - hue_of(player_color(pid)))
         assert min(diff, 180 - diff) <= 2                       # hue is circular

@@ -64,12 +64,19 @@ def test_hue_shift_and_too_few_frames(frames_dir, tmp_path_factory):
         FireRing(frames_dir, n_form=5, n_loop=5, form_s=0.3, fps=10)
 
 
-def test_game_shield_ring_per_team():
-    from ipcvgame.interaction.game import Game
-    cfg = load_config()["game"]
+def game_renderer():
+    """The renderer with the real config and the stub face effects."""
+    from ipcvgame.face.effects import FaceEffects
+    from ipcvgame.scene.renderer import Renderer
+    full = load_config()
+    return Renderer(full["render"], FaceEffects({**full["face"], "backend": "stub"}))
+
+
+def test_renderer_shield_ring_per_team():
+    cfg = load_config()["render"]
     if not (REPO_ROOT / cfg["shield_sprite"]).exists():
         pytest.skip("shield frames not in this checkout")
-    g = Game(cfg)
-    assert g._shield_effect(1) is g._shield_effect(1)
-    assert len(g._shield_effect(1).frames) == cfg["shield_form_frames"] + cfg["shield_loop_frames"]
-    assert abs(g._shield_effect(2).hue - hue_of(player_color(2))) <= 1
+    r = game_renderer()
+    assert r.shield_effect(1) is r.shield_effect(1)
+    assert len(r.shield_effect(1).frames) == cfg["shield_form_frames"] + cfg["shield_loop_frames"]
+    assert abs(r.shield_effect(2).hue - hue_of(player_color(2))) <= 1

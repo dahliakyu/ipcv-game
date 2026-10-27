@@ -429,72 +429,9 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # width, and hips not visible = 2 shoulder widths below the shoulders.
   min_shoulder_px: 10.0
   hip_below_shoulders: 2.0
-  # Debug view only (--until game): health bar length, so it depends on the
-  # player's distance to the camera but not on their arms. 2.5 face widths
-  # (Face.scale) is a little wider than the shoulders. Without a face, 1.3
-  # shoulder widths gives the same length: on the test clips the shoulder
-  # keypoints are 1.8-2.0 face widths apart (median).
-  debug_bar_face_widths: 2.5
-  debug_bar_shoulder_widths: 1.3
-  # Bolt look (normal attack), from the assets/beam frames: a fire blast.
-  # Split by phase: the first bolt_sprite_launch frames are the launch flash,
-  # the next bolt_sprite_flight frames loop while the bolt flies, and the rest
-  # (its break-up into sparks) play once over bolt_end_s where the bolt ends:
-  # a hit, a shield or the frame edge. null = a plain dot.
-  bolt_sprite: assets/beam
-  bolt_sprite_launch: 1
-  bolt_sprite_flight: 2
-  # 12 FPS: a common pixel-art rate; the two flight frames flicker like fire.
-  bolt_sprite_fps: 12
-  # The 3 break-up frames over 0.25 s, about the same rate.
+  # A bolt's end point (a hit, a shield or the frame edge) is kept this long,
+  # so the renderer can play its break-up there (game.Game.bolt_ends).
   bolt_end_s: 0.25
-  # Frame height as a fraction of the frame height: at 0.08 (58 px at 720p)
-  # the blast is ~27 px thick and ~240 px long. Its head is on the bolt's
-  # hit point and the flames trail behind it.
-  bolt_sprite_h: 0.08
-  # The frames' own colours (orange fire) suit P1, the red team. Other
-  # players get a copy with every hue turned so it takes their team colour.
-  bolt_effect_owner: 1
-  # Beam look (power attack), from the magic_effect pack: a magic ball between
-  # the player's hands (the beam's start point) and the beam coming out of
-  # it, as in the pack's preview (magic.gif). null = a plain line.
-  # beam_ball: the ball's frames, played once over the beam's whole life
-  # (charge + firing): it grows while charging, swirls while the beam fires
-  # and shrinks to a dot as it ends.
-  beam_ball: assets/magic_effect/M5025-*.png
-  # beam_band: the beam's cross-section, thickest first. The beam starts at
-  # the thinnest band, thickens one step every beam_ramp_s and thins again
-  # at the end; 0.1 s is the preview's frame time (10 FPS). The full band is
-  # as thick as the hit band (2 x beam_hit_radius_h).
-  beam_band: assets/magic_effect/L5020-*.png
-  beam_ramp_s: 0.1
-  # Ball frame height as a fraction of the frame height. The ball fills
-  # about half its frame, so 0.36 gives a ~130 px ball at 720p: three times
-  # the beam's thickness, as in the preview.
-  beam_ball_h: 0.36
-  # The pack's own colours (red) are this player's (P1, the red team). Other
-  # players get a copy with every hue turned by the same angle, so it takes
-  # their team colour (scene/draw.py).
-  beam_effect_owner: 1
-  # Shield look, from the assets/shield/FX019 frames: a ring of fire around
-  # the player's chest. The pack's first shield_form_frames frames form the
-  # ring (whirling arcs closing); they play once over shield_form_s, faster
-  # than the pack's 1.3 s, because the shield blocks from its first frame and
-  # lasts only shield_s. The next shield_loop_frames frames are the burning
-  # ring, looped at shield_sprite_fps (the pack's preview rate); the pack's
-  # remaining frames repeat them and are not used. The ring fades out with the
-  # shield (shield_fade_s). null = a plain ellipse.
-  shield_sprite: assets/shield/FX019
-  shield_form_frames: 13
-  shield_loop_frames: 16
-  shield_form_s: 0.3
-  shield_sprite_fps: 10
-  # Ring diameter in shoulder widths: 2.6 frames the upper body (shoulders
-  # plus arms crossed in front) at any distance from the camera.
-  shield_ring_sw: 2.6
-  # The ring's own colours (orange fire) are P1's (red team); others get a
-  # hue-turned copy in their team colour.
-  shield_effect_owner: 1
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
@@ -512,7 +449,72 @@ render:
   # Show per-stage timings and FPS in the corner of the game window.
   show_timings: true
   # Debug views (--until face, gestures, game): draw the face effects (hat,
-  # mustache) under the module's overlay, so the game debug view shows the
-  # effects and the game together until the renderer draws the game. Views
-  # before the face stage have no faces, so nothing changes there.
+  # mustache) under the module's overlay, so a recorded debug view shows them
+  # with the module's state. Views before the face stage have no faces, so
+  # nothing changes there.
   debug_face_effects: true
+  # --- Game look (moved from game: in the renderer merge; merge_log, Task 5).
+  # Health bar below the body (Task 4 modifications): its length depends on
+  # the player's distance to the camera but not on their arms. 2.5 face
+  # widths (Face.scale) is a little wider than the shoulders. Without a face,
+  # 1.3 shoulder widths gives the same length: on the test clips the shoulder
+  # keypoints are 1.8-2.0 face widths apart (median).
+  bar_face_widths: 2.5
+  bar_shoulder_widths: 1.3
+  # Bolt look (normal attack), from the assets/beam frames: a fire blast.
+  # Split by phase: the first bolt_sprite_launch frames are the launch flash,
+  # the next bolt_sprite_flight frames loop while the bolt flies, and the rest
+  # (its break-up into sparks) play once where the bolt ends (a hit, a
+  # shield or the frame edge), over game.bolt_end_s. null = a plain dot.
+  bolt_sprite: assets/beam
+  bolt_sprite_launch: 1
+  bolt_sprite_flight: 2
+  # 12 FPS: a common pixel-art rate; the two flight frames flicker like fire.
+  bolt_sprite_fps: 12
+  # Frame height as a fraction of the frame height: at 0.08 (58 px at 720p)
+  # the blast is ~27 px thick and ~240 px long. Its head is on the bolt's
+  # hit point and the flames trail behind it.
+  bolt_sprite_h: 0.08
+  # The frames' own colours (orange fire) suit P1, the red team. Other
+  # players get a copy with every hue turned so it takes their team colour.
+  bolt_effect_owner: 1
+  # Beam look (power attack), from the magic_effect pack: a magic ball between
+  # the player's hands (the beam's start point) and the beam coming out of
+  # it, as in the pack's preview (magic.gif). null = a plain line.
+  # beam_ball: the ball's frames, played once over the beam's whole life
+  # (charge + firing): it grows while charging, swirls while the beam fires
+  # and shrinks to a dot as it ends.
+  beam_ball: assets/magic_effect/M5025-*.png
+  # beam_band: the beam's cross-section, thickest first. The beam starts at
+  # the thinnest band, thickens one step every beam_ramp_s and thins again
+  # at the end; 0.1 s is the preview's frame time (10 FPS). The full band is
+  # as thick as the hit band (2 x game.beam_hit_radius_h).
+  beam_band: assets/magic_effect/L5020-*.png
+  beam_ramp_s: 0.1
+  # Ball frame height as a fraction of the frame height. The ball fills
+  # about half its frame, so 0.36 gives a ~130 px ball at 720p: three times
+  # the beam's thickness, as in the preview.
+  beam_ball_h: 0.36
+  # The pack's own colours (red) are this player's (P1, the red team). Other
+  # players get a copy with every hue turned by the same angle, so it takes
+  # their team colour (scene/draw.py).
+  beam_effect_owner: 1
+  # Shield look, from the assets/shield/FX019 frames: a ring of fire around
+  # the player's chest. The pack's first shield_form_frames frames form the
+  # ring (whirling arcs closing); they play once over shield_form_s, faster
+  # than the pack's 1.3 s, because the shield blocks from its first frame and
+  # lasts only game.shield_s. The next shield_loop_frames frames are the burning
+  # ring, looped at shield_sprite_fps (the pack's preview rate); the pack's
+  # remaining frames repeat them and are not used. The ring fades out with the
+  # shield (game.shield_fade_s). null = no ring.
+  shield_sprite: assets/shield/FX019
+  shield_form_frames: 13
+  shield_loop_frames: 16
+  shield_form_s: 0.3
+  shield_sprite_fps: 10
+  # Ring diameter in shoulder widths: 2.6 frames the upper body (shoulders
+  # plus arms crossed in front) at any distance from the camera.
+  shield_ring_sw: 2.6
+  # The ring's own colours (orange fire) are P1's (red team); others get a
+  # hue-turned copy in their team colour.
+  shield_effect_owner: 1

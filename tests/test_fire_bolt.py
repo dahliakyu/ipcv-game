@@ -67,13 +67,22 @@ def test_too_few_frames_raise(tmp_path):
         FireBolt(tmp_path, n_launch=1, n_flight=2, fps=10, end_s=0.3)
 
 
-def test_game_gives_each_team_its_own_bolt_colour():
+def game_renderer():
+    """The renderer with the real config and the stub face effects."""
+    from ipcvgame.face.effects import FaceEffects
+    from ipcvgame.scene.renderer import Renderer
+    full = load_config()
+    return Renderer(full["render"], FaceEffects({**full["face"], "backend": "stub"}))
+
+
+def test_renderer_gives_each_team_its_own_bolt_colour():
     from ipcvgame.interaction.game import Game
-    cfg = load_config()["game"]
+    full = load_config()
+    cfg = full["render"]
     if not (REPO_ROOT / cfg["bolt_sprite"]).exists():
         pytest.skip("bolt frames not in this checkout")
-    g = Game(cfg)
-    assert g._bolt_effect(1) is g._bolt_effect(1) and len(g._bolt_effect(1).frames) == 6
+    r, g = game_renderer(), Game(full["game"])
+    assert r.bolt_effect(1, g) is r.bolt_effect(1, g) and len(r.bolt_effect(1, g).frames) == 6
     for pid in (1, 2):
         if pid != cfg["bolt_effect_owner"]:
-            assert abs(g._bolt_effect(pid).hue - hue_of(player_color(pid))) <= 1
+            assert abs(r.bolt_effect(pid, g).hue - hue_of(player_color(pid))) <= 1

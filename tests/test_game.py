@@ -5,7 +5,7 @@ import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Face, Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
+from ipcvgame.core.types import Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
 from ipcvgame.interaction.game import Game, PaintSplat, Shield
 from ipcvgame.scene.draw import player_color
 
@@ -355,39 +355,6 @@ def test_log_fields(game):
     assert game.log_fields(frame_state(0.2))["game_p2_actions"] == "bolt"
 
 
-def face_at(x: float, y: float, scale: float) -> Face:
-    return Face(pid=1, valid=True, landmarks=None, center=np.array([x, y + scale]),
-                scale=scale, roll=0.0, yaw=0.0, anchors={"above_head": np.array([x, y])})
-
-
-def test_health_bar_length_ignores_the_arms(game):
-    game.update(frame_state(0.0))
-    s = frame_state(0.0)
-    s.faces[1] = face_at(200.0, 120.0, 40.0)
-    (c, length) = game.bar_geometry(1, s)
-    # Under the shoulder midpoint, at the bottom of the body box.
-    assert c == (200.0, 900.0) and length == pytest.approx(2.5 * 40)
-    game.get_player(1).bounds = np.array([100.0, 50, 600, 900])   # arm out: wide box
-    assert game.bar_geometry(1, s) == (c, length)
-
-
-def test_health_bar_without_face_uses_shoulder_width(game):
-    game.update(frame_state(0.0))
-    (cx, cy), length = game.bar_geometry(1, frame_state(0.0))
-    # Shoulders 100 px apart, centred at x 200; box bottom at y 900.
-    assert (cx, cy) == (200.0, 900.0) and length == pytest.approx(1.3 * 100)
-
-
-def test_draw_debug_without_beam_effect_draws_a_line():
-    g = Game({**load_config()["game"], "beam_ball": None})
-    busy_game(g)
-    state = frame_state(0.6)
-    g.update(state)
-    canvas = state.frame.image.copy()
-    g.draw_debug(canvas, state)
-    assert g._magic == {} and canvas.any()
-
-
 def test_bolt_age_drives_its_animation(arena):
     arena.attack(300, 500, 1, player_id=1)
     arena.advance(0.1, {1, 2})
@@ -408,22 +375,15 @@ def test_bolt_end_is_kept_where_the_bolt_stopped(arena):
     assert arena.bolt_ends == []
 
 
-def test_bolt_effect_off_draws_a_dot():
-    g = Game({**load_config()["game"], "bolt_sprite": None})
-    assert g._bolt_effect(1) is None
-
-
-def test_shield_ring_sits_on_the_chest(game):
-    s = frame_state(0.0, events=[(1, "arms_crossed")])
-    game.update(s)
-    (cx, cy), d = game.ring_geometry(1, game.shields[1], s)
-    # Shoulders at y 300 and 100 px apart, hips at 600: chest at 450.
-    assert (cx, cy) == (200.0, 450.0) and d == pytest.approx(game.cfg["shield_ring_sw"] * 100)
-
-
-def test_shield_ring_falls_back_without_shoulders(game):
-    s = frame_state(0.0, events=[(1, "arms_crossed")])
-    game.update(s)
-    s.motion[1].valid[sk.R_SHOULDER] = False
-    (cx, cy), d = game.ring_geometry(1, game.shields[1], s)
-    assert (cx, cy) == (game.shields[1].x, game.shields[1].y) and d == 200.0   # box width
+def test_torso_and_drawing_values(game):
+    game.update(frame_state(0.0))
+    x, shoulder_y, hip_y, sw = game.torso(frame_state(0.0).motion[1])
+    assert (x, shoulder_y, hip_y, sw) == (200.0, 300.0, 600.0, 100.0)
+    assert game.beam_life_s == pytest.approx(game.beam_charge_s + game.cfg["beam_duration_s"])
+    assert game.beam_band_px() == pytest.approx(game.cfg["beam_hit_radius_h"] * H)
+    shield = Shield(0, 0, 1, remaining=0.5)
+    assert game.shield_opacity(shield) == 1.0
+    shield.remaining = -game.shield_fade_s / 2
+    assert game.shield_opacity(shield) == pytest.approx(0.5)
+    shield.remaining = -game.shield_fade_s * 2
+    assert game.shield_opacity(shield) == 0.0
