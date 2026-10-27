@@ -10,7 +10,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 1. **Gestures (Task 4, with Task 2 signals).** Done: `interaction/gestures.py` sends `punch`, `hands_up` and `arms_crossed` events (merge log, Task 4, steps 1–4).
 2. **Game logic (Task 4).** Done up to the status update: `interaction/game.py` runs the game from those events (merge log, Task 4, steps 5–8 and Task 4 modifications).
-3. **Rendering (Task 5).** Move `garb/rest/renderer.py` into `scene/renderer.py`, drawing at face anchors instead of its own `head_x`/`head_y` from the pose.
+3. **Rendering (Task 5).** Done: `scene/renderer.py` draws the game from `renderer.py` (merge log, Task 5: Renderer).
 4. **Identity (Task 3).** Done: `identity/tracker.py` runs BoT-SORT and OSNet re-identification (merge log, Task 3).
 
 ### What the face stage already gives you
@@ -352,7 +352,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 | Webcam check of the face stage | The crop shrinking, head pose and MediaPipe changes (merge log, Task 1 modifications) were tested on clips and photos; check chin up and down, turning, mouth and blink bars, and `hat_depth_mm` live | `face:` config |
 | Jitter on a still clip | The test clips are all moving; shrinking crops and the head pose may add shake that only a still clip shows | `tools/eval_face.py` on the shared `normal` clip |
 | MediaPipe GPU delegate | MediaPipe costs ~8 ms per frame on the CPU; the GPU delegate may cut that | `face/landmarker.py` |
-| Remove `garb/` | The teammates' original code is ignored by git only while the merge runs; delete it and its `.gitignore` entry at the end | `.gitignore` |
+| Remove `garb/` | Everything in it is merged or deliberately left out (merge log); delete it and its `.gitignore` entry once the owners have checked the merge | `.gitignore` |
 | `core/types.py` heads-up | Two fields were added during the merge: `Face.alpha` and `Face.blendshapes`; mention them in the merge PR | merge PR description |
 
 ## Considered, not planned

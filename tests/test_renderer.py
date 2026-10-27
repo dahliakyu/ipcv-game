@@ -176,3 +176,12 @@ def test_health_bar_length_is_smoothed(game):
     r.draw(s1, game)
     smoothed = r._bar_len[1].x[0]
     assert 2.5 * 40 < smoothed < 2.5 * 40 + 0.2 * (1.3 * 100 - 2.5 * 40)
+
+
+def test_text_fits_a_narrow_frame():
+    import cv2
+
+    from ipcvgame.scene.renderer import CONTROLS, fit_scale
+    scale = fit_scale(CONTROLS, 1.5, 1, 200)
+    assert cv2.getTextSize(CONTROLS, cv2.FONT_HERSHEY_PLAIN, scale, 1)[0][0] <= 200
+    assert fit_scale("OK", 1.5, 1, 200) == 1.5

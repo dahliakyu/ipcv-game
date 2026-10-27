@@ -35,6 +35,7 @@ from ipcvgame.scene.magic_beam import MagicBeam
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
 # renderer.py's controls line, with our three gestures and what they fire.
 CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
+KEYS = "R: NEW ROUND   Q: QUIT"
 
 
 class Renderer:
@@ -96,16 +97,23 @@ class Renderer:
         title, text = self._scale(canvas, "hud_title_scale"), self._scale(canvas, "hud_text_scale")
         thick = max(1, int(round(text)))
         cv2.rectangle(canvas, (0, 0), (w, bar), (27, 16, 17), -1)
+        (title_w, _), _ = cv2.getTextSize("COLOUR CLASH", cv2.FONT_HERSHEY_PLAIN, title, thick)
         cv2.putText(canvas, "COLOUR CLASH", (12, int(bar * 0.68)), cv2.FONT_HERSHEY_PLAIN, title,
                     player_color(1), thick, cv2.LINE_8)
         status = CONTROLS if has_player else "STEP INTO VIEW"
-        (tw, _), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_PLAIN, text, thick)
-        cv2.putText(canvas, status, (w - tw - 12, int(bar * 0.65)), cv2.FONT_HERSHEY_PLAIN, text, WHITE,
+        # Shrunk to fit beside the title on a narrow frame.
+        scale = fit_scale(status, text, thick, w - title_w - 36)
+        (tw, _), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        cv2.putText(canvas, status, (w - tw - 12, int(bar * 0.65)), cv2.FONT_HERSHEY_PLAIN, scale, WHITE,
                     thick, cv2.LINE_8)
         if not game_over:
-            cv2.putText(canvas, "R: NEW ROUND   Q: QUIT", (12, h - 12), cv2.FONT_HERSHEY_PLAIN, text, WHITE,
-                        thick, cv2.LINE_8)
+            cv2.putText(canvas, KEYS, (12, h - 12), cv2.FONT_HERSHEY_PLAIN,
+                        fit_scale(KEYS, text, thick, w - 24), WHITE, thick, cv2.LINE_8)
         return bar
+
+    def _keys_strip(self, canvas: np.ndarray) -> int:
+        """Height (px) of the key line at the bottom, which health bars keep clear of."""
+        return int(14 * self._scale(canvas, "hud_text_scale")) + 12
 
     def _draw_game_over(self, canvas: np.ndarray, winner_id: int) -> None:
         """renderer.py's end panel: the frame dimmed, a dark panel in the
@@ -121,8 +129,9 @@ class Renderer:
         cv2.rectangle(canvas, *corners, color, max(2, int(3 * k)), cv2.LINE_8)
         cv2.putText(canvas, f"PLAYER {winner_id} WINS!", (left + int(28 * k), top + int(38 * k)),
                     cv2.FONT_HERSHEY_PLAIN, 2 * k, color, max(1, int(2 * k)), cv2.LINE_8)
-        cv2.putText(canvas, "R: NEW ROUND   Q: QUIT", (left + int(28 * k), top + int(66 * k)),
-                    cv2.FONT_HERSHEY_PLAIN, k, WHITE, max(1, int(k)), cv2.LINE_8)
+        cv2.putText(canvas, KEYS, (left + int(28 * k), top + int(66 * k)),
+                    cv2.FONT_HERSHEY_PLAIN, fit_scale(KEYS, k, max(1, int(k)), panel_w - int(40 * k)), WHITE,
+                    max(1, int(k)), cv2.LINE_8)
 
     # ------------------------------------------------------ paint and health
 
@@ -187,7 +196,7 @@ class Renderer:
         label_h = int(12 * font)
         left = int(min(max(cx - length / 2, 4), w - length - 4))
         right = left + int(length)
-        top = int(min(cy + bar_h, h - bar_h - 4))
+        top = int(min(cy + bar_h, h - bar_h - 4 - self._keys_strip(canvas)))
         color = player_color(pid)
         cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), (27, 16, 17), -1)
         cv2.putText(canvas, f"PLAYER {pid}", (left, top - 3), cv2.FONT_HERSHEY_PLAIN, font, color, 1,
@@ -313,6 +322,12 @@ class Renderer:
         return self._team_copy(self._rings, cfg["shield_effect_owner"], owner_id, lambda shift: FireRing(
             cfg["shield_sprite"], cfg["shield_form_frames"], cfg["shield_loop_frames"],
             cfg["shield_form_s"], cfg["shield_sprite_fps"], shift))
+
+
+def fit_scale(text: str, scale: float, thickness: int, max_w: float) -> float:
+    """The font scale, made smaller if needed so `text` is at most max_w px wide."""
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thickness)
+    return scale if tw <= max_w else scale * max(max_w, 1.0) / tw
 
 
 def pixelate(image: np.ndarray, size: int) -> np.ndarray:

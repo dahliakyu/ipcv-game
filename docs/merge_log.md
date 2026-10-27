@@ -205,6 +205,21 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Constants:** `REID_THRESHOLD`, `NEW_PLAYER_CONFIRMATION`, `MAX_PLAYERS`, `MIN_PERSON_HEIGHT`, `MIN_PERSON_WIDTH` and `botsort.yaml` are in `configs/default.yaml`, `identity:` section; see steps 2 and 3 for the tables.
 
+#### `renderer.py` (game view)
+
+| In your code | Now in | Note |
+| --- | --- | --- |
+| `Renderer.render(camera_frame, game, pose)` | `scene/renderer.py`, `Renderer.draw(state, game)` | Pixels; positions from the frame state |
+| Pixelated camera image (half size, nearest pixel) | `scene/renderer.py`, `pixelate()` | `render.pixel_size` |
+| `_draw_player_paint()` | `scene/renderer.py`, `_draw_player_paint()` + `paint_area()` | On the torso, not the body box |
+| `_draw_player_health()` | `scene/renderer.py`, `_draw_player_health()` + `bar_geometry()` | Below the body; length smoothed |
+| Top bar, controls, "STEP INTO VIEW", "Q: QUIT" | `scene/renderer.py`, `_draw_hud()` | Our three gestures; text fitted to the frame |
+| `_draw_game_over()` | `scene/renderer.py`, `_draw_game_over()` | Dimmed frame; objects in flight hidden |
+| Bolt rectangles, `_draw_paint_beam()`, `_draw_shield()`, `_draw_shield_splash()`, palette `.jpg` | Not merged | Replaced by the fire blast, magic beam and fire ring (Task 4 modifications), now drawn by `Renderer.draw_game()` |
+| `main.py`: key `r` after a win → `game.reset()` | `app/main.py` key `r` → `Pipeline.new_round()` | Any time; `R` = full reset |
+
+**Constants:** sizes and switches in `configs/default.yaml`, `render:` section; see steps 2–4 of the renderer merge.
+
 ### Modifications: changes beyond moving code
 
 #### Task 1
@@ -270,6 +285,16 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - **Linked tracks are checked (step 5, new):** the same OSNet run moves or swaps a link when the crop looks more like the other player. On a copy of the session clip with the frame halves swapped, the players were wrong for 6 of 120 frames instead of 60.
 - **Faces only (step 5, new):** a track is identified only when the pose model sees a nose or an eye (`min_face_conf` 0.5), so a coat never becomes a player.
 - **Debug view and CSV columns (step 4):** track id and similarity per player; OSNet runs per frame; OSNet warm-up at start-up.
+
+#### Renderer
+
+- **The renderer draws the game (step 1):** the sprites (fire blast, magic ball and beam, ring of fire) moved from `Game` to `scene/renderer.py`; the game logic has no drawing left except its debug view (plain shapes).
+- **Paint on the torso (step 4, new):** splats are drawn between the shoulders and from the shoulder line to the hips, so they stay on the body when an arm goes out; `renderer.py` drew them in the body box, which widens with the arms.
+- **Health bar below the body (Task 4 modifications)** instead of above the head, with a length that does not change with the arms and is smoothed (step 4).
+- **No frozen end (step 3, new):** after a win, the frame is dimmed behind the panel, and bolts and beams in flight are not drawn (the game stops then, as in `game.py`).
+- **Key `r` any time (step 3):** a new round with the same players; `R` resets everything, including identity.
+- **Face effects** are drawn on top of the game objects (new; `renderer.py` had none).
+- **Sizes scale with the frame** instead of fixed pixels at 640 × 480; text shrinks to fit a narrow frame (step 5).
 
 ## Task 1: Face tracking and AR
 
@@ -1555,3 +1580,13 @@ Two problems the Task 5 owner saw in the game view after step 3.
 **Changed:** `src/ipcvgame/interaction/game.py`: `Game.splat_band` (read-only, for drawing). `configs/default.yaml`: `splat_cell_w` / `splat_cell_h` are fractions of the torso now ([0.04, 0.05] and [0.04, 0.06]: `renderer.py`'s sizes, as the box is ~2 shoulder widths wide and ~2.5 torso heights tall); `bar_length_tau_s: 1.0` (new).
 
 **Added:** `tests/test_renderer.py`: the paint area stays the same when the box widens, with the box band as fallback; the bar length is smoothed when the face is missed.
+
+#### Step 5 · Check and record
+
+Runs with `--record-view` on `data/clips/session.mp4` (a full round, to the winner panel) and both test clips.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: on the 428 px wide fitness clip, the controls line ran over the title, and the health bars covered the key line. `fit_scale()` shrinks a line to the space it has; the health bars stay above the key line.
+
+**Added:** `tests/test_renderer.py`: text fitted to a narrow frame.
+
+**Changed:** `docs/merge_log.md`: Change Overviews for `renderer.py`. `docs/phase-1/status.md`: renderer row, render timing, test count. `docs/extra_features.md`: rendering done; removing `garb/` is now possible.

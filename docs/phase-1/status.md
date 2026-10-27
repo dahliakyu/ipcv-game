@@ -13,7 +13,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `core/` contracts, skeleton, filters, timing, config | Task 5 | Done | `types.py` is exactly the agreed contract |
 | `io/source.py` webcam + video file | Task 5 | Done | Mirrored at capture; clips replay real timestamps |
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
-| `scene/` renderer (OpenCV) | Task 5 | Phase-1 version | Moves to `pygame-ce` once the game is designed |
+| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars, top bar, end panel |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
@@ -22,7 +22,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
 | `interaction/game.py` | Task 4 | Stub | Prints events; Colour Clash game logic is the next merge |
 
-Tests: 200 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 209 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -126,7 +126,7 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 | motion (EMA smoothing), gestures (rules) | ~0.1 each |
 | identity (BoT-SORT + OSNet, one crop every few frames) | ~0.5 median, ~3 mean, ~13 on frames with an OSNet run |
 | game | < 0.1 |
-| render | ~1 |
+| render (pixel look, sprites, HUD) | ~4.5 at 720p; ~14 on a 4K clip |
 | **total** | **~11** |
 
 The pipeline itself could run at ~90 FPS. In the first live test, the webcam delivered only ~15 fps (68 ms between frames), which is likely auto-exposure in dim light. This needs checking before we record the shared clips (see Task 5 below).
