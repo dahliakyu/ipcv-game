@@ -270,6 +270,22 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 **Check.** Two new players get through the instructions in under ~30 s; a player who does not perform a move is reminded; the calibration values are logged per player (`log_fields`) and stay stable when the round restarts.
 
+### 13. Paint stains that stick to the body
+
+**What.** Paint splats from hits stay on the spot of the body where they landed. Today they float: a splat is stored as a fraction of the person box (`PaintSplat.x/y` in `interaction/game.py`, from `game.py`), and the box grows and shrinks with the arms. On a punch or hands up the box widens or grows taller, and every splat slides with it, even though the torso did not move.
+
+**Owners.** Task 4: splat coordinates in `interaction/game.py`. Task 5: drawing them in the renderer.
+
+**Design.**
+
+- **Torso coordinates.** Store a splat in the torso quad from the smoothed keypoints (`state.motion`): `u` from the left to the right side (shoulder line at the top, hip line at the bottom), `v` from the shoulders (0) to the hips (1). Hit point → (`u`, `v`) by inverting the bilinear map of the 4 corners; drawing → bilinear map back. The splat follows leaning, turning and stepping, but not the arms.
+- **Size** in shoulder widths instead of box widths, so it does not grow when the arms go out.
+- **Missing keypoints:** hips not visible → hip level 2 shoulder widths below the shoulders (as `game.hip_below_shoulders`); no shoulders → keep the last torso quad for a short hold, then fall back to the box.
+- **Band.** `splat_band` (0.38–0.62 of the box today) becomes a band in torso coordinates (e.g. `u` 0.1–0.9, `v` 0.05–0.9), so splats land on the shirt.
+- **Turned body.** When the shoulder width drops (player turns sideways), squash the splats horizontally with it; hide splats on a side that is turned away (optional).
+
+**Check.** A player with splats raises and lowers their arms: the splats stay on the shirt (log the splat positions relative to the shoulder midpoint; they should not move by more than a few px). Leaning and stepping sideways: the splats move with the torso.
+
 ## Technical follow-ups from the Task 3 merge
 
 | Item | Why | Where |
