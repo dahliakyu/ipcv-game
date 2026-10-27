@@ -275,7 +275,7 @@ Each module reads only its own config section; the renderer reads game timings f
 - **Phases:** `waiting` → `calibration` → `countdown` → `playing` → `result`. Damage, bolts and beams only count in `playing`.
   - **Play again** (decided 2026-10-28): from `result`, both players with hands up for ~2 s (or key `r`) go straight to `countdown`. The same players keep their calibration, so they do not see the instructions again.
   - **Back to `waiting`:** key `R` (full reset). Identity then forgets the players too; during a round no new player can appear, because identity keeps P1 and P2 until a reset.
-- **Waiting.** "Player 1: stand on the left / Player 2: on the right", with each player's box ticked in the team colour once identity has them (`status == "active"`), both faces visible.
+- **Waiting.** "Player 1: stand on the left / Player 2: on the right". A start place is ticked in its team colour once someone stands in it: a player identity sees (`status == "active"`) with a visible face, in that half of the frame (decided 2026-10-28). The tick goes by position, not by player number, because identity numbers players in the order it first sees them.
 - **Instructions with calibration.** One move at a time per player (decided 2026-10-28), on a panel on the player's own half of the frame: first the neutral pose (below), then punch, hands up and arms crossed. Each move shows a small picture of the pose and its effect, and is ticked off when its gesture event arrives. A move not done within ~8 s flashes as a reminder. Nothing fires during this phase, so it doubles as a practice round.
 - **Pose calibration** while the players stand in a neutral pose, facing the camera, for ~2 s:
   - shoulder width and arm length per player (median over the frames), so gesture thresholds in shoulder widths can be checked per player, e.g. a short arm still reaches `punch_min_reach`;
@@ -291,7 +291,7 @@ Each module reads only its own config section; the renderer reads game timings f
 1. **Game phases** (Task 4, `interaction/game.py`). *Done.*
    - `Game.phase` with the five phases and the time since the phase started.
    - Transitions:
-     - `waiting` → `calibration`: P1 and P2 active with a valid face for ~1 s.
+     - `waiting` → `calibration`: both start places taken for ~1 s (`place_taken()`: someone active with a face, by shoulder midpoint, in the left or right half).
      - `calibration` → `countdown`: both players have done every move.
      - `countdown` → `playing`: after 3 s.
      - `playing` → `result`: a winner.
@@ -302,18 +302,19 @@ Each module reads only its own config section; the renderer reads game timings f
    - `game.round_players: 1` (or `main.py --solo`) tests the intro with one player: only P1 is waited for, calibrated and asked for the replay. A solo round has no opponent, so it never ends; use `r` or `R`. Steps 2–5 keep this working: the screens show only P1's place and panel, and the P1-left swap is skipped.
    - The phase is shown in `--until game` and logged as `game_phase`; the next calibration move as `game_p<pid>_move`.
    - As built: `Game.phase`, `phase_elapsed()`, `current_move(pid)`, `new_round()` (key `r`) and `reset()` (key `R`). `GamePlayer.move` / `move_t` hold each player's calibration progress. Holds (`ready_s`, `replay_hold_s`) survive short dropouts (`hold_gap_s`). Hands up for the replay uses the gesture rule `detect_hands_up()` per frame, because an event only marks its start. A ticked move is logged as the action `learned_<move>`.
-2. **Waiting, countdown and result screens** (Task 5, `scene/renderer.py`).
-   - Waiting: the two start places, each ticked in the team colour.
-   - Countdown: 3-2-1 in the middle.
-   - Result: from `_draw_game_over()`, with final health and "hands up to play again".
-   - The top bar says what the phase expects.
+2. **Waiting, countdown and result screens** (Task 5, `scene/renderer.py`). *Done.*
+   - Waiting: the start places (`start_place()`), dashed with "STAND HERE" until taken, then solid with a tick and "READY". With one player, a single place in the middle.
+   - Countdown: 3-2-1 in the middle, each number settling over its second; "FIGHT!" for `fight_s` once the round starts.
+   - Result: `_draw_game_over()` with each player's final HP in their colour, and "HANDS UP TO PLAY AGAIN" with a bar that fills during the hold (`Game.hold_fraction()`).
+   - The top bar says what the phase expects (`status_text()`). Health bars are shown from the countdown on.
+   - New `render:` keys: `start_place_w`, `start_place_y`, `start_text_scale`, `countdown_h`, `fight_s`.
 3. **Instruction panels** (Task 5, `scene/renderer.py`). Per player, on their half: a stick-figure picture of the current move (drawn with OpenCV lines from a few fixed joint positions, no image assets), its effect, ticks for the moves done, and the reminder flash.
 4. **Pose calibration** (Task 2 measurements, Task 4 rules).
    - The neutral pose as the first calibration move: shoulders and hips seen, wrists below the shoulders, face towards the camera, for ~2 s.
    - Per player, the median shoulder width and arm length (shoulder–elbow–wrist), from a new `pose/measure.py`.
    - Kept on a new round; a warning when the arm is too short for `gestures.punch_min_reach`; logged in `log_fields`.
 5. **Identity at calibration** (Task 3, `identity/tracker.py`, wired in `app/pipeline.py`).
-   - P1 becomes the left player when calibration starts (the links are swapped if needed; follow-up "P1 / P2 order").
+   - P1 becomes the player in the left place when calibration starts (the links are swapped if needed; follow-up "P1 / P2 order"), so the place colours and the player colours match from then on.
    - The OSNet vector taken during the neutral pose replaces the first-sight vector.
 6. **Depth reference** (Task 3, `Player.pos`): depth relative to the calibration distance, from the calibrated shoulder width (pinhole model: depth ∝ 1 / shoulder width).
 7. **Docs and webcam check.** Update the code map and the README keys; the Task 5 owner runs the full intro with two players on the webcam.

@@ -512,6 +512,21 @@ render:
   # End of the game: the frame behind renderer.py's panel is darkened to this
   # fraction, so the panel stands out and nothing looks frozen.
   game_over_dim: 0.5
+  # --- Screens around the round (feature 12, docs/extra_features.md).
+  # Waiting: each player's start place, a box this wide (fraction of the
+  # frame width) in their half of the frame; 0.3 is about a player with
+  # arms down at the usual distance. From just under the top bar to just
+  # above the bottom (fractions of the height), so it frames the whole body.
+  start_place_w: 0.3
+  start_place_y: [0.1, 0.95]
+  # Font scale of "PLAYER N" and "STAND HERE" at 480p (as the hud_*_scale
+  # values), larger than the top bar so it reads from a few metres away.
+  start_text_scale: 1.6
+  # Countdown: the 3-2-1 numbers are this fraction of the frame height, big
+  # enough to see from the play area.
+  countdown_h: 0.3
+  # "FIGHT!" stays this long once a round starts after the countdown.
+  fight_s: 0.8
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest

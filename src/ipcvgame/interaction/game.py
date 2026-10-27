@@ -15,7 +15,8 @@ game by the real time since the last frame.
 
 Phases (feature 12, docs/extra_features.md), in ``Game.phase``:
 
-- ``waiting``: until P1 and P2 are both in view with a face (``ready_s``).
+- ``waiting``: until both start places are taken (``ready_s``): someone in
+  view with a face stands in each half of the frame (``place_taken()``).
 - ``calibration``: each player performs the moves of ``CALIBRATION_MOVES``
   in turn; a move's gesture event ticks it off instead of firing.
 - ``countdown``: ``countdown_s``, then a fresh round.
@@ -167,6 +168,7 @@ class Game:
         # The players a round needs: P1 and P2, or P1 alone (round_players: 1).
         self.round_players = tuple(range(1, int(cfg["round_players"]) + 1))
         self._hold = _Hold()                 # the condition that ends this phase
+        self._held = 0.0                     # how long it has held (s), for hold_fraction()
         # Phase lengths and the beam's hit band, for drawing (the renderer
         # reads them here instead of from the game: config).
         self.beam_charge_s = float(cfg["beam_charge_s"])
@@ -373,7 +375,7 @@ class Game:
     # ----------------------------------------------------------------- phases
 
     def _enter(self, phase: str, t: float | None) -> None:
-        self.phase, self.phase_t, self._hold = phase, t, _Hold()
+        self.phase, self.phase_t, self._hold, self._held = phase, t, _Hold(), 0.0
         if phase == "calibration":
             for pid in self.round_players:
                 player = self.get_player(pid)
@@ -388,8 +390,9 @@ class Game:
         """Move to the next phase once this one's condition is met."""
         cfg = self.cfg
         if self.phase == "waiting":
-            ready = all(self._in_view(state, pid) for pid in self.round_players)
-            if self._hold.update(ready, t, cfg["hold_gap_s"]) >= cfg["ready_s"]:
+            ready = all(self.place_taken(state, place) for place in self.round_players)
+            self._held = self._hold.update(ready, t, cfg["hold_gap_s"])
+            if self._held >= cfg["ready_s"]:
                 self._enter("calibration", t)
         elif self.phase == "calibration":
             if all(self.current_move(pid) is None for pid in self.round_players):
@@ -399,7 +402,8 @@ class Game:
                 self._enter("playing", t)
         elif self.phase == "result":
             up = all(self._hands_up(state, pid) for pid in self.round_players)
-            if self._hold.update(up, t, cfg["hold_gap_s"]) >= cfg["replay_hold_s"]:
+            self._held = self._hold.update(up, t, cfg["hold_gap_s"])
+            if self._held >= cfg["replay_hold_s"]:
                 self._start_round(t)
 
     def phase_elapsed(self) -> float:
@@ -407,6 +411,16 @@ class Game:
         if self._t is None or self.phase_t is None:
             return 0.0
         return self._t - self.phase_t
+
+    def countdown_left(self) -> float:
+        """Seconds left in the countdown (0 in the other phases)."""
+        return max(0.0, self.countdown_s - self.phase_elapsed()) if self.phase == "countdown" else 0.0
+
+    def hold_fraction(self) -> float:
+        """How far the hold that ends this phase has got, 0-1: everyone in
+        view (waiting), or everyone's hands up (result); 0 in the other phases."""
+        target = {"waiting": self.cfg["ready_s"], "result": self.cfg["replay_hold_s"]}.get(self.phase)
+        return 0.0 if target is None else min(1.0, self._held / target)
 
     def current_move(self, pid: int) -> str | None:
         """The calibration move pid has to perform next; None when all are done."""
@@ -421,8 +435,25 @@ class Game:
             player.move, player.move_t = player.move + 1, t
             self.actions.append((pid, f"learned_{gesture}"))
 
+    def place_taken(self, state: FrameState, place: int) -> bool:
+        """Waiting: someone in view with a face stands in start place `place`
+        (1 = P1's, the left half of the frame; 2 = the right half; one player:
+        the whole frame), by their shoulder midpoint (box centre without
+        shoulders). Whoever it is: identity numbers players in the order it
+        first sees them, not by where they stand."""
+        n, w = len(self.round_players), state.frame.image.shape[1]
+        lo, hi = (place - 1) / n * w, place / n * w
+        for pid, p in state.players.items():
+            if not self.in_view(state, pid):
+                continue
+            pos = self.body_position(state.motion[pid]) if pid in state.motion else None
+            x = pos[0] if pos is not None else (p.bbox[0] + p.bbox[2]) / 2.0
+            if lo <= x < hi:
+                return True
+        return False
+
     @staticmethod
-    def _in_view(state: FrameState, pid: int) -> bool:
+    def in_view(state: FrameState, pid: int) -> bool:
         """pid is seen by the identity stage and has a face."""
         p, face = state.players.get(pid), state.faces.get(pid)
         return p is not None and p.status == "active" and face is not None and face.valid

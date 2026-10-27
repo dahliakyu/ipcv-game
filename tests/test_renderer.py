@@ -9,6 +9,7 @@ from ipcvgame.core.types import Face
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import Game
 from ipcvgame.scene.draw import player_color
+from ipcvgame.scene.renderer import WHITE as WHITE_PX
 from ipcvgame.scene.renderer import Renderer
 from tests.test_game import busy_game, frame_state
 
@@ -97,7 +98,7 @@ def test_hud_and_game_over_hide_objects_in_flight(game):
     playing = r.draw(state, game)
     assert playing[: int(r.cfg["hud_h"] * 1000)].any()                  # top bar drawn
     assert tuple(playing[at_bolt]) == player_color(bolt.owner_id)       # the bolt is drawn
-    game.winner_id = 1
+    game.winner_id, game.phase = 1, "result"
     over = r.draw(state, game)
     h, w = over.shape[:2]
     mid = over[h // 2 - 60:h // 2 + 60, w // 2 - 200:w // 2 + 200]
@@ -156,3 +157,83 @@ def test_health_bars_pinned_to_the_bottom_corners(game):
     lost = frame_state(0.0, xs=(800.0, 200.0), lost=(2,))
     lost.frame.image[:] = 0
     assert np.all(r.draw(lost, game)[h - 60:] == player_color(2), axis=2).any()   # still shown
+
+
+# --- Screens around the round (feature 12) ---------------------------------
+
+def intro_game(**over) -> Game:
+    return Game({**CFG["game"], "intro": True, **over})
+
+
+def plain() -> Renderer:
+    return renderer(pixel_size=1, show_timings=False, bolt_sprite=None, beam_ball=None, shield_sprite=None)
+
+
+def dark(t: float = 0.0, **kw):
+    s = frame_state(t, **kw)
+    s.frame.image[:] = 0
+    return s
+
+
+def middle(canvas: np.ndarray) -> np.ndarray:
+    h, w = canvas.shape[:2]
+    return canvas[int(0.3 * h):int(0.7 * h), int(0.42 * w):int(0.58 * w)]
+
+
+def test_status_text_per_phase():
+    from ipcvgame.scene.renderer import CONTROLS, PHASE_TEXT, status_text
+    assert status_text("playing", True) == CONTROLS
+    assert status_text("playing", False) == "STEP INTO VIEW"
+    for phase in ("waiting", "calibration", "countdown", "result"):
+        assert status_text(phase, True) == PHASE_TEXT[phase]
+
+
+def test_start_places_in_each_players_half():
+    r = renderer()
+    shape = (1000, 1000, 3)
+    p1, p2 = r.start_place(1, 2, shape), r.start_place(2, 2, shape)
+    assert p1[2] < 500 < p2[0]                                    # P1 left, P2 right
+    solo = r.start_place(1, 1, shape)
+    assert solo[0] < 500 < solo[2]                                # one player: the middle
+
+
+def test_waiting_ticks_a_ready_player_and_hides_health_bars(monkeypatch):
+    from tests.test_game import with_faces
+    r, game = plain(), intro_game()
+    bars = []
+    monkeypatch.setattr(r, "_draw_player_health", lambda canvas, pid, g: bars.append(pid))
+    state = dark()
+    game.update(state)
+    x1, y1, x2, y2 = r.start_place(1, 2, state.frame.image.shape)
+
+    def p1_pixels(canvas):
+        return np.all(canvas[y1:y2, x1:x2] == player_color(1), axis=2).sum()
+    waiting = p1_pixels(r.draw(state, game))
+    ready = with_faces(dark(), pids=(1,))
+    assert p1_pixels(r.draw(ready, game)) > 1.5 * waiting         # solid box and a tick
+    assert game.phase == "waiting" and bars == []
+
+
+def test_countdown_numbers_then_fight():
+    from tests.test_game import calibrated
+    r, game = plain(), intro_game()
+    t = calibrated(game)
+    assert np.all(middle(r.draw(dark(t), game)) == WHITE_PX, axis=2).any()        # "3"
+    game.update(dark(t + game.countdown_s))
+    assert game.phase == "playing"
+    assert np.all(middle(r.draw(dark(t + game.countdown_s), game)) == WHITE_PX, axis=2).any()  # FIGHT!
+    late = t + game.countdown_s + r.cfg["fight_s"] + 0.1
+    game.update(dark(late))
+    assert not np.all(middle(r.draw(dark(late), game)) == WHITE_PX, axis=2).any()
+
+
+def test_result_panel_fills_while_hands_are_up():
+    r = renderer(pixel_size=1, show_timings=False, game_over_dim=1.0)
+    game = Game({**CFG["game"], "intro": False})
+    state = dark()
+    game.update(state)
+    game.winner_id, game.phase = 1, "result"
+    empty = np.all(r.draw(state, game) == WHITE_PX, axis=2).sum()
+    game._held = game.cfg["replay_hold_s"]
+    assert game.hold_fraction() == 1.0
+    assert np.all(r.draw(state, game) == WHITE_PX, axis=2).sum() > empty

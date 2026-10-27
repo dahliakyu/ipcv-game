@@ -10,6 +10,12 @@ with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
+Around the round (feature 12, docs/extra_features.md), the game's phase
+decides what else is drawn: the players' start places while waiting, 3-2-1
+during the countdown, "FIGHT!" as a round starts and the result panel after a
+win. The top bar says what each phase expects. Health bars are shown from the
+countdown on.
+
 Sprites are in each team's colour: the frames' own colours belong to one
 player (*_effect_owner), and every other player gets a copy with every hue
 turned to their team colour (scene/draw.py). They are loaded on first use, so
@@ -19,6 +25,7 @@ is drawn as a plain shape instead.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 
 import cv2
@@ -36,6 +43,14 @@ WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and te
 # renderer.py's controls line, with our three gestures and what they fire.
 CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
+DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
+# The top bar's text in the phases around the round (playing: CONTROLS).
+PHASE_TEXT = {
+    "waiting": "STAND IN YOUR PLACE",
+    "calibration": "LEARN THE MOVES",
+    "countdown": "GET READY",
+    "result": "HANDS UP TO PLAY AGAIN",
+}
 
 
 class Renderer:
@@ -64,16 +79,29 @@ class Renderer:
             player = game.players[pid]
             self._draw_player_paint(canvas, self.paint_area(pid, state, game), player.paint_splats,
                                     1.0 - player.health / game.max_health, game.splat_band)
-        if game.winner_id is None:
+        phase = game.phase
+        if phase != "result":
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
         self.face_effects.draw(canvas, state.faces)
-        for pid in sorted(game.players):
-            self._draw_player_health(canvas, pid, game)
-        top = self._draw_hud(canvas, has_player=bool(visible), game_over=game.winner_id is not None)
-        if game.winner_id is not None:
-            self._draw_game_over(canvas, game.winner_id)
+        if phase in ("countdown", "playing", "result"):
+            for pid in sorted(game.players):
+                self._draw_player_health(canvas, pid, game)
+        top = self._draw_hud(canvas, status_text(phase, has_player=bool(visible)),
+                             game_over=phase == "result")
+        if phase == "waiting":
+            for place in game.round_players:
+                self._draw_start_place(canvas, place, game.place_taken(state, place), len(game.round_players))
+        elif phase == "countdown":
+            left = game.countdown_left()
+            n = max(1, math.ceil(left))
+            # Each number starts large and settles over its second.
+            self._draw_big_text(canvas, str(n), 1.3 - 0.3 * (n - left))
+        elif phase == "playing" and game.intro and game.phase_elapsed() < self.cfg["fight_s"]:
+            self._draw_big_text(canvas, "FIGHT!", 0.6)
+        elif phase == "result":
+            self._draw_game_over(canvas, game)
         if self.show_timings:
             draw_timings(canvas, state.timings, (10, top + 20))
         return canvas
@@ -84,20 +112,18 @@ class Renderer:
         """A renderer.py font scale (for 480p) at this frame height."""
         return self.cfg[key] * canvas.shape[0] / 480.0
 
-    def _draw_hud(self, canvas: np.ndarray, has_player: bool, game_over: bool) -> int:
+    def _draw_hud(self, canvas: np.ndarray, status: str, game_over: bool) -> int:
         """renderer.py's top bar: "COLOUR CLASH" in P1's colour, and the
-        controls on the right, or "STEP INTO VIEW" while nobody is seen; the
-        keys at the bottom, centred between the health bars. Returns the
-        bar's height (px)."""
+        status on the right (status_text()); the keys at the bottom, centred
+        between the health bars. Returns the bar's height (px)."""
         h, w = canvas.shape[:2]
         bar = int(self.cfg["hud_h"] * h)
         title, text = self._scale(canvas, "hud_title_scale"), self._scale(canvas, "hud_text_scale")
         thick = max(1, int(round(text)))
-        cv2.rectangle(canvas, (0, 0), (w, bar), (27, 16, 17), -1)
+        cv2.rectangle(canvas, (0, 0), (w, bar), DARK, -1)
         (title_w, _), _ = cv2.getTextSize("COLOUR CLASH", cv2.FONT_HERSHEY_PLAIN, title, thick)
         cv2.putText(canvas, "COLOUR CLASH", (12, int(bar * 0.68)), cv2.FONT_HERSHEY_PLAIN, title,
                     player_color(1), thick, cv2.LINE_8)
-        status = CONTROLS if has_player else "STEP INTO VIEW"
         # Shrunk to fit beside the title on a narrow frame.
         scale = fit_scale(status, text, thick, w - title_w - 36)
         (tw, _), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_PLAIN, scale, thick)
@@ -109,27 +135,97 @@ class Renderer:
             (kw, kh), _ = cv2.getTextSize(KEYS, cv2.FONT_HERSHEY_PLAIN, scale, thick)
             x = (w - kw) // 2
             # Dark backing like the health bars, so the text reads on a bright floor.
-            cv2.rectangle(canvas, (x - 6, h - 18 - kh), (x + kw + 6, h - 6), (27, 16, 17), -1)
+            cv2.rectangle(canvas, (x - 6, h - 18 - kh), (x + kw + 6, h - 6), DARK, -1)
             cv2.putText(canvas, KEYS, (x, h - 12), cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_8)
         return bar
 
-    def _draw_game_over(self, canvas: np.ndarray, winner_id: int) -> None:
+    def _draw_game_over(self, canvas: np.ndarray, game: Game) -> None:
         """renderer.py's end panel: the frame dimmed, a dark panel in the
-        middle framed in the winner's colour, "PLAYER N WINS!" and the keys."""
+        middle framed in the winner's colour, "PLAYER N WINS!" and the keys.
+        Added (feature 12): each player's final health in their colour, and
+        "HANDS UP TO PLAY AGAIN" with a bar that fills while everyone holds
+        their hands up (game.hold_fraction())."""
         h, w = canvas.shape[:2]
         canvas[:] = (canvas * self.cfg["game_over_dim"]).astype(np.uint8)
         k = h / 480.0
-        panel_w, panel_h = min(w - 24, int(380 * k)), int(84 * k)
+        panel_w, panel_h = min(w - 24, int(380 * k)), int(150 * k)
         left, top = (w - panel_w) // 2, h // 2 - panel_h // 2
-        color = player_color(winner_id)
+        winner = game.winner_id
+        color = player_color(winner) if winner is not None else WHITE
         corners = (left, top), (left + panel_w, top + panel_h)
-        cv2.rectangle(canvas, *corners, (27, 16, 17), -1)
+        cv2.rectangle(canvas, *corners, DARK, -1)
         cv2.rectangle(canvas, *corners, color, max(2, int(3 * k)), cv2.LINE_8)
-        cv2.putText(canvas, f"PLAYER {winner_id} WINS!", (left + int(28 * k), top + int(38 * k)),
-                    cv2.FONT_HERSHEY_PLAIN, 2 * k, color, max(1, int(2 * k)), cv2.LINE_8)
-        cv2.putText(canvas, KEYS, (left + int(28 * k), top + int(66 * k)),
-                    cv2.FONT_HERSHEY_PLAIN, fit_scale(KEYS, k, max(1, int(k)), panel_w - int(40 * k)), WHITE,
-                    max(1, int(k)), cv2.LINE_8)
+        x, thin, inner = left + int(28 * k), max(1, int(k)), panel_w - int(56 * k)
+        title = f"PLAYER {winner} WINS!" if winner is not None else "ROUND OVER"
+        cv2.putText(canvas, title, (x, top + int(38 * k)), cv2.FONT_HERSHEY_PLAIN, 2 * k, color,
+                    max(1, int(2 * k)), cv2.LINE_8)
+        hx = x
+        for pid in sorted(game.players):
+            label = f"P{pid} {game.players[pid].health} HP"
+            cv2.putText(canvas, label, (hx, top + int(64 * k)), cv2.FONT_HERSHEY_PLAIN, 1.2 * k,
+                        player_color(pid), thin, cv2.LINE_8)
+            hx += cv2.getTextSize(label + "    ", cv2.FONT_HERSHEY_PLAIN, 1.2 * k, thin)[0][0]
+        again = PHASE_TEXT["result"]
+        cv2.putText(canvas, again, (x, top + int(92 * k)), cv2.FONT_HERSHEY_PLAIN,
+                    fit_scale(again, 1.2 * k, thin, inner), WHITE, thin, cv2.LINE_8)
+        bar_top, bar_h = top + int(100 * k), max(4, int(6 * k))
+        cv2.rectangle(canvas, (x, bar_top), (x + inner, bar_top + bar_h), WHITE, 1, cv2.LINE_8)
+        fill = int((inner - 2) * game.hold_fraction())
+        if fill > 0:
+            cv2.rectangle(canvas, (x + 1, bar_top + 1), (x + fill, bar_top + bar_h - 1), WHITE, -1)
+        cv2.putText(canvas, KEYS, (x, top + int(134 * k)), cv2.FONT_HERSHEY_PLAIN,
+                    fit_scale(KEYS, k, thin, inner), WHITE, thin, cv2.LINE_8)
+
+    # ---------------------------------------------------------- phase screens
+
+    def start_place(self, pid: int, n: int, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+        """Where pid should stand while waiting (x1, y1, x2, y2 px): a box
+        start_place_w wide in their part of the frame (P1 the left half, P2
+        the right; one player: the middle), from start_place_y[0] to [1] of
+        the height."""
+        h, w = shape[:2]
+        half = self.cfg["start_place_w"] * w / 2
+        cx = (pid - 0.5) / n * w
+        y0, y1 = self.cfg["start_place_y"]
+        return int(cx - half), int(y0 * h), int(cx + half), int(y1 * h)
+
+    def _draw_start_place(self, canvas: np.ndarray, pid: int, ready: bool, n: int) -> None:
+        """Waiting: start place pid in that team's colour, dashed with
+        "PLAYER N / STAND HERE" until someone with a face stands in its half
+        of the frame (game.place_taken()), then solid with a tick and "READY".
+        The box is a guide; the whole half counts."""
+        x1, y1, x2, y2 = self.start_place(pid, n, canvas.shape)
+        color = player_color(pid)
+        thick = max(2, int(canvas.shape[0] / 240))
+        if ready:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thick, cv2.LINE_8)
+            s = (x2 - x1) * 0.3                     # the tick, in the box's middle
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            tick = np.array([(-0.5, 0.05), (-0.12, 0.4), (0.5, -0.4)]) * s + (cx, cy)
+            cv2.polylines(canvas, [tick.astype(np.int32)], False, color, 3 * thick, cv2.LINE_AA)
+        else:
+            draw_bbox(canvas, np.array([x1, y1, x2, y2]), color, dashed=True)
+        scale = self._scale(canvas, "start_text_scale")
+        tthick = max(1, int(round(scale)))
+        for text, y, c in ((f"PLAYER {pid}", y1, color), ("READY" if ready else "STAND HERE", y2, WHITE)):
+            sc = fit_scale(text, scale, tthick, x2 - x1 - 12)
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, sc, tthick)
+            tx, ty = (x1 + x2 - tw) // 2, y + th + 10 if y == y1 else y - 10
+            cv2.rectangle(canvas, (tx - 6, ty - th - 6), (tx + tw + 6, ty + 6), DARK, -1)
+            cv2.putText(canvas, text, (tx, ty), cv2.FONT_HERSHEY_PLAIN, sc, c, tthick, cv2.LINE_8)
+
+    def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
+        """Text in the middle of the frame, `size` x countdown_h of its height
+        tall, off-white with a dark outline so it reads on any background."""
+        h, w = canvas.shape[:2]
+        scale = size * self.cfg["countdown_h"] * h / 10.0   # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        thick = max(2, int(scale))
+        scale = fit_scale(text, scale, thick, w - 24)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        org = ((w - tw) // 2, (h + th) // 2)
+        outline = thick + max(4, thick)
+        cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_PLAIN, scale, DARK, outline, cv2.LINE_AA)
+        cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_AA)
 
     # ------------------------------------------------------ paint and health
 
@@ -196,7 +292,7 @@ class Renderer:
         color = player_color(pid)
         label = f"PLAYER {pid}"
         (lw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, font, 1)
-        cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), (27, 16, 17), -1)
+        cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), DARK, -1)
         cv2.putText(canvas, label, (left if pid == 1 else right - lw, top - 3), cv2.FONT_HERSHEY_PLAIN, font,
                     color, 1, cv2.LINE_8)
         cv2.rectangle(canvas, (left, top), (right, top + bar_h), WHITE, 1, cv2.LINE_8)
@@ -297,6 +393,14 @@ class Renderer:
         return self._team_copy(self._rings, cfg["shield_effect_owner"], owner_id, lambda shift: FireRing(
             cfg["shield_sprite"], cfg["shield_form_frames"], cfg["shield_loop_frames"],
             cfg["shield_form_s"], cfg["shield_sprite_fps"], shift))
+
+
+def status_text(phase: str, has_player: bool) -> str:
+    """The top bar's status: what the phase expects; while playing, the
+    controls, or "STEP INTO VIEW" while nobody is seen."""
+    if phase == "playing":
+        return CONTROLS if has_player else "STEP INTO VIEW"
+    return PHASE_TEXT[phase]
 
 
 def fit_scale(text: str, scale: float, thickness: int, max_w: float) -> float:

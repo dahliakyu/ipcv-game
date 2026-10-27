@@ -451,12 +451,14 @@ def calibrated(game: Game, t: float = 0.0) -> float:
     return t
 
 
-def test_intro_waits_for_both_players_with_faces(intro):
+def test_intro_waits_until_both_places_are_taken(intro):
     assert intro.phase == "waiting"
     run(intro, 0.0, 3.0)                                            # no faces
     assert intro.phase == "waiting"
     run(intro, 3.1, 6.0, lambda t: with_faces(frame_state(t), pids=(1,)))   # P2 has no face
     assert intro.phase == "waiting"
+    run(intro, 6.0, 8.0, lambda t: with_faces(frame_state(t, xs=(600.0, 800.0))))
+    assert intro.phase == "waiting"                                 # both in the right half
     run(intro, 6.1, 6.1 + intro.cfg["ready_s"] - 0.2, lambda t: with_faces(frame_state(t)))
     assert intro.phase == "waiting"                                 # not long enough yet
     run(intro, 6.1 + intro.cfg["ready_s"] - 0.1, 6.1 + intro.cfg["ready_s"],
@@ -560,3 +562,10 @@ def test_solo_intro_needs_only_p1():
     assert all(pid == 1 for pid, _ in solo.actions)          # only P1 is calibrated
     run(solo, t + 0.1, t + solo.countdown_s, alone)
     assert solo.phase == "playing"
+
+
+def test_places_are_taken_by_position_not_by_player_number(intro):
+    state = with_faces(frame_state(0.0, xs=(800.0, 200.0)))       # P1 stands right, P2 left
+    assert intro.place_taken(state, 1) and intro.place_taken(state, 2)
+    state = with_faces(frame_state(0.0, xs=(800.0, 200.0)), pids=(1,))
+    assert not intro.place_taken(state, 1) and intro.place_taken(state, 2)   # only P1, on the right
