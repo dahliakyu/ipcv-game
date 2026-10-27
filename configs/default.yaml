@@ -527,6 +527,27 @@ render:
   countdown_h: 0.3
   # "FIGHT!" stays this long once a round starts after the countdown.
   fight_s: 0.8
+  # Calibration: each player's instruction panel, this wide (fraction of the
+  # frame width) in their half and from y0 to y1 (fractions of the height):
+  # over the legs, so the face, arms and hat stay visible. It ends above
+  # the key line at the bottom.
+  instruction_w: 0.44
+  instruction_y: [0.6, 0.92]
+  # The panel's dark backing covers the camera image this much, so the
+  # text reads on a bright floor while the legs still show through.
+  instruction_alpha: 0.8
+  # Font scales at 480p (as hud_*_scale): the move's name, then the lines
+  # on how to do it and what it does.
+  instruction_title_scale: 2.0
+  instruction_text_scale: 1.0
+  # A move not done after this long is reminded: the panel's frame flashes
+  # remind_hz times per second and "TRY IT NOW!" appears. 8 s is enough to
+  # read the panel and try once.
+  remind_s: 8.0
+  remind_hz: 2.0
+  # After a move is done, "NICE!" with a tick shows this long before the
+  # next move, so the player sees it counted.
+  nice_s: 0.8
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest

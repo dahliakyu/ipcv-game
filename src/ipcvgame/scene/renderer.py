@@ -11,10 +11,10 @@ game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
 Around the round (feature 12, docs/extra_features.md), the game's phase
-decides what else is drawn: the players' start places while waiting, 3-2-1
-during the countdown, "FIGHT!" as a round starts and the result panel after a
-win. The top bar says what each phase expects. Health bars are shown from the
-countdown on.
+decides what else is drawn: the players' start places while waiting, an
+instruction panel per player during calibration, 3-2-1 during the countdown,
+"FIGHT!" as a round starts and the result panel after a win. The top bar says
+what each phase expects. Health bars are shown from the countdown on.
 
 Sprites are in each team's colour: the frames' own colours belong to one
 player (*_effect_owner), and every other player gets a copy with every hue
@@ -33,10 +33,11 @@ import numpy as np
 
 from ipcvgame.core.types import FrameState
 from ipcvgame.face.effects import FaceEffects
-from ipcvgame.interaction.game import Game, Shield
+from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
 from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, hue_of, player_color, pt
 from ipcvgame.scene.fire_bolt import FireBolt
 from ipcvgame.scene.fire_ring import FireRing
+from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
 from ipcvgame.scene.magic_beam import MagicBeam
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
@@ -44,6 +45,7 @@ WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and te
 CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
 DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
+GREY = (120, 115, 105)      # moves still to do, in the instruction panels
 # The top bar's text in the phases around the round (playing: CONTROLS).
 PHASE_TEXT = {
     "waiting": "STAND IN YOUR PLACE",
@@ -93,6 +95,9 @@ class Renderer:
         if phase == "waiting":
             for place in game.round_players:
                 self._draw_start_place(canvas, place, game.place_taken(state, place), len(game.round_players))
+        elif phase == "calibration":
+            for pid in game.round_players:
+                self._draw_instructions(canvas, pid, game, state.frame.t)
         elif phase == "countdown":
             left = game.countdown_left()
             n = max(1, math.ceil(left))
@@ -199,10 +204,7 @@ class Renderer:
         thick = max(2, int(canvas.shape[0] / 240))
         if ready:
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thick, cv2.LINE_8)
-            s = (x2 - x1) * 0.3                     # the tick, in the box's middle
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-            tick = np.array([(-0.5, 0.05), (-0.12, 0.4), (0.5, -0.4)]) * s + (cx, cy)
-            cv2.polylines(canvas, [tick.astype(np.int32)], False, color, 3 * thick, cv2.LINE_AA)
+            draw_tick(canvas, ((x1 + x2) / 2, (y1 + y2) / 2), (x2 - x1) * 0.3, color, 3 * thick)
         else:
             draw_bbox(canvas, np.array([x1, y1, x2, y2]), color, dashed=True)
         scale = self._scale(canvas, "start_text_scale")
@@ -213,6 +215,83 @@ class Renderer:
             tx, ty = (x1 + x2 - tw) // 2, y + th + 10 if y == y1 else y - 10
             cv2.rectangle(canvas, (tx - 6, ty - th - 6), (tx + tw + 6, ty + 6), DARK, -1)
             cv2.putText(canvas, text, (tx, ty), cv2.FONT_HERSHEY_PLAIN, sc, c, tthick, cv2.LINE_8)
+
+    def instruction_box(self, pid: int, n: int, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+        """Where pid's instruction panel goes (x1, y1, x2, y2 px): at the
+        bottom of their part of the frame (as start_place()), over the legs,
+        so the face, arms and face effects stay visible."""
+        h, w = shape[:2]
+        half = self.cfg["instruction_w"] * w / 2
+        cx = (pid - 0.5) / n * w
+        y0, y1 = self.cfg["instruction_y"]
+        return int(cx - half), int(y0 * h), int(cx + half), int(y1 * h)
+
+    def _draw_instructions(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
+        """Calibration: pid's panel. A stick figure of their current move
+        (scene/instructions.py; mirrored for P2, so the punch points at the
+        opponent), its name in the team colour, how to do it and its effect,
+        and one dot per move (filled = done, white ring = now, grey = to do).
+        Just after a move is done, "NICE!" with a tick for nice_s; when all
+        are done, "DONE!". A move not done within remind_s: the frame
+        flashes and "TRY IT NOW!" appears."""
+        x1, y1, x2, y2 = self.instruction_box(pid, len(game.round_players), canvas.shape)
+        x1, y1 = max(x1, 0), max(y1, 0)
+        x2, y2 = min(x2, canvas.shape[1]), min(y2, canvas.shape[0])
+        if x2 - x1 < 20 or y2 - y1 < 20:
+            return
+        color = player_color(pid)
+        player = game.players.get(pid)
+        done = player.move if player is not None else 0
+        since = t - player.move_t if player is not None else 0.0
+        move = game.current_move(pid)
+        nice = done > 0 and since < self.cfg["nice_s"]
+        remind = move is not None and not nice and since > self.cfg["remind_s"]
+        flash = remind and int(since * 2 * self.cfg["remind_hz"]) % 2 == 0
+
+        roi = canvas[y1:y2, x1:x2]
+        a = self.cfg["instruction_alpha"]
+        roi[:] = (roi * (1 - a) + np.array(DARK) * a).astype(np.uint8)
+        k = canvas.shape[0] / 480.0
+        border = max(2, int(2 * k))
+        cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), WHITE if flash else color,
+                      2 * border if flash else border, cv2.LINE_8)
+
+        pad = int(8 * k)
+        fig = y2 - y1 - 2 * pad                      # the figure's square
+        fig_center = (x1 + pad + fig / 2, y1 + pad + fig / 2)
+        if nice:
+            title, lines = "NICE!", [MOVE_TEXT[CALIBRATION_MOVES[done - 1]][0] + " LEARNED"]
+            draw_figure(canvas, CALIBRATION_MOVES[done - 1], fig_center, fig, GREY, mirror=pid == 2)
+            draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
+        elif move is None:
+            wait = "WAIT FOR THE OTHER PLAYER" if len(game.round_players) > 1 else "GET READY"
+            title, lines = "DONE!", [wait]
+            draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
+        else:
+            title, how, effect = MOVE_TEXT[move]
+            lines = [how, "= " + effect] + (["TRY IT NOW!"] if remind else [])
+            draw_figure(canvas, move, fig_center, fig, color, mirror=pid == 2)
+
+        tx, text_w = x1 + 2 * pad + fig, x2 - x1 - 3 * pad - fig
+        thin = max(1, int(round(k)))
+        scale = fit_scale(title, self._scale(canvas, "instruction_title_scale"), 2 * thin, text_w)
+        (_, th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_PLAIN, scale, 2 * thin)
+        y = y1 + pad + th
+        cv2.putText(canvas, title, (tx, y), cv2.FONT_HERSHEY_PLAIN, scale, color, 2 * thin, cv2.LINE_8)
+        for line in lines:
+            sc = fit_scale(line, self._scale(canvas, "instruction_text_scale"), thin, text_w)
+            (_, lh), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_PLAIN, sc, thin)
+            y += int(lh * 1.9)
+            c = (WHITE if flash else color) if line == "TRY IT NOW!" else WHITE
+            cv2.putText(canvas, line, (tx, y), cv2.FONT_HERSHEY_PLAIN, sc, c, thin, cv2.LINE_8)
+
+        r = max(4, int(6 * k))                       # progress dots along the bottom
+        for i in range(len(CALIBRATION_MOVES)):
+            c = (tx + r + i * 3 * r, y2 - pad - r)
+            if i < done:
+                cv2.circle(canvas, c, r, color, -1, cv2.LINE_AA)
+            else:
+                cv2.circle(canvas, c, r, WHITE if i == done else GREY, thin + (i == done), cv2.LINE_AA)
 
     def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
         """Text in the middle of the frame, `size` x countdown_h of its height

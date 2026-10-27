@@ -237,3 +237,53 @@ def test_result_panel_fills_while_hands_are_up():
     game._held = game.cfg["replay_hold_s"]
     assert game.hold_fraction() == 1.0
     assert np.all(r.draw(state, game) == WHITE_PX, axis=2).sum() > empty
+
+
+# --- Instruction panels (feature 12, step 3) --------------------------------
+
+def figure_kpts(pose: str) -> tuple[np.ndarray, np.ndarray]:
+    """A stick figure as skeleton keypoints, 100 px per shoulder width."""
+    from ipcvgame.scene.instructions import figure_points
+    pts = figure_points(pose)
+    k = np.zeros((sk.K, 2))
+    k[sk.NOSE] = pts["head"]
+    for side, model in (("a", "R"), ("b", "L")):     # image left = the model's R on a mirrored frame
+        for joint in ("shoulder", "elbow", "wrist", "hip"):
+            k[getattr(sk, f"{model}_{joint.upper()}")] = pts[f"{side}_{joint}"]
+    return k * 100 + 500, np.ones(sk.K, bool)
+
+
+@pytest.mark.parametrize("pose", ["neutral", "punch", "hands_up", "arms_crossed"])
+def test_each_picture_is_a_pose_the_rules_detect(pose):
+    from ipcvgame.interaction.gestures import detect_all
+    from ipcvgame.scene.instructions import MOVE_TEXT
+    assert pose in MOVE_TEXT
+    k, v = figure_kpts(pose)
+    on = {name for name, hit in detect_all(k, v, CFG["gestures"]).items() if hit}
+    assert on == (set() if pose == "neutral" else {pose})
+
+
+def test_every_calibration_move_has_a_picture_and_text():
+    from ipcvgame.interaction.game import CALIBRATION_MOVES
+    from ipcvgame.scene.instructions import ARMS, MOVE_TEXT
+    assert set(CALIBRATION_MOVES) <= set(ARMS) and set(CALIBRATION_MOVES) <= set(MOVE_TEXT)
+
+
+def test_instruction_panels_in_each_half_and_the_reminder_flashes():
+    from tests.test_game import run, with_faces
+    r, game = plain(), intro_game()
+    t = run(game, 0.0, game.cfg["ready_s"], lambda t: with_faces(dark(t)))
+    assert game.phase == "calibration"
+    shape = (1000, 1000, 3)
+    b1, b2 = r.instruction_box(1, 2, shape), r.instruction_box(2, 2, shape)
+    assert b1[2] <= 500 <= b2[0]
+
+    def border(canvas, box):
+        x1, y1, x2, _ = box
+        return canvas[y1, x1 + 5:x2 - 5]
+    canvas = r.draw(dark(t), game)
+    assert np.all(border(canvas, b1) == player_color(1), axis=1).all()
+    assert np.all(border(canvas, b2) == player_color(2), axis=1).all()
+    late = t + r.cfg["remind_s"] + 0.1                      # flash on: int(8.1 s x 2 x 2 Hz) is even
+    canvas = r.draw(dark(late), game)
+    assert np.all(border(canvas, b1) == WHITE_PX, axis=1).all()

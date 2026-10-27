@@ -308,7 +308,13 @@ Each module reads only its own config section; the renderer reads game timings f
    - Result: `_draw_game_over()` with each player's final HP in their colour, and "HANDS UP TO PLAY AGAIN" with a bar that fills during the hold (`Game.hold_fraction()`).
    - The top bar says what the phase expects (`status_text()`). Health bars are shown from the countdown on.
    - New `render:` keys: `start_place_w`, `start_place_y`, `start_text_scale`, `countdown_h`, `fight_s`.
-3. **Instruction panels** (Task 5, `scene/renderer.py`). Per player, on their half: a stick-figure picture of the current move (drawn with OpenCV lines from a few fixed joint positions, no image assets), its effect, ticks for the moves done, and the reminder flash.
+3. **Instruction panels** (Task 5, `scene/renderer.py`, `scene/instructions.py`). *Done.*
+   - Per player, at the bottom of their half (`instruction_box()`), over the legs so the face, arms and hat stay visible. One panel in the middle with `--solo`.
+   - A stick figure of the current move: fixed joint positions in shoulder widths, drawn with OpenCV lines (`draw_figure()`), mirrored for P2 so the punch points at the opponent. A test checks that each figure, as keypoints, passes the gesture rule of its own move and no other.
+   - The move's name in the team colour, how to do it and its effect (`MOVE_TEXT`), and one dot per move (done, now, to do).
+   - "NICE!" with a tick for `nice_s` after a move, "DONE!" when all are done. After `remind_s` without the move, the frame flashes and "TRY IT NOW!" appears.
+   - The neutral pose already has a figure and text, ready for step 4.
+   - New `render:` keys: `instruction_w`, `instruction_y`, `instruction_alpha`, `instruction_title_scale`, `instruction_text_scale`, `remind_s`, `remind_hz`, `nice_s`.
 4. **Pose calibration** (Task 2 measurements, Task 4 rules).
    - The neutral pose as the first calibration move: shoulders and hips seen, wrists below the shoulders, face towards the camera, for ~2 s.
    - Per player, the median shoulder width and arm length (shoulder–elbow–wrist), from a new `pose/measure.py`.
