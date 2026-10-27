@@ -13,7 +13,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `core/` contracts, skeleton, filters, timing, config | Task 5 | Done | `types.py` is exactly the agreed contract |
 | `io/source.py` webcam + video file | Task 5 | Done | Mirrored at capture; clips replay real timestamps |
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
-| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars, top bar, end panel |
+| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars pinned to the bottom, top bar, end panel |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |

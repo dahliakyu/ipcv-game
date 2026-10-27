@@ -120,4 +120,3 @@ class Pipeline:
         """Clear every module's state; identity finds the players again."""
         for m in (self.pose, self.identity, self.motion, self.face, self.gestures, self.game):
             m.reset()
-        self.renderer.reset()

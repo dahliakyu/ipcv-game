@@ -471,15 +471,13 @@ render:
   # sizes are about double in torso units.
   splat_cell_w: [0.04, 0.05]
   splat_cell_h: [0.04, 0.06]
-  # Health bar height and its "PLAYER N" label height, as fractions of the
-  # frame height: renderer.py's 10 px bar and 0.8-scale label at 480p.
+  # Health bars pinned to the bottom (P1 left, P2 right, as in a fighting
+  # game): length as a fraction of the frame width (0.3 leaves the middle
+  # for the key line), height and "PLAYER N" label height as fractions of the
+  # frame height (renderer.py's 10 px bar and 0.8-scale label at 480p).
+  bar_w: 0.3
   bar_h: 0.021
   bar_font_h: 0.017
-  # The bar's length is smoothed with this time constant (s): the face width
-  # it comes from jitters by a few px per frame and drops to the shoulder
-  # fallback on frames without a face. 1 s still follows a player walking
-  # towards or away from the camera.
-  bar_length_tau_s: 1.0
   # Top bar (renderer.py: 34 px at 480p) with "COLOUR CLASH" and the
   # controls; font scales are renderer.py's at 480p and grow with the frame.
   hud_h: 0.07
@@ -488,13 +486,6 @@ render:
   # End of the game: the frame behind renderer.py's panel is darkened to this
   # fraction, so the panel stands out and nothing looks frozen.
   game_over_dim: 0.5
-  # Health bar below the body (Task 4 modifications): its length depends on
-  # the player's distance to the camera but not on their arms. 2.5 face
-  # widths (Face.scale) is a little wider than the shoulders. Without a face,
-  # 1.3 shoulder widths gives the same length: on the test clips the shoulder
-  # keypoints are 1.8-2.0 face widths apart (median).
-  bar_face_widths: 2.5
-  bar_shoulder_widths: 1.3
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest

@@ -4,7 +4,8 @@ The game view, in drawing order: the camera frame (pixelated, as in
 renderer.py), each player's paint splats (renderer.py's pixel crosses, on the
 torso), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
-beam, ring of fire shields), face effects, health bars, renderer.py's top bar
+beam, ring of fire shields), face effects, health bars pinned to the bottom,
+renderer.py's top bar
 with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
@@ -23,7 +24,6 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
-from ipcvgame.core.filters import EMA
 from ipcvgame.core.types import FrameState
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import Game, Shield
@@ -47,10 +47,6 @@ class Renderer:
         self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
-        self._bar_len: dict[int, EMA] = {}       # smoothed health-bar length per player
-
-    def reset(self) -> None:
-        self._bar_len.clear()
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
         canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
@@ -60,8 +56,8 @@ class Renderer:
                     draw_bbox(canvas, p.bbox, player_color(pid), f"P{pid}")
             for pid, m in state.motion.items():
                 draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
-        # Paint and health only for players the identity stage sees now
-        # (renderer.py drew only detected players).
+        # Paint only on players the identity stage sees now (renderer.py drew
+        # only detected players).
         visible = [pid for pid, p in sorted(state.players.items())
                    if p.status == "active" and pid in game.players and game.players[pid].bounds is not None]
         for pid in visible:
@@ -73,8 +69,8 @@ class Renderer:
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
         self.face_effects.draw(canvas, state.faces)
-        for pid in visible:
-            self._draw_player_health(canvas, pid, state, game)
+        for pid in sorted(game.players):
+            self._draw_player_health(canvas, pid, game)
         top = self._draw_hud(canvas, has_player=bool(visible), game_over=game.winner_id is not None)
         if game.winner_id is not None:
             self._draw_game_over(canvas, game.winner_id)
@@ -91,7 +87,8 @@ class Renderer:
     def _draw_hud(self, canvas: np.ndarray, has_player: bool, game_over: bool) -> int:
         """renderer.py's top bar: "COLOUR CLASH" in P1's colour, and the
         controls on the right, or "STEP INTO VIEW" while nobody is seen; the
-        keys at the bottom. Returns the bar's height (px)."""
+        keys at the bottom, centred between the health bars. Returns the
+        bar's height (px)."""
         h, w = canvas.shape[:2]
         bar = int(self.cfg["hud_h"] * h)
         title, text = self._scale(canvas, "hud_title_scale"), self._scale(canvas, "hud_text_scale")
@@ -107,13 +104,14 @@ class Renderer:
         cv2.putText(canvas, status, (w - tw - 12, int(bar * 0.65)), cv2.FONT_HERSHEY_PLAIN, scale, WHITE,
                     thick, cv2.LINE_8)
         if not game_over:
-            cv2.putText(canvas, KEYS, (12, h - 12), cv2.FONT_HERSHEY_PLAIN,
-                        fit_scale(KEYS, text, thick, w - 24), WHITE, thick, cv2.LINE_8)
+            gap = w - 2 * (int(self.cfg["bar_w"] * w) + 24)     # between the two health bars
+            scale = fit_scale(KEYS, text, thick, gap)
+            (kw, kh), _ = cv2.getTextSize(KEYS, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = (w - kw) // 2
+            # Dark backing like the health bars, so the text reads on a bright floor.
+            cv2.rectangle(canvas, (x - 6, h - 18 - kh), (x + kw + 6, h - 6), (27, 16, 17), -1)
+            cv2.putText(canvas, KEYS, (x, h - 12), cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_8)
         return bar
-
-    def _keys_strip(self, canvas: np.ndarray) -> int:
-        """Height (px) of the key line at the bottom, which health bars keep clear of."""
-        return int(14 * self._scale(canvas, "hud_text_scale")) + 12
 
     def _draw_game_over(self, canvas: np.ndarray, winner_id: int) -> None:
         """renderer.py's end panel: the frame dimmed, a dark panel in the
@@ -179,32 +177,33 @@ class Renderer:
                 if x0 < x1 and y0 < y1:
                     cv2.rectangle(canvas, (x0, y0), (x1, y1), player_color(splat.owner_id), -1, cv2.LINE_8)
 
-    def _draw_player_health(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game) -> None:
-        """renderer.py's health bar (dark backing, "PLAYER N", white outline,
-        fill in the team colour), at the place from bar_geometry(): below the
-        body, kept inside the frame (Task 4 modifications)."""
+    def _draw_player_health(self, canvas: np.ndarray, pid: int, game: Game) -> None:
+        """renderer.py's health bar (dark backing, "PLAYER N", off-white
+        outline, fill in the team colour), pinned to the bottom of the frame
+        like in a fighting game: P1 bottom left, P2 bottom right, each filling
+        from its outer edge, so it drains towards the corner. Other pids have
+        no slot. Drawn for every known player, also while out of view."""
+        if pid not in (1, 2):
+            return
         h, w = canvas.shape[:2]
-        (cx, cy), length = self.bar_geometry(pid, state, game)
-        # The face width jitters and the bar falls back to the shoulder width
-        # when the face is missed, so the raw length jumps: smooth it.
-        ema = self._bar_len.setdefault(pid, EMA(self.cfg["bar_length_tau_s"]))
-        if state.players[pid].reentered:
-            ema.reset()
-        length = float(ema(np.array([length]), state.frame.t)[0])
         bar_h = max(4, int(self.cfg["bar_h"] * h))
+        length = int(self.cfg["bar_w"] * w)
         font = self.cfg["bar_font_h"] * h / 10.0          # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
         label_h = int(12 * font)
-        left = int(min(max(cx - length / 2, 4), w - length - 4))
-        right = left + int(length)
-        top = int(min(cy + bar_h, h - bar_h - 4 - self._keys_strip(canvas)))
+        left = 12 if pid == 1 else w - 12 - length
+        right = left + length
+        top = h - 12 - bar_h
         color = player_color(pid)
+        label = f"PLAYER {pid}"
+        (lw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, font, 1)
         cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), (27, 16, 17), -1)
-        cv2.putText(canvas, f"PLAYER {pid}", (left, top - 3), cv2.FONT_HERSHEY_PLAIN, font, color, 1,
-                    cv2.LINE_8)
+        cv2.putText(canvas, label, (left if pid == 1 else right - lw, top - 3), cv2.FONT_HERSHEY_PLAIN, font,
+                    color, 1, cv2.LINE_8)
         cv2.rectangle(canvas, (left, top), (right, top + bar_h), WHITE, 1, cv2.LINE_8)
-        fill = int((right - left - 2) * max(0, game.players[pid].health) / game.max_health)
+        fill = int((length - 2) * max(0, game.players[pid].health) / game.max_health)
         if fill > 0:
-            cv2.rectangle(canvas, (left + 1, top + 1), (left + fill, top + bar_h - 1), color, -1, cv2.LINE_8)
+            x0, x1 = (left + 1, left + fill) if pid == 1 else (right - fill, right - 1)
+            cv2.rectangle(canvas, (x0, top + 1), (x1, top + bar_h - 1), color, -1, cv2.LINE_8)
 
     # ----------------------------------------------------------- game objects
 
@@ -258,30 +257,6 @@ class Renderer:
         player = game.players.get(pid)
         width = (player.bounds[2] - player.bounds[0]) if player and player.bounds is not None else 100.0
         return (shield.x, shield.y), float(width)
-
-    def bar_geometry(self, pid: int, state: FrameState, game: Game) -> tuple[tuple[float, float], float]:
-        """Centre (px) and length (px) of the health bar (Task 4
-        modifications).
-
-        It sits at the bottom of the body box, centred under the shoulders,
-        out of the way of beams fired from raised hands. Its length depends
-        only on the player's distance to the camera, not on their arms (the
-        body box grows with an extended arm): bar_face_widths face widths;
-        without a face, bar_shoulder_widths shoulder widths; without either,
-        the body box width."""
-        player = game.players[pid]
-        left, _, right, bottom = player.bounds
-        m = state.motion.get(pid)
-        torso = game.torso(m) if m is not None else None
-        x = torso[0] if torso is not None else (left + right) / 2.0
-        face = state.faces.get(pid)
-        if face is not None and face.scale > 0:
-            length = self.cfg["bar_face_widths"] * face.scale
-        elif torso is not None:
-            length = self.cfg["bar_shoulder_widths"] * torso[3]
-        else:
-            length = float(right - left)
-        return (float(x), float(bottom)), length
 
     # ---------------------------------------------------------------- sprites
 

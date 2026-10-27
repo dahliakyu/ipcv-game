@@ -45,25 +45,6 @@ def test_plain_shapes_without_sprites(game):
     assert r.bolt_effect(1, game) is None and r.beam_effect(1) is None and r.shield_effect(1) is None
 
 
-def test_health_bar_length_ignores_the_arms(game):
-    game.update(frame_state(0.0))
-    s = frame_state(0.0)
-    s.faces[1] = face_at(200.0, 120.0, 40.0)
-    r = renderer()
-    (c, length) = r.bar_geometry(1, s, game)
-    # Under the shoulder midpoint, at the bottom of the body box.
-    assert c == (200.0, 900.0) and length == pytest.approx(2.5 * 40)
-    game.get_player(1).bounds = np.array([100.0, 50, 600, 900])   # arm out: wide box
-    assert r.bar_geometry(1, s, game) == (c, length)
-
-
-def test_health_bar_without_face_uses_shoulder_width(game):
-    game.update(frame_state(0.0))
-    (cx, cy), length = renderer().bar_geometry(1, frame_state(0.0), game)
-    # Shoulders 100 px apart, centred at x 200; box bottom at y 900.
-    assert (cx, cy) == (200.0, 900.0) and length == pytest.approx(1.3 * 100)
-
-
 def test_shield_ring_sits_on_the_chest(game):
     s = frame_state(0.0, events=[(1, "arms_crossed")])
     game.update(s)
@@ -103,22 +84,6 @@ def test_paint_crosses_in_attacker_colour_grow_with_damage(game):
     blue = np.all(fresh == player_color(2), axis=2)
     assert blue.any() and not blue[:100].any() and not blue[:, :100].any()     # inside the box
     assert np.all(beaten == player_color(2), axis=2).sum() > 3 * blue.sum()
-
-
-def test_health_bar_fill_and_only_for_visible_players(game):
-    r = renderer(pixel_size=1, show_timings=False)
-    state = frame_state(0.0)
-    game.update(state)
-    game.get_player(1).health = 50
-    state.frame.image[:] = 0
-    bars = r.draw(state, game)[850:960]               # box bottoms at y 900: the bars, not the HUD
-    red = np.all(bars == player_color(1), axis=2)
-    blue = np.all(bars == player_color(2), axis=2)
-    assert red.any() and blue.any()
-    assert red.sum() < blue.sum()                     # half a bar against a full one
-    lost = frame_state(0.0, lost=(2,))
-    lost.frame.image[:] = 0
-    assert not np.all(r.draw(lost, game)[850:960] == player_color(2), axis=2).any()
 
 
 def test_hud_and_game_over_hide_objects_in_flight(game):
@@ -165,19 +130,6 @@ def test_paint_stays_on_the_torso_when_an_arm_goes_out(game):
     assert r.paint_area(1, state, game) == (100 + lo * 500, 150 + lo * 750, 100 + hi * 500, 150 + hi * 750)
 
 
-def test_health_bar_length_is_smoothed(game):
-    r = renderer(pixel_size=1, bar_length_tau_s=1.0)
-    s0 = frame_state(0.0)
-    s0.faces[1] = face_at(200.0, 120.0, 40.0)
-    game.update(s0)
-    r.draw(s0, game)
-    s1 = frame_state(0.1)                                 # face missed: raw length jumps to 1.3 sw
-    game.update(s1)
-    r.draw(s1, game)
-    smoothed = r._bar_len[1].x[0]
-    assert 2.5 * 40 < smoothed < 2.5 * 40 + 0.2 * (1.3 * 100 - 2.5 * 40)
-
-
 def test_text_fits_a_narrow_frame():
     import cv2
 
@@ -185,3 +137,22 @@ def test_text_fits_a_narrow_frame():
     scale = fit_scale(CONTROLS, 1.5, 1, 200)
     assert cv2.getTextSize(CONTROLS, cv2.FONT_HERSHEY_PLAIN, scale, 1)[0][0] <= 200
     assert fit_scale("OK", 1.5, 1, 200) == 1.5
+
+
+def test_health_bars_pinned_to_the_bottom_corners(game):
+    r = renderer(pixel_size=1, show_timings=False)
+    state = frame_state(0.0, xs=(800.0, 200.0))           # P1 stands on the right, P2 on the left
+    game.update(state)
+    game.get_player(2).health = 50
+    state.frame.image[:] = 0
+    h, w = state.frame.image.shape[:2]
+    bars = r.draw(state, game)[h - 60:]
+    red = np.all(bars == player_color(1), axis=2)
+    blue = np.all(bars == player_color(2), axis=2)
+    xs_red, xs_blue = np.nonzero(red)[1], np.nonzero(blue)[1]
+    assert xs_red.max() < w * 0.35 and xs_blue.min() > w * 0.65  # P1 left, P2 right, wherever they stand
+    assert blue.sum() < red.sum()                              # half a bar against a full one
+    assert xs_blue.max() > w - 20                               # P2 fills from the right edge
+    lost = frame_state(0.0, xs=(800.0, 200.0), lost=(2,))
+    lost.frame.image[:] = 0
+    assert np.all(r.draw(lost, game)[h - 60:] == player_color(2), axis=2).any()   # still shown

@@ -97,7 +97,7 @@ A quick reference for each teammate: where your code now lives, and what was cha
 | `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: `docs/evaluation.md` |
 | `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline (Task 5) |
 | Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` new round, `R` full reset) | |
-| `draw_status()` (name + HP bar) | `scene/renderer.py`, `_draw_player_health()` | Game UI: "PLAYER N" and the health bar below the body (renderer merge) |
+| `draw_status()` (name + HP bar) | `scene/renderer.py`, `_draw_player_health()` | Game UI: "PLAYER N" and the health bar, pinned to the bottom (Task 5 modifications) |
 | `Track.predicted()`, `Track.vel` | Removed | Only used for matching |
 | Keys `s`, `d`, `l`, `x`, `1`/`2` | Removed | Conditions come from clip names; HP demo is game logic |
 
@@ -141,7 +141,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | Gesture text under the box (`H:C:P`) | `GestureRecognizer.draw_debug()` | |
 | `center_x`, `torso_y`, `hands_center_x/y` | `interaction/game.py`, `Game.body_position()` / `torso()` + `_act()` | Game positions (step 7) |
 | `hand_x/y` | `interaction/game.py`, `punching_hand()` | Bolts now start at the punching hand (Task 4 modifications) |
-| `head_x/y` | Not ported | `renderer.py`'s health bar above the head is below the body now (Task 4 modifications); face effects use face anchors |
+| `head_x/y` | Not ported | `renderer.py`'s health bar above the head is pinned to the bottom now (Task 5 modifications); face effects use face anchors |
 | `lower_body_y()`, `detect_hands_up()`, `detect_crossed()`, `arm_extended()`, `arm_bent()`, `detect_punch()` | `interaction/gestures.py`, same names | Task 4; numbers from config, keypoints by name |
 
 **Constants** (`configs/default.yaml`)
@@ -212,7 +212,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 | `Renderer.render(camera_frame, game, pose)` | `scene/renderer.py`, `Renderer.draw(state, game)` | Pixels; positions from the frame state |
 | Pixelated camera image (half size, nearest pixel) | `scene/renderer.py`, `pixelate()` | `render.pixel_size` |
 | `_draw_player_paint()` | `scene/renderer.py`, `_draw_player_paint()` + `paint_area()` | On the torso, not the body box |
-| `_draw_player_health()` | `scene/renderer.py`, `_draw_player_health()` + `bar_geometry()` | Below the body; length smoothed |
+| `_draw_player_health()` | `scene/renderer.py`, `_draw_player_health()` | Pinned to the bottom: P1 left, P2 right (Task 5 modifications) |
 | Top bar, controls, "STEP INTO VIEW", "Q: QUIT" | `scene/renderer.py`, `_draw_hud()` | Our three gestures; text fitted to the frame |
 | `_draw_game_over()` | `scene/renderer.py`, `_draw_game_over()` | Dimmed frame; objects in flight hidden |
 | Bolt rectangles, `_draw_paint_beam()`, `_draw_shield()`, `_draw_shield_splash()`, palette `.jpg` | Not merged | Replaced by the fire blast, magic beam and fire ring (Task 4 modifications), now drawn by `Renderer.draw_game()` |
@@ -291,7 +291,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 - **The renderer draws the game (step 1):** the sprites (fire blast, magic ball and beam, ring of fire) moved from `Game` to `scene/renderer.py`; the game logic has no drawing left except its debug view (plain shapes).
 - **Paint on the torso (step 4, new):** splats are drawn between the shoulders and from the shoulder line to the hips, so they stay on the body when an arm goes out; `renderer.py` drew them in the body box, which widens with the arms.
-- **Health bar below the body (Task 4 modifications)** instead of above the head, with a length that does not change with the arms and is smoothed (step 4).
+- **Health bars pinned to the bottom (Task 5 modifications):** P1 bottom left, P2 bottom right, like in a fighting game, instead of above the head (`renderer.py`) or below the body (Task 4 modifications, then smoothed in step 4).
 - **No frozen end (step 3, new):** after a win, the frame is dimmed behind the panel, and bolts and beams in flight are not drawn (the game stops then, as in `game.py`).
 - **Key `r` any time (step 3):** a new round with the same players; `R` resets everything, including identity.
 - **Face effects** are drawn on top of the game objects (new; `renderer.py` had none).
@@ -1602,3 +1602,23 @@ Runs with `--record-view` on `data/clips/session.mp4` (a full round, to the winn
 **Added:** `tests/test_renderer.py`: text fitted to a narrow frame.
 
 **Changed:** `docs/merge_log.md`: Change Overviews for `renderer.py`. `docs/phase-1/status.md`: renderer row, render timing, test count. `docs/extra_features.md`: rendering done; removing `garb/` is now possible.
+
+## Task 5: Modifications
+
+Design changes by the Task 5 owner after the renderer merge, from the webcam check (2026-10-27). Each entry names the files it touched.
+
+### Health bars pinned to the bottom
+
+The bar below each body (Task 4 modifications) moved with the player and changed length with the face width, even smoothed (renderer step 4): too much movement on screen. Now the bars stay in place, like in a fighting game.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`
+- `_draw_player_health()`: P1's bar in the bottom-left corner, P2's in the bottom-right, each `bar_w` of the frame wide. P2's bar fills from its right edge, so both drain towards their corner; P2's label is right-aligned. Other pids have no slot.
+- A bar is shown for every player the game knows, also while they are out of view, so their health stays visible.
+- `bar_geometry()` and the length smoothing (`_bar_len`, `Renderer.reset()`) are removed: nothing depends on the player's position or face any more.
+- The key line ("R: NEW ROUND   Q: QUIT") is centred between the bars, shrunk to fit the gap, on a dark backing so it reads on a bright floor.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: `reset()` no longer resets the renderer (it has no state left).
+
+**Changed:** `configs/default.yaml`, `render:` section: `bar_w` (0.3 of the frame width, leaving the middle for the key line) replaces `bar_face_widths`, `bar_shoulder_widths` and `bar_length_tau_s`.
+
+**Changed:** `tests/test_renderer.py`: the three bar-geometry and smoothing tests are replaced by one: P1's bar bottom left and P2's bottom right wherever they stand, P2 filling from the right edge, and the bar still shown for a player out of view.
