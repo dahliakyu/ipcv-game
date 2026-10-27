@@ -1203,12 +1203,12 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
 
 **Decisions (Task 5 owner, 2026-10-26).**
 
-- **One model per frame.** BoT-SORT runs on the YOLO-pose boxes that the pose stage already returns, through Ultralytics' `BOTSORT` class; `yolo11n.pt` goes. Measured on `two_people_fitness_challenge.webm`: same track ids as on separate frames, 0.4 ms per frame.
+- **One model per frame.** BoT-SORT runs on the YOLO-pose boxes that the pose stage already returns, through Ultralytics' `BOTSORT` class; `yolo11n.pt` goes. Measured on `two_people_fitness_challenge.webm`: 0.4 ms per frame.
 - **Occluded, then lost.** A player whose track BoT-SORT still holds (not seen for at most `track_buffer` frames) is `"occluded"`: the link stays, the box is BoT-SORT's prediction, and no state is reset when the same track comes back. Only when BoT-SORT drops the track is the player `"lost"`; when OSNet links a new track to them, `reentered` is True for that frame. `bodypose.py` dropped the link and reset the pose state on every frame without the track.
 - **Two players** (`max_players: 2`): the game is 1v1, so a third person never becomes a player. `bodypose.py` allowed 3.
 - **BoT-SORT settings,** from `botsort.yaml` with two changes:
   - motion compensation off (`gmc_method: none`): the webcam does not move. Measured: same track ids, 4.4 → 0.4 ms per frame;
-  - a new track needs score 0.5 (`new_track_thresh`), like `main.py`'s detector, while detections from 0.35 (`pose.det_conf`) still continue an existing track. `main.py` dropped everything under 0.5 before BoT-SORT, which also removed BoT-SORT's second matching round for weak detections.
+  - a new track needs score 0.5 (`new_track_thresh`), like `main.py`'s detector, while detections from 0.35 (`pose.det_conf`) still continue an existing track. `main.py` dropped every box under 0.5 before BoT-SORT.
 - **Stored vectors are updated (new).** While a player is active and their box overlaps no other detection, their vector is blended with a fresh OSNet vector at intervals, if the two are still similar enough to be the same person. One player per frame, in turn, so OSNet adds at most one crop (~10 ms on the GPU) to a frame.
 - **OSNet weights from Hugging Face.** `osnet_x1_0_msmt17_combineall` from the authors' repo ([kaiyangzhou/osnet](https://huggingface.co/kaiyangzhou/osnet)), saved as `models/osnet_x1_0_msmt17_combineall.pth`. It is the same network trained on the same data (all 4,101 MSMT17 identities) as `Project/models/osnet_x1_0_msmt17.pth`, but it has a public download with a checksum. The old file matches no file in that repo, probably because it came from torchreid's Google Drive zoo, which needs `gdown`. Compared on the two test clips (stored vector from the first frame, as in `bodypose.py`; similarity to the same player vs to the other player):
 
@@ -1317,3 +1317,32 @@ Compared with `bodypose.py`:
 - a player in use is not given to another track; a too-small crop is not identified;
 - the vector update blends by `update_weight` and players take turns; it is skipped when boxes overlap or the crop is too different;
 - `reset()` and `reset(pid)`; an unknown backend raises.
+
+#### Step 3 · BoT-SORT on the pose boxes
+
+**Added:** `src/ipcvgame/identity/tracks.py`, `BotSortTracks`: replaces `person_detector.track(..., tracker="botsort.yaml")` in `main.py`.
+- Ultralytics' `BOTSORT` class gets the boxes and scores of the pose stage's `PoseDetection`s, so `yolo11n.pt` no longer runs; one model per frame.
+- It returns the tracks seen this frame (track id and which detection) and the tracks BoT-SORT still holds as lost, with its predicted box (Kalman, constant velocity) clipped to the frame. `IdentityTracker` uses the predicted box for occluded players.
+- `reset()` clears BoT-SORT (key `r`).
+
+**Changed:** `src/ipcvgame/identity/tracker.py`: `backend: reid` builds `BotSortTracks` from the config.
+
+**Changed:** `configs/default.yaml`, `identity:` section
+- `backend: reid` is now the default.
+- New `botsort:` block with every value from `Project/botsort.yaml` and a reason. Two changed:
+
+  | Key | Value | `botsort.yaml` | Why |
+  | --- | --- | --- | --- |
+  | `new_track_thresh` | 0.5 | 0.25 | A new track needs the score `main.py` asked of its detector (`IDENTITY_CONFIDENCE`); boxes from 0.35 still continue a track |
+  | `gmc_method` | `none` | `sparseOptFlow` | The webcam does not move; 4.4 → 0.4 ms per frame |
+
+- `track_buffer` (30) counts frames, as in Ultralytics: a held track, and its player's `"occluded"` status, lasts 1 s at 30 FPS and 1.7 s at the ~17 FPS of `data/clips/session.mp4`.
+- BoT-SORT's second matching round (scores 0.1–0.25) gets no boxes, because the pose stage drops everything under 0.35 (`pose.det_conf`). In `main.py` the detector's 0.5 limit did the same.
+
+**Changed:** `tests/test_pipeline.py` and `tests/test_recorder.py` use `identity.backend=zones`, like `face.backend=stub`, so they need no model files.
+
+**Added:** `tests/test_identity.py`, 4 tests on made-up boxes:
+- two moving boxes keep their track ids;
+- a missing box is held as lost with its predicted box moving on, and removed after `track_buffer` frames;
+- a box under `new_track_thresh` does not start a track but does continue one;
+- `IdentityTracker` with the real BoT-SORT and a fake OSNet finds both players.

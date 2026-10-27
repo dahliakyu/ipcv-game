@@ -3,8 +3,8 @@
 backend "reid" is Colour Clash `PlayerIdentityTracker` (Project/bodypose.py)
 with its tracking loop from main.py:
 
-- A tracker gives every person a short-lived track id while it can follow
-  them from frame to frame (BoT-SORT, step 3 of the merge).
+- BoT-SORT (identity/tracks.py) gives every person a short-lived track id
+  while it can follow them from frame to frame, on the pose model's boxes.
 - A track already linked to a player keeps that player; OSNet does not run.
 - A new track's person crop goes through OSNet (identity/embedding.py). Its
   vector is compared with each stored player's vector by cosine similarity
@@ -74,6 +74,9 @@ class IdentityTracker:
                 from ipcvgame.identity.embedding import OSNetEmbeddingExtractor
                 embedder = OSNetEmbeddingExtractor(cfg["reid_weights"], cfg.get("reid_device", "auto"))
             self.embedding_extractor = embedder
+            if tracker is None:
+                from ipcvgame.identity.tracks import BotSortTracks
+                tracker = BotSortTracks(cfg["botsort"])
             self.tracker = tracker
         elif self.backend != "zones":
             raise ValueError(f"Unknown identity backend {self.backend!r}")

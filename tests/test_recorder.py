@@ -57,7 +57,7 @@ def test_record_raw_and_view(tmp_path):
             rec.write(gradient_frame(i, i / 30))     # bright half on the right in the file
     raw = tmp_path / "out.mp4"
     main(["--source", str(src), "--until", "game", "--headless", "--no-log",
-          "--set", "pose.backend=none", "--set", "face.backend=stub",
+          "--set", "pose.backend=none", "--set", "face.backend=stub", "--set", "identity.backend=zones",
           "--record", str(raw), "--record-view"])
     view = tmp_path / "out_view.mp4"
     assert view.exists() and timestamps_path(view).exists()

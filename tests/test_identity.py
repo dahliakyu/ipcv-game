@@ -260,3 +260,65 @@ def test_reset():
 def test_unknown_backend():
     with pytest.raises(ValueError):
         IdentityTracker({**CFG, "backend": "nope"})
+
+
+# --------------------------------------------------------------------------
+# BoT-SORT on PoseDetection boxes (identity/tracks.py), synthetic boxes.
+
+def botsort(**over):
+    from ipcvgame.identity.tracks import BotSortTracks
+
+    return BotSortTracks({**load_config()["identity"]["botsort"], **over})
+
+
+def moving(x, score=0.9) -> PoseDetection:
+    d = det(x)
+    d.score = score
+    return d
+
+
+def test_botsort_keeps_ids_on_moving_boxes():
+    bot = botsort()
+    frame = scene(0.0, [])
+    ids = []
+    for k in range(10):
+        tr = bot.update([moving(20 + 3 * k), moving(250 - 3 * k)], frame)
+        ids.append(sorted(tr.active, key=lambda a: a[1]))
+    assert len(ids[-1]) == 2
+    assert all(a == ids[-1] for a in ids[2:])           # same id per box once confirmed
+    assert ids[-1][0][0] != ids[-1][1][0]
+
+
+def test_botsort_lost_track_predicted_then_removed():
+    bot = botsort(track_buffer=5)
+    frame = scene(0.0, [])
+    for k in range(6):
+        tr = bot.update([moving(20 + 5 * k)], frame)
+    (tid, _), = tr.active
+    last_x = 20 + 5 * 5
+    tr = bot.update([], frame)
+    assert tr.active == [] and tid in tr.lost
+    assert tr.lost[tid][0] > last_x                    # predicted onwards (constant velocity)
+    for _ in range(6):
+        tr = bot.update([], frame)
+    assert tid not in tr.lost                           # removed after track_buffer frames
+
+
+def test_botsort_weak_box_continues_but_does_not_start_a_track():
+    bot = botsort()
+    frame = scene(0.0, [])
+    for _ in range(3):
+        assert bot.update([moving(300, score=0.4)], frame).active == []
+    for k in range(3):
+        tr = bot.update([moving(20 + k)], frame)
+    (tid, _), = tr.active
+    tr = bot.update([moving(23, score=0.4)], frame)
+    assert [a[0] for a in tr.active] == [tid]
+
+
+def test_identity_runs_on_botsort():
+    ident = IdentityTracker({**CFG, "botsort": load_config()["identity"]["botsort"]}, embedder=FakeOSNet())
+    for k in range(8):
+        a, b = moving(20 + 2 * k), moving(250)
+        players = ident.update([a, b], scene(k / 30, [(a, BLUE), (b, GREEN)]))
+    assert set(players) == {1, 2} and players[1].det is a and players[2].det is b

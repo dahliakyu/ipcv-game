@@ -10,7 +10,7 @@ from ipcvgame.core.types import Frame, FrameState, PoseDetection
 
 W, H = 640, 480
 # Stub face backend: the tests feed black frames and need no YuNet model file.
-NO_MODELS = ["pose.backend=none", "face.backend=stub"]
+NO_MODELS = ["pose.backend=none", "face.backend=stub", "identity.backend=zones"]
 
 
 def fake_det(cx: float) -> PoseDetection:

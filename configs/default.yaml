@@ -50,7 +50,7 @@ identity:                 # Task 3 — Colour Clash identity (bodypose.py Player
   # "reid" = tracker + OSNet re-identification (bodypose.py, main.py).
   # "zones" = phase-1 stub: P1 = best detection in the left half, P2 = best
   # in the right half; no model needed (tests).
-  backend: zones
+  backend: reid
   # Players the tracker creates (bodypose.py MAX_PLAYERS = 3). The game is
   # 1v1, so a third person (a bystander) never becomes a player.
   max_players: 2
@@ -92,6 +92,42 @@ identity:                 # Task 3 — Colour Clash identity (bodypose.py Player
   # Only update when the player's box overlaps no other detection (IoU above
   # this): the other person would be in the crop.
   update_max_iou: 0.0
+  # BoT-SORT on the pose boxes (identity/tracks.py), from Colour Clash
+  # Project/botsort.yaml (Ultralytics' defaults) with two changes, marked.
+  botsort:
+    tracker_type: botsort
+    # First matching round: detections at least this confident. The pose
+    # stage already drops boxes under pose.det_conf (0.35), so every box
+    # passes, and the second round below never gets a box.
+    track_high_thresh: 0.25
+    # Second round for weaker boxes (track_low_thresh..track_high_thresh):
+    # unused here, see above. Kept so the botsort.yaml values stay visible.
+    track_low_thresh: 0.1
+    # Changed (botsort.yaml: 0.25): a box must score this to start a new
+    # track, like main.py's person detector (IDENTITY_CONFIDENCE = 0.5),
+    # while boxes from 0.35 still continue an existing track. main.py
+    # dropped every box under 0.5 before BoT-SORT.
+    new_track_thresh: 0.5
+    # Frames a lost track is kept (and its player "occluded") before it is
+    # removed (player "lost"). Ultralytics counts frames, not seconds: 1 s at
+    # 30 FPS, 1.7 s at the ~17 FPS of the recorded session clip.
+    track_buffer: 30
+    # Matching cost limit (1 - IoU, fused with the score): a box overlapping
+    # a track's prediction by less than ~0.2 IoU does not continue it.
+    match_thresh: 0.8
+    # Fuse the detection score into the matching cost.
+    fuse_score: true
+    # Changed (botsort.yaml: sparseOptFlow): no camera-motion compensation;
+    # the webcam does not move. Same track ids on the test clip, 4.4 -> 0.4 ms
+    # per frame.
+    gmc_method: none
+    # BoT-SORT's own appearance matching stays off (with_reid: false); OSNet
+    # above does re-identification. proximity/appearance thresholds and
+    # model are only read when it is on.
+    proximity_thresh: 0.5
+    appearance_thresh: 0.8
+    with_reid: false
+    model: auto
 
 motion:                   # Task 2 — keypoint smoothing (Colour Clash KeypointTracker)
   # "ema" = the smoothing from bodypose.py: confidence gate, hold, EMA, snap back.
