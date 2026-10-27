@@ -73,6 +73,9 @@ class IdentityTracker:
             if embedder is None:
                 from ipcvgame.identity.embedding import OSNetEmbeddingExtractor
                 embedder = OSNetEmbeddingExtractor(cfg["reid_weights"], cfg.get("reid_device", "auto"))
+                # The first run sets up the GPU (~85 ms); do it now, not when
+                # the first player walks in.
+                embedder.extract(np.zeros((256, 128, 3), np.uint8))
             self.embedding_extractor = embedder
             if tracker is None:
                 from ipcvgame.identity.tracks import BotSortTracks
@@ -92,6 +95,8 @@ class IdentityTracker:
         self._tracks = Tracks([])
         self._dets: list[PoseDetection] = []
         self._sim: dict[int, float] = {}                    # this frame's OSNet similarity per pid
+        self._new_best_sim: float | None = None             # best similarity of a new track this frame
+        self._osnet_runs = 0                                # OSNet crops this frame
 
     # ------------------------------------------------------------------ reid
 
@@ -100,6 +105,8 @@ class IdentityTracker:
             return self._update_zones(dets, frame)
         self._dets = dets
         self._sim = {}
+        self._new_best_sim = None
+        self._osnet_runs = 0
         tracks = self.tracker.update(dets, frame)
         self._tracks = tracks
         self.forget_missing_tracks(tracks)
@@ -153,6 +160,10 @@ class IdentityTracker:
             return None
         return image
 
+    def _embed(self, person: np.ndarray) -> np.ndarray:
+        self._osnet_runs += 1
+        return self.embedding_extractor.extract(person)
+
     def _find_player(self, embedding: np.ndarray, excluded_player_ids: set[int]) -> int | None:
         best_player, best_similarity = None, -1.0
         for player_id, player_embedding in self.embeddings.items():
@@ -161,6 +172,8 @@ class IdentityTracker:
             similarity = float(np.dot(embedding, player_embedding))
             if similarity > best_similarity:
                 best_player, best_similarity = player_id, similarity
+        if best_player is not None:
+            self._new_best_sim = max(best_similarity, self._new_best_sim or -1.0)
         if best_player is not None and best_similarity >= self.cfg["reid_threshold"]:
             self._sim[best_player] = best_similarity
             return best_player
@@ -182,7 +195,7 @@ class IdentityTracker:
         person = self._crop(frame, det)
         if person is None:
             return None
-        embedding = self.embedding_extractor.extract(person)
+        embedding = self._embed(person)
         matched_player = self._find_player(embedding, excluded)
         if matched_player is not None:
             # The player may still be linked to an older track the tracker holds as lost.
@@ -225,7 +238,7 @@ class IdentityTracker:
                 continue
             self._update_turn = (self._update_turn + k + 1) % len(active)
             self.last_update_t[pid] = frame.t
-            fresh = self.embedding_extractor.extract(person)
+            fresh = self._embed(person)
             sim = float(fresh @ self.embeddings[pid])
             self._sim[pid] = sim
             if sim < self.cfg["update_min_sim"]:
@@ -279,19 +292,52 @@ class IdentityTracker:
         self.last_update_t.pop(pid, None)
         self.track_to_player = {tid: p for tid, p in self.track_to_player.items() if p != pid}
 
+    def _track_of(self) -> dict[int, int]:
+        return {pid: tid for tid, pid in self.track_to_player.items()}
+
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """Player boxes (dashed when not active) with status; zones: the split line."""
+        """Player boxes (dashed when not active) with status, BoT-SORT track
+        id and this frame's OSNet similarity; green "Identifying..." boxes for
+        tracks without a player (main.py's label); zones: the split line."""
         if self.backend == "zones":
             w = canvas.shape[1]
             for z in range(1, self.max_players):
                 x = int(w * z / self.max_players)
                 canvas[:, max(0, x - 1):x + 1] = (255, 255, 255)
+        track_of = self._track_of() if self.backend == "reid" else {}
         for p in state.players.values():
-            label = f"P{p.pid} {p.status}" + (" REENTER" if p.reentered else "")
+            label = f"P{p.pid} {p.status}"
+            if p.pid in track_of:
+                label += f" t{track_of[p.pid]}"
+            if p.pid in self._sim:
+                label += f" sim {self._sim[p.pid]:.2f}"
+            if p.reentered:
+                label += " REENTER"
             draw_bbox(canvas, p.bbox, player_color(p.pid), label, dashed=p.status != "active")
         if self.backend == "reid":
-            linked = set(self.track_to_player)
             for tid, i in self._tracks.active:
-                if tid not in linked:
-                    draw_bbox(canvas, self._dets[i].bbox, (0, 255, 0), "Identifying...")
-            draw_text(canvas, f"stored players: {sorted(self.embeddings)}", (12, canvas.shape[0] - 12))
+                if tid not in self.track_to_player:
+                    draw_bbox(canvas, self._dets[i].bbox, (0, 255, 0), f"Identifying... t{tid}")
+            draw_text(canvas, f"stored players: {sorted(self.embeddings)}  OSNet runs: {self._osnet_runs}",
+                      (12, canvas.shape[0] - 12))
+
+    def log_fields(self, state: FrameState) -> dict:
+        """CSV columns (status, box and reentered are in the base log):
+        identity_p<pid>_track: BoT-SORT track id linked to the player, empty
+        when none; identity_p<pid>_sim: OSNet similarity this frame (a match
+        or a vector update), empty when OSNet did not run for the player;
+        identity_new_best_sim: best similarity of a track without a player to
+        any stored player (shows how close a returning player came to
+        reid_threshold); identity_pending: tracks without a player;
+        identity_osnet_runs: OSNet crops this frame (cost)."""
+        if self.backend != "reid":
+            return {}
+        track_of = self._track_of()
+        row: dict = {}
+        for pid in sorted(self.players):
+            row[f"identity_p{pid}_track"] = track_of.get(pid, "")
+            row[f"identity_p{pid}_sim"] = self._sim.get(pid, "")
+        row["identity_new_best_sim"] = "" if self._new_best_sim is None else self._new_best_sim
+        row["identity_pending"] = sum(tid not in self.track_to_player for tid, _ in self._tracks.active)
+        row["identity_osnet_runs"] = self._osnet_runs
+        return row

@@ -4,7 +4,7 @@ import torch
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import REPO_ROOT, load_config
-from ipcvgame.core.types import Frame, PoseDetection
+from ipcvgame.core.types import Frame, FrameState, PoseDetection
 from ipcvgame.identity.osnet import load_weights, osnet_x1_0
 from ipcvgame.identity.tracker import IdentityTracker, Tracks
 
@@ -322,3 +322,25 @@ def test_identity_runs_on_botsort():
         a, b = moving(20 + 2 * k), moving(250)
         players = ident.update([a, b], scene(k / 30, [(a, BLUE), (b, GREEN)]))
     assert set(players) == {1, 2} and players[1].det is a and players[2].det is b
+
+
+def test_log_fields_and_debug_view():
+    ident, tr = make(update_every_s=100.0)
+    a, c = det(20), det(250)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [4])
+    players = step(ident, tr, 0.2, [(a, BLUE), (c, RED)], [4, 6])
+    state = FrameState(scene(0.2, []), players, {}, {}, [], {})
+    row = ident.log_fields(state)
+    assert row["identity_p1_track"] == 4
+    assert row["identity_p1_sim"] == ""                   # linked track: OSNet did not run for P1
+    assert row["identity_pending"] == 1 and row["identity_osnet_runs"] == 1
+    assert row["identity_new_best_sim"] == ""             # P1 is in use, so not compared
+    canvas = np.zeros((H, W, 3), np.uint8)
+    ident.draw_debug(canvas, state)
+    assert canvas.any()
+
+    players = step(ident, tr, 0.8, [(c, RED)], [6])      # P1's track dropped: P1 lost
+    row = ident.log_fields(FrameState(scene(0.8, []), players, {}, {}, [], {}))
+    assert row["identity_p1_track"] == ""
+    assert row["identity_new_best_sim"] == pytest.approx(0.0, abs=1e-6)   # red vs P1's blue

@@ -1346,3 +1346,12 @@ Compared with `bodypose.py`:
 - a missing box is held as lost with its predicted box moving on, and removed after `track_buffer` frames;
 - a box under `new_track_thresh` does not start a track but does continue one;
 - `IdentityTracker` with the real BoT-SORT and a fake OSNet finds both players.
+
+#### Step 4 · Debug view, CSV columns and warm-up
+
+**Changed:** `src/ipcvgame/identity/tracker.py`
+- **Debug view (`--until identity`):** each player box shows status, BoT-SORT track id and, on frames where OSNet ran for that player, the similarity. Tracks without a player show `main.py`'s "Identifying..." with their track id. A bottom line lists the stored players and this frame's OSNet runs.
+- **`log_fields` (new):** `identity_p<pid>_track` (linked track id), `identity_p<pid>_sim` (similarity of a match or vector update this frame), `identity_new_best_sim` (best similarity of a track without a player to any stored player that is not in use; shows how close a returning player came to `reid_threshold`), `identity_pending` (tracks without a player), `identity_osnet_runs` (OSNet crops this frame). Status, box and `reentered` were already in the base CSV.
+- **Warm-up (new):** one OSNet run on a blank crop at start-up, when the weights are loaded. On `data/clips/session.mp4` the first frame's identity stage went from 115 ms to 22 ms (two players identified in it).
+
+**Added:** `tests/test_identity.py`: the CSV columns for a linked player, a pending track and a lost player, and the debug view draws.
