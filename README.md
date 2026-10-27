@@ -43,6 +43,20 @@ wget -P models https://storage.googleapis.com/mediapipe-models/face_landmarker/f
 sha256sum models/face_landmarker.task   # 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
 ```
 
+The OSNet person re-identification weights (Task 3: recognising a player who
+comes back) are not downloaded automatically either. They are the MSMT17
+`combineall` model from the authors' Hugging Face repo
+([kaiyangzhou/osnet](https://huggingface.co/kaiyangzhou/osnet)), saved under a
+shorter name:
+
+```bash
+curl -L -o models/osnet_x1_0_msmt17_combineall.pth https://huggingface.co/kaiyangzhou/osnet/resolve/main/osnet_x1_0_msmt17_combineall_256x128_amsgrad_ep150_stp60_lr0.0015_b64_fb10_softmax_labelsmooth_flip_jitter.pth
+sha256sum models/osnet_x1_0_msmt17_combineall.pth   # 48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727
+```
+
+The network code is copied into `identity/osnet.py`, so `torchreid` is not
+needed (the Hugging Face page's usage example installs it).
+
 Test clips go in `data/clips/` (gitignored, shared via the drive). Copy each
 `.mp4` together with its `.timestamps.csv`.
 
@@ -137,8 +151,9 @@ merge through a PR.
 
 ## Third-party licences
 
-Ultralytics YOLO (AGPL-3.0), MediaPipe (Apache 2.0) and the YuNet face
-detector from the OpenCV model zoo (MIT) are used as pretrained models; all
+Ultralytics YOLO (AGPL-3.0), MediaPipe (Apache 2.0), the YuNet face
+detector from the OpenCV model zoo (MIT) and OSNet from torchreid (MIT; code
+and weights by Kaiyang Zhou) are used as pretrained models; all
 are fine for coursework and are listed in the AI and external-tools statement.
 
 Sprites from third parties:

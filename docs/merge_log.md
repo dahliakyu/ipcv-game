@@ -1184,3 +1184,71 @@ The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` ins
   - each team gets its own ring from the real frames.
 - `tests/test_game.py`: the ring sits on the chest at 2.6 shoulder widths, and the fallback without shoulders.
 
+
+## Task 3: Identity tracking
+
+### Plan
+
+**Source.** `PlayerIdentityTracker` in `Project/bodypose.py`, the tracking loop in `main.py`, `Project/botsort.yaml`, `Project/osnet.py` and `Project/osnet_embedding.py` (after the pre-merge OSNet change above). `Project/identitytracker.py` only starts `bodypose.py`'s demo and is not merged.
+
+**What the code does.**
+
+- **Tracking:** `main.py` runs a second model, `yolo11n.pt`, as a person detector (score ≥ 0.5, `IDENTITY_CONFIDENCE`) with Ultralytics' BoT-SORT (`botsort.yaml`). BoT-SORT gives each person a track id that lasts while it can follow them from frame to frame.
+- **Identity:** `PlayerIdentityTracker` turns track ids into player ids.
+  - A track already linked to a player keeps that player; OSNet does not run again.
+  - A new track's person crop (at least 40 × 20 px, `MIN_PERSON_HEIGHT` / `MIN_PERSON_WIDTH`) goes through OSNet. Its 512-number vector is compared with each stored player's vector by cosine similarity. The best player at ≥ 0.6 (`REID_THRESHOLD`) becomes this track's player. Players already used this frame are skipped (`excluded_player_ids`).
+  - No match: the track must be seen 5 times (`NEW_PLAYER_CONFIRMATION`) before it becomes a new player with the next free id, up to 3 (`MAX_PLAYERS`). Its last vector is stored and never updated.
+  - `forget_missing_tracks()`: a track that is not in this frame's output loses its link, and its player's pose state is reset (`reset_player()`). When the track comes back, OSNet runs again.
+- **Per frame:** BoT-SORT plus pose processing on each linked track's box; the pose model runs once per player crop.
+
+**Decisions (Task 5 owner, 2026-10-26).**
+
+- **One model per frame.** BoT-SORT runs on the YOLO-pose boxes that the pose stage already returns, through Ultralytics' `BOTSORT` class; `yolo11n.pt` goes. Measured on `two_people_fitness_challenge.webm`: same track ids as on separate frames, 0.4 ms per frame.
+- **Occluded, then lost.** A player whose track BoT-SORT still holds (not seen for at most `track_buffer` frames) is `"occluded"`: the link stays, the box is BoT-SORT's prediction, and no state is reset when the same track comes back. Only when BoT-SORT drops the track is the player `"lost"`; when OSNet links a new track to them, `reentered` is True for that frame. `bodypose.py` dropped the link and reset the pose state on every frame without the track.
+- **Two players** (`max_players: 2`): the game is 1v1, so a third person never becomes a player. `bodypose.py` allowed 3.
+- **BoT-SORT settings,** from `botsort.yaml` with two changes:
+  - motion compensation off (`gmc_method: none`): the webcam does not move. Measured: same track ids, 4.4 → 0.4 ms per frame;
+  - a new track needs score 0.5 (`new_track_thresh`), like `main.py`'s detector, while detections from 0.35 (`pose.det_conf`) still continue an existing track. `main.py` dropped everything under 0.5 before BoT-SORT, which also removed BoT-SORT's second matching round for weak detections.
+- **Stored vectors are updated (new).** While a player is active and their box overlaps no other detection, their vector is blended with a fresh OSNet vector at intervals, if the two are still similar enough to be the same person. One player per frame, in turn, so OSNet adds at most one crop (~10 ms on the GPU) to a frame.
+- **OSNet weights from Hugging Face.** `osnet_x1_0_msmt17_combineall` from the authors' repo ([kaiyangzhou/osnet](https://huggingface.co/kaiyangzhou/osnet)), saved as `models/osnet_x1_0_msmt17_combineall.pth`. It is the same network trained on the same data (all 4,101 MSMT17 identities) as `Project/models/osnet_x1_0_msmt17.pth`, but it has a public download with a checksum. The old file matches no file in that repo, probably because it came from torchreid's Google Drive zoo, which needs `gdown`. Compared on the two test clips (stored vector from the first frame, as in `bodypose.py`; similarity to the same player vs to the other player):
+
+  | Weights | Fitness clip: same / other | Jump clip: same / other | ms per crop |
+  | --- | --- | --- | --- |
+  | `Project/models/osnet_x1_0_msmt17.pth` | 0.66 / 0.59 | 0.90 / 0.55 | 9.3 |
+  | `osnet_x1_0_msmt17_combineall` (chosen) | 0.55 / 0.47 | 0.90 / 0.54 | 9.5 |
+  | `osnet_ain_x1_0_msmt17` | 0.63 / 0.56 | 0.90 / 0.61 | 10.8 |
+
+  The two x1.0 files separate the players equally well (gap 0.07–0.08 on the fitness clip, where both wear black shirts and jeans and change posture, and 0.35–0.36 on the jump clip). OSNet-AIN, which the model zoo reports as better on unseen datasets, separates them worse on both clips (0.07 and 0.29) and needs a second network file, so it is not used. The 0.6 threshold is kept for now. With the chosen weights, only 36% of the fitness clip's same-player similarities reach it (the jump clip: 100%), so it is checked again on re-entry clips.
+- **Kept from `bodypose.py`:** greedy matching per track with excluded ids, the 0.6 threshold, the minimum crop size, the OSNet x1.0 network and its preprocessing.
+- **Not in this merge:** `Player.pos` stays `(0, 0)`.
+
+**Where each part goes.**
+
+| In the code | Goes to | Change |
+| --- | --- | --- |
+| `osnet.py` | `identity/osnet.py` | Moved |
+| `OSNetEmbeddingExtractor` (`osnet_embedding.py`) | `identity/embedding.py`, same name | Device and weights path from config |
+| `Project/models/osnet_x1_0_msmt17.pth` | `models/osnet_x1_0_msmt17_combineall.pth` | Same network and data, from Hugging Face; README download command |
+| `Project/models/yolo11n.pt` | Removed | BoT-SORT runs on the pose boxes |
+| `PlayerIdentityTracker` | `identity/tracker.py`, `IdentityTracker` | Same steps; occluded/lost and `reentered`; vector update |
+| `_find_player()`, `update()` | `IdentityTracker`, same names | Numbers from config; confirmation in seconds |
+| `forget_missing_tracks()` | `IdentityTracker` | Links drop when BoT-SORT drops the track, not when it is missing for a frame |
+| `person_detector.track(..., botsort.yaml)` in `main.py` | `IdentityTracker`, Ultralytics `BOTSORT` on the `PoseDetection` boxes | `yolo11n.pt` removed |
+| `botsort.yaml` | `identity.botsort:` config | Each value with a reason; two changed (above) |
+| `REID_THRESHOLD`, `NEW_PLAYER_CONFIRMATION`, `MAX_PLAYERS`, `MIN_PERSON_HEIGHT`, `MIN_PERSON_WIDTH` | `identity:` config | Seconds instead of frames; 2 players |
+| `pose_processor.reset_player()` on lost players | `Player.reentered` | Already used by the pipeline to reset face, motion and gestures |
+| "Identifying..." label, box colours | `IdentityTracker.draw_debug()` | |
+| Left/right-half stub | `identity.backend: zones` | Kept for tests without weights |
+| `test_osnet.py` | `tests/test_identity.py` | Loads the weights if present, else skipped; no webcam |
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. OSNet into `identity/`: `osnet.py`, `embedding.py`, the Hugging Face weights in `models/` with a README download command, a load test.
+2. Config and identity logic: the `identity:` section, `IdentityTracker` with confirmation, re-identification, max players, occluded/lost, `reentered` and the vector update. Tests with a fake OSNet and fake tracks.
+3. BoT-SORT on the pose boxes: `BOTSORT` fed with `PoseDetection`s, predicted boxes for occluded players. Tests with synthetic moving boxes.
+4. Debug view, `log_fields` and warm-up: boxes with status and track id, "Identifying..." for pending tracks; CSV columns; one OSNet call at start-up (the first takes 84 ms).
+5. Check and record: run on the clips, Change Overviews, `docs/phase-1/status.md`.
+
+**Verification.** Unit tests for every step and runs on `data/test_clips/`. The two clips have no crossing, occlusion or re-entry, so ID switches can only be counted once such clips are recorded. The Task 5 owner checks re-entry live on the webcam.
+
+### Changes
