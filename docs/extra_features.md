@@ -2,16 +2,29 @@ Oct 25, 2026 · @el created with help of Claude Opus 5.5
 
 # Extra features: to build after the merge
 
-This is the backlog of game features agreed during the Colour Clash merge, plus the technical follow-ups the merge left open. None of it is built yet. Each feature lists what it should do, which task owns which part, the inputs it needs, a starting design with thresholds, and how to check it. The thresholds are starting points: tune them on the clips and put them in `configs/default.yaml` with a reason, like every other threshold.
+This is the backlog of game features agreed during the Colour Clash merge, plus the technical follow-ups the merge left open. None of the features is built yet. Each feature lists what it should do, which task owns which part, the inputs it needs, a starting design with thresholds, and how to check it. The thresholds are starting points: tune them on the clips and put them in `configs/default.yaml` with a reason, like every other threshold.
 
-## Before any of this: finish the merge
+## The merge is done
 
-The features build on the Colour Clash game; the teammates' original code lives in `garb/rest/`. In this order:
+The features build on the Colour Clash game, merged from the teammates' code (originals in `garb/rest/`, local only). Details and reasons are in [merge_log.md](merge_log.md):
 
-1. **Gestures (Task 4, with Task 2 signals).** Done: `interaction/gestures.py` sends `punch`, `hands_up` and `arms_crossed` events (merge log, Task 4, steps 1–4).
-2. **Game logic (Task 4).** Done up to the status update: `interaction/game.py` runs the game from those events (merge log, Task 4, steps 5–8 and Task 4 modifications).
-3. **Rendering (Task 5).** Done: `scene/renderer.py` draws the game from `renderer.py` (merge log, Task 5: Renderer).
-4. **Identity (Task 3).** Done: `identity/tracker.py` runs BoT-SORT and OSNet re-identification (merge log, Task 3).
+1. **Gestures (Task 4, with Task 2 smoothing):** `interaction/gestures.py` sends `punch`, `hands_up` and `arms_crossed` events (merge log, Task 4, steps 1–4).
+2. **Game logic (Task 4):** `interaction/game.py` runs the game from those events (Task 4, steps 5–9 and Task 4 modifications).
+3. **Identity (Task 3):** `identity/tracker.py`, BoT-SORT on the pose boxes and OSNet re-identification (Task 3).
+4. **Rendering (Task 5):** `scene/renderer.py` draws the game (Task 5: Renderer, and Task 5 modifications).
+
+### Where things are
+
+| To change | Code | Config | Tests |
+| --- | --- | --- | --- |
+| Gesture rules and events | `interaction/gestures.py`: `detect_*()`, `GestureRecognizer` | `gestures:` | `tests/test_gestures.py` |
+| Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` → `_act()` (events to actions, `facing()`) → `advance()` (movement, hits, `_apply_damage()`); state in `GamePlayer`, `Projectile`, `PaintBeam`, `Shield`, `PaintSplat` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
+| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`) | `render:` | `tests/test_renderer.py` |
+| Face effects and face data | `face/effects.py` (`FaceEffects.draw()`, stateless), `face/tracker.py` (`Face`, anchors), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
+| Players and identity | `identity/tracker.py`; `Player.status`, `reentered` | `identity:` | `tests/test_identity.py` |
+| Keys, pipeline order | `app/main.py` (`q`, `p`, `r` new round, `R` full reset), `app/pipeline.py` | | `tests/test_pipeline.py` |
+
+Each module reads only its own config section; the renderer reads game timings from `Game` (`beam_charge_s`, `shield_opacity()`, `torso()`, …), not from `game:`. Try a change with `python -m ipcvgame.app.main --source data/clips/session.mp4` (a full recorded round), `--until game` for the logic as plain shapes, and `--record-view <clip>` to save what the window shows. New CSV columns go in a module's `log_fields()`.
 
 ### What the face stage already gives you
 
@@ -59,17 +72,17 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 ### 3. Status above the head
 
-**What.** Name, HP bar and status icons above each player's head, replacing `draw_status()` from the Task 1 script and `_draw_player_health()` from `renderer.py`.
+**What.** A name tag and status icons above each player's head, so the state is visible on the player. The health bars stay pinned to the bottom corners (Task 5 modifications: a bar that moved with the player was too busy).
 
 **Owners.** Task 5: the renderer, reading game state. Task 1 provides `anchors["above_head"]`.
 
 **Design.**
 
-- **Name and HP bar.** "P1" and a bar at `above_head`, width ~1.2 × `scale` (with a minimum size so far players stay readable), in the team colour, faded by `alpha`.
+- **Name tag.** "P1" at `above_head`, small, in the team colour, faded by `alpha`; size from `scale` with a minimum so far players stay readable.
 - **Dizzy stars.** Below 25% HP: 3 stars orbit `above_head` on an ellipse in the head's plane (flattened by cos(pitch), turned by `roll`).
-- **Crown.** The player with more HP gets a small crown just above the bar.
+- **Crown.** The player with more HP gets a small crown above the tag.
 
-**Check.** The bar stays above the hat (also with the chin up), is readable at the back of the room, and fades out with the face.
+**Check.** The icons stay above the hat (also with the chin up) and fade out with the face.
 
 ### 4. Super charge, reset by blinking
 
@@ -82,7 +95,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 **Design.**
 
-- **Charge.** Holding `hands_up` (the beam pose) for longer than the normal beam charges a super beam: full after ~3 s. Releasing it at full charge fires it (more damage and width than `BEAM_DAMAGE`).
+- **Charge.** Holding `hands_up` (the beam pose) for longer than the normal beam charges a super beam: full after ~3 s. Releasing it at full charge fires it (more damage and width than the normal beam, `game.beam_damage`).
 - **Blink detection.** The raw score is not enough: on the test clips, `blink` = mean of `eyeBlinkLeft`/`Right` went over 0.5 in up to 26% of frames just because people looked down. Use:
   - a per-player baseline: the running median of the score over the last ~3 s, which follows lighting, glasses and eye shape;
   - a blink that starts at score > baseline + 0.35 (and > 0.5), and ends at score < baseline + 0.15 (hysteresis);
@@ -132,10 +145,11 @@ The features build on the Colour Clash game; the teammates' original code lives 
   | --- | --- |
   | Paint thinner | +20 HP and removes some paint splats |
   | Shield snack | an immediate shield (`activate_shield`) |
-  | Chili | the next bolt or beam does double damage, or the attack cooldown is reset |
+  | Chili | the next bolt or beam does double damage |
   | Rotten item | splashes the eater with paint (−10 HP): a risk when grabbing blindly |
 
 - **Feedback.** Eating triggers the cheek bulge (feature 7); grabbing a short sparkle at the wrist.
+- **Sprites (candidate):** `assets/Fancy Drinks/` (64 × 64 and 128 × 128 drinks and glasses, by Savannah; its Read Me states no licence). Not in git yet; add it with a README credit before using it.
 
 **Check.** Items can be eaten and grabbed on the webcam; an item cannot be taken twice; mouth movements while talking do not eat items that are not near the mouth.
 
@@ -157,7 +171,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
 **Status.** Planned for after the merge; the rule with sideways reach (merge step 2b) works well enough for now. Decisions already made (Task 5 owner, 2026-10-25):
 
-- **Goal:** one real sideways punch fires one paint stroke.
+- **Goal:** one real sideways punch fires one bolt.
 - **Labels:** the start (arm starts moving out) and end (arm fully extended) of each punch, marked frame by frame in a labelling tool.
 - **Data:** the Task 5 owner records themselves in sessions with different clothing and rooms. Clip names: `punch_<session>_<n>`, `neg_<session>_<n>` (no labels needed), `game_<n>` (test only).
 - **Split:** leave one session out; the report states that all data is from one person.
@@ -197,7 +211,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 
   All amounts go in the `game:` config.
 - **Threshold.** At `charge` ≥ the threshold (100 to start with), `hands_up` fires the beam and the bar drops to 0. Below the threshold, `hands_up` fires nothing. The player gets "not charged" feedback (the bar flashes), and the reset rule still applies, so they have to lower their arms before trying again.
-- **Display.** A thin bar under the health bar, in the team colour. When full it glows, and the magic ball can already show between the hands as a hint.
+- **Display.** A thin bar just above the player's health bar in their bottom corner, in the team colour. When full it glows, and the magic ball can already show between the hands as a hint.
 - **Link with feature 4.** The super charge (hold the pose, a blink resets it) can share this bar: a full bar plus holding the pose charges the super beam.
 
 **Check.** On the webcam: `hands_up` with a part-filled bar fires nothing; after enough hits it fires once and the bar empties. Log `charge` per player (`log_fields`) to tune the fill rates so a beam comes every ~20–30 s of play.
@@ -232,7 +246,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
 **Design.**
 
 - **Aim direction.** For a punch: the punching arm's direction, shoulder → wrist (`punching_hand()` already finds the arm). For the beam: from the ball (between the hands) towards the opponent's torso. Aim assist: if the arm points within ~20° of the opponent's torso (shoulder midpoint to hip level, `body_position()`), snap to it, so a roughly correct punch hits.
-- **Towards the opponent, not the middle.** Today `_act()` fires right for a player in the left half of the frame and left otherwise. That fails when both players stand in the same half. Use the direction to the other player instead.
+- **Towards the opponent, not the middle.** Done for sideways attacks (Task 4 modifications): `Game.facing()` fires towards the nearest other player in view. What is left is the 2D direction below.
 - **2D game logic.**
   - `Projectile` gets a velocity vector instead of `direction`.
   - Hits test the path since the last frame (a segment) against the target's body box in 2D.
@@ -266,7 +280,7 @@ The features build on the Colour Clash game; the teammates' original code lives 
   - the shoulder width at this distance is the reference for `Player.pos` depth (pinhole model);
   - a clean OSNet vector per player (standing apart, front-facing): it replaces the first-sight vector, which may be from walking in at an angle.
 - **Countdown.** 3-2-1 in the middle of the frame; then `playing`.
-- **Result.** Winner in their team colour, final health, "hands up to play again".
+- **Result.** Winner in their team colour, final health, "hands up to play again". The renderer's end panel (`_draw_game_over()`, dimmed frame) is the starting point, and the top bar already shows "STEP INTO VIEW" while nobody is seen (`_draw_hud()`).
 
 **Check.** Two new players get through the instructions in under ~30 s; a player who does not perform a move is reminded; the calibration values are logged per player (`log_fields`) and stay stable when the round restarts.
 
@@ -334,6 +348,14 @@ The features build on the Colour Clash game; the teammates' original code lives 
 - **Replaces** `beam_ball` / `beam_band` drawing for the major attack; the magic ball frames can stay for the charge and rise. Feature 14's beam-meets-beam rule then becomes "drops falling on a raised shield".
 
 **Check.** The rain falls where the opponent stood at the burst; stepping out of the band during the warning avoids most drops; damage per attack never exceeds the cap; the shield blocks it.
+
+## Technical follow-ups from the game and renderer merges
+
+| Item | Why | Where |
+| --- | --- | --- |
+| Balance on the webcam | Damage, speeds and the shield time are `game.py`'s values; check them over a few real rounds | `game:` config |
+| `tools/eval_gestures.py` | Needs clips with real, labelled gestures; the test clips have none | `tools/` |
+| Render cost at high resolution | The pixel look costs ~14 ms per frame on a 4K clip (~4.5 ms at 720p) | `render.pixel_size`, `pixelate()` |
 
 ## Technical follow-ups from the Task 3 merge
 
