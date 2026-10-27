@@ -432,6 +432,32 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # A bolt's end point (a hit, a shield or the frame edge) is kept this long,
   # so the renderer can play its break-up there (game.Game.bolt_ends).
   bolt_end_s: 0.25
+  # --- Game phases (feature 12, docs/extra_features.md): waiting ->
+  # calibration -> countdown -> playing -> result. false = no waiting,
+  # calibration or countdown: the game plays at once, as before (tests, and
+  # clips recorded without the intro, e.g. data/clips/session.mp4).
+  intro: true
+  # Players the intro and the replay wait for: 2 for the 1v1 game; 1 to test
+  # the intro alone (main.py --solo): only P1 is waited for and calibrated,
+  # and a round has no opponent, so it never ends (keys r / R).
+  round_players: 2
+  # Waiting -> calibration: P1 and P2 both in view with a face for this long,
+  # so someone walking past the camera does not start the instructions.
+  ready_s: 1.0
+  # Countdown before every round (3-2-1).
+  countdown_s: 3.0
+  # Result -> next round: both players hold their hands up this long. Both,
+  # so the winner cheering alone does not restart; 2 s, so a short stretch
+  # does not either.
+  replay_hold_s: 2.0
+  # The two holds above survive gaps up to this long where their condition
+  # fails (a keypoint dropout, a face missed for a frame); as
+  # gestures.release_s.
+  hold_gap_s: 0.3
+  # Hands up for the replay without a visible nose: the head is taken this
+  # far above the shoulders (shoulder widths). Same as
+  # gestures.head_above_shoulders; each module reads only its own section.
+  head_above_shoulders: 0.3
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
