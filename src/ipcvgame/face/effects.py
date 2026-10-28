@@ -20,7 +20,8 @@ Cheek bulge: puffed cheeks, chipmunk style, for about a second. A real
 image warp, not a sticker: around each cheek anchor the camera image is
 magnified by a radial warp with cv2.remap (bulge_map()). Started only by
 bulge(pid, t), when the player eats a consumable (extra_features.md,
-feature 2).
+feature 2); while a drink sits at the open mouth (update(..., holding)),
+the cheeks already bulge gently.
 """
 
 from __future__ import annotations
@@ -195,6 +196,9 @@ class _Anim:
     flash_t: float | None = None     # the face flash started
     flash_owner: int = 0             # the attacker, for the flash colour
     bulge_t: float | None = None     # the cheek bulge started
+    bulge_k0: float = 0.0            # its strength then, so it rises from there
+    hold_level: float = 0.0          # the gentle bulge while a drink is at the mouth
+    hold_t: float | None = None      # Frame.t hold_level was last moved
 
 
 class FaceEffects:
@@ -220,11 +224,24 @@ class FaceEffects:
                                       player_color(pid))
         return self._hats[pid]
 
-    def update(self, hits: Iterable, faces: dict[int, Face], t: float) -> None:
+    def update(self, hits: Iterable, faces: dict[int, Face], t: float,
+               holding: Iterable[int] = ()) -> None:
         """Start the hit reaction for this frame's hits (Game.hits: target_id,
         owner_id, direction). Every hit restarts the flash; the hat is
         knocked off only while it is on the head, so hits in a row never
-        throw two hats. A player without a visible face gets neither."""
+        throw two hats. A player without a visible face gets neither.
+
+        `holding`: the players with a drink at their mouth now. Their cheeks
+        bulge gently (bulge_hold_k), reached and let go over
+        bulge_hold_ramp_s, so the warp never jumps."""
+        holding = set(holding)
+        rate = self.cfg["bulge_hold_k"] / self.cfg["bulge_hold_ramp_s"]
+        for pid in holding | {pid for pid, a in self._anim.items() if a.hold_level > 0}:
+            a = self._anim.setdefault(pid, _Anim())
+            target = self.cfg["bulge_hold_k"] if pid in holding else 0.0
+            step = rate * max(0.0, t - a.hold_t) if a.hold_t is not None else 0.0
+            a.hold_level += float(np.clip(target - a.hold_level, -step, step))
+            a.hold_t = t
         for h in hits:
             f = faces.get(h.target_id)
             if f is None or not f.valid or f.alpha <= 0:
@@ -238,16 +255,28 @@ class FaceEffects:
     def bulge(self, pid: int, t: float) -> None:
         """Puff this player's cheeks from time t (Frame.t): called when they
         eat a consumable (extra_features.md, feature 2), the only trigger.
-        A bulge already running starts over."""
-        self._anim.setdefault(pid, _Anim()).bulge_t = t
+        It rises from the strength the cheeks have now (the gentle bulge of
+        a drink at the mouth, or a puff already running), so it starts over
+        without a jump."""
+        a = self._anim.setdefault(pid, _Anim())
+        a.bulge_k0, a.bulge_t = self.bulge_strength(a, t), t
 
     def bulge_strength(self, a: _Anim | None, t: float) -> float:
-        """Warp strength k at time t: rising from 0 to bulge_k and back
-        over bulge_s (half a sine), 0 when no bulge is running."""
-        if a is None or a.bulge_t is None:
+        """Warp strength k at time t: the larger of the gentle bulge while a
+        drink is at the mouth and the puff after drinking. The puff follows
+        half a sine over bulge_s: rising from its start strength (bulge_k0)
+        to bulge_k in the first half, falling to 0 in the second."""
+        if a is None:
             return 0.0
-        k = (t - a.bulge_t) / self.cfg["bulge_s"]
-        return float(self.cfg["bulge_k"] * np.sin(np.pi * k)) if 0 <= k < 1 else 0.0
+        puff = 0.0
+        if a.bulge_t is not None:
+            u = (t - a.bulge_t) / self.cfg["bulge_s"]
+            peak = self.cfg["bulge_k"]
+            if 0 <= u < 0.5:
+                puff = a.bulge_k0 + (peak - a.bulge_k0) * np.sin(np.pi * u)
+            elif 0.5 <= u < 1:
+                puff = peak * np.sin(np.pi * u)
+        return float(max(a.hold_level, puff))
 
     def _knocked(self, a: _Anim, t: float) -> bool:
         """The hat is flying or popping back."""

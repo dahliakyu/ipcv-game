@@ -126,9 +126,9 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 - **Drinking: only with the mouth.** There is no grabbing with the hands.
   - The mouth is open when `jawOpen` > 0.5, and closed again below 0.25 (hysteresis, per player).
   - A drink that touches the open mouth (within ~0.6 face widths of `anchors["mouth"]`, plus the drink's half size) sticks to the mouth and stops falling.
-  - Closing the mouth drinks it. A drink not drunk within 1 s falls on again.
+  - Closing the mouth drinks it. A drink not drunk within 2.5 s falls on again (1 s was too short on the webcam; step 2).
   - The mouth anchor follows head tilt, so players can lean to catch drinks. Talking does not drink anything that is not at the mouth.
-  - Drinking puffs the drinker's cheeks: `FaceEffects.bulge(pid, t)` (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)), its only trigger.
+  - Drinking puffs the drinker's cheeks: `FaceEffects.bulge(pid, t)` (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)), its only trigger. While a drink is at the mouth, the cheeks already bulge gently, and the puff rises from there (added 2026-10-28).
 - **Buff categories.** Each uses its own drinks from `assets/Fancy Drinks/`, in colours that do not look like the team colours (red P1, blue P2), with an icon on the drink:
 
   | Category | Drinks | Icon | Effect (value from the size) |
@@ -170,7 +170,8 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
        - A drink touches the open mouth when its centre is within `drink_catch_fw` face widths of the mouth anchor plus half its height. Then it is held (`Drink.held_by`, action `catch`), it does not fall, and its rim (`drink_hold_rim` of its height above the centre) sits at the mouth.
        - Each player holds one drink at a time, and the nearer mouth wins.
        - Closing the mouth drinks it: `Drunk(pid, kind, value)` in `Game.drunk` for this frame, and the action `drink_<kind>`.
-       - Held longer than `drink_hold_s`, or the face lost, the drink falls on, and that player cannot catch it again (`dropped_by`), so holding the mouth open does not keep a drink.
+       - Held longer than `drink_hold_s`, or the face lost, the drink falls on, and that player cannot catch it again (`dropped_by`), so holding the mouth open does not keep a drink. A mouth closing on the frame the time runs out still drinks (closing is checked first).
+       - `drink_hold_s` is 2.5 s, not the design's 1 s. In the first webcam run (`logs/run-20261028-231534.csv`), 3 of 4 caught drinks fell on with 1 s: the mouth counted as closed 0.87, 1.00, 1.14 and 2.07 s after the catches, and one closed on the very frame the time ran out.
      - `reset(pid)` (re-entry) forgets the mouth and lets a held drink fall.
      - The renderer calls `FaceEffects.bulge()` for each drink drunk.
      - In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
@@ -199,9 +200,12 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
      - `_draw_popups()`: "+18 HP", "ATTACK x1.4" or "DEFENSE 35%" in the buff's colour, starting at the mouth and offset `popup_side_fw` face widths towards the middle of the frame, so it does not cover the face. It rises `popup_rise_h` over `popup_s`, fades over the last third and stays under the top bar.
      - `_draw_buffs()`: above each health bar (P1 from the left, P2 from the right), each running attack or defense buff as its badge, its value and a time bar, fading over the last `buff_fade_s`. `Game.drink_buff_s` gives the full time.
      - `faded()` blends a box drawn in a `with` block at an opacity.
+     - A drink at a mouth is drawn at most `drink_held_fw` face widths tall, its top `drink_held_drop_fw` below the mouth anchor (the upper lip), without its badge. At ~2.3 m a falling drink is taller than a face, and at full size it covered the cheeks.
+     - Cheeks while drinking (asked 2026-10-28): the renderer passes the players holding a drink to `FaceEffects.update(..., holding)`. Their cheeks bulge gently (`bulge_hold_k`, half the drinking puff), reached and let go over `bulge_hold_ramp_s`. `bulge()` now starts the puff from the current strength (`_Anim.bulge_k0`), so after a held drink it rises from the gentle bulge instead of dropping to 0 first; `bulge_strength()` is the larger of the two.
      - README: a credit row for the drinks in "Third-party licences".
-   - New `render:` keys: `drink_sprites` (three drinks per kind), `drink_badge`, `drink_badge_min_px`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
-   - On `session.mp4` (a drink every 2–3 s; an attack drink put at P1's mouth, drunk on the next frame because the mouth was closed): falling drinks with their badges, the drink at P1's lips in front of the mustache, then "ATTACK x1.5" beside the head and the x1.5 icon with its time bar above P1's health bar. Render time 4.98 → 5.24 ms per frame with drinks in the air.
+   - New `render:` keys: `drink_sprites` (three drinks per kind), `drink_badge`, `drink_badge_min_px`, `drink_held_fw`, `drink_held_drop_fw`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
+   - On `session.mp4` (a drink every 2–3 s; an attack drink put at P1's mouth, drunk on the next frame because the mouth was closed): falling drinks with their badges, the drink at P1's lips in front of the mustache, then "ATTACK x1.5" beside the head and the x1.5 icon with its time bar above P1's health bar. Render time 4.98 → 5.24 ms per frame with drinks in the air. New `face:` keys: `bulge_hold_k`, `bulge_hold_ramp_s`.
+   - Holding and drinking on `session.mp4` (a drink put at P1's mouth, the mouth kept open for 10 frames): the bulge rises to 0.25 in 0.2 s while held, then from 0.24 to the 0.5 peak after drinking, and back to 0 by ~1.6 s, without a dip; the held drink hangs at the lower lip with the cheeks free.
 5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's, also alone (`--solo`). Then the feature moves to `merge_log.md`.
 
 Every step is checked with one player too (a test, and `data/clips/shield.mp4`, a solo clip, where it applies).

@@ -465,14 +465,17 @@ class Game:
             if d.held_by is None:
                 continue
             f = state.faces.get(d.held_by)
-            if f is None or not f.valid or "mouth" not in f.anchors or t - d.held_t > cfg["drink_hold_s"]:
-                d.held_by, d.dropped_by = None, d.held_by
+            if f is None or not f.valid or "mouth" not in f.anchors:
+                d.held_by, d.dropped_by = None, d.held_by       # face lost: not a closed mouth
                 continue
-            if not self.mouth_open.get(d.held_by, False):
-                self.drinks.remove(d)
+            if not self.mouth_open.get(d.held_by, False):       # before the time limit: a mouth
+                self.drinks.remove(d)                           # closing as time runs out drinks
                 self.drunk.append(Drunk(d.held_by, d.kind, d.value))
                 self._apply_drink(self.drunk[-1])
                 self.actions.append((d.held_by, f"drink_{d.kind}"))
+                continue
+            if t - d.held_t > cfg["drink_hold_s"]:
+                d.held_by, d.dropped_by = None, d.held_by
                 continue
             mx, my = f.anchors["mouth"]
             d.x, d.y = float(mx), float(my) + cfg["drink_hold_rim"] * self.drink_height(d)

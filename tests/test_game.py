@@ -1144,3 +1144,13 @@ def test_one_player_drinks_a_buff_and_sees_it_in_the_log():
     assert row["game_p1_defense"] == 0.35 and row["game_p1_defense_left"] == pytest.approx(
         g.cfg["drink_buff_s"] - 0.0, abs=0.11)
     assert row["game_p1_attack"] == 1.0
+
+
+def test_mouth_closing_as_time_runs_out_still_drinks():
+    """The webcam case: the mouth closes on the frame the hold time ends."""
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}))
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.1, {1: 0.9}))
+    g.update(mouths(0.1 + g.cfg["drink_hold_s"] + 0.004, {1: 0.0}))
+    assert d not in g.drinks and [x.pid for x in g.drunk] == [1]

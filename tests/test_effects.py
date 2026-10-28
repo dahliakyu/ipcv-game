@@ -324,3 +324,35 @@ def test_draw_warps_the_cheeks_only_while_bulging():
     later = base.copy()
     fx.draw(later, {1: f}, 10.0 + fx.cfg["bulge_s"])
     np.testing.assert_array_equal(later, plain_img)             # over: as before
+
+
+def test_cheeks_bulge_gently_while_a_drink_is_held():
+    fx = FaceEffects(load_config()["face"])
+    k, ramp = fx.cfg["bulge_hold_k"], fx.cfg["bulge_hold_ramp_s"]
+    fx.update([], {}, 0.0, holding=[1])
+    a = fx._anim[1]
+    assert fx.bulge_strength(a, 0.0) == 0.0                    # starts from nothing
+    fx.update([], {}, ramp / 2, holding=[1])
+    assert fx.bulge_strength(a, ramp / 2) == pytest.approx(k / 2)
+    fx.update([], {}, ramp, holding=[1])
+    fx.update([], {}, 3.0, holding=[1])
+    assert fx.bulge_strength(a, 3.0) == pytest.approx(k)       # stays while held
+    fx.update([], {}, 3.0 + ramp / 2)                           # dropped: lets go smoothly
+    assert fx.bulge_strength(a, 3.0 + ramp / 2) == pytest.approx(k / 2)
+    fx.update([], {}, 3.0 + ramp)
+    assert fx.bulge_strength(a, 3.0 + ramp) == 0.0
+
+
+def test_drinking_puff_rises_from_the_held_bulge_without_a_dip():
+    fx = FaceEffects(load_config()["face"])
+    t = 0.0
+    for _ in range(20):                                         # held for 1 s at ~20 FPS
+        fx.update([], {}, t, holding=[1])
+        t += 0.05
+    fx.update([], {}, t)                                        # drunk: no longer held
+    fx.bulge(1, t)
+    a, s = fx._anim[1], fx.cfg["bulge_s"]
+    ks = [fx.bulge_strength(a, t + i * 0.01) for i in range(int(s / 2 * 100))]
+    assert ks[0] == pytest.approx(fx.cfg["bulge_hold_k"], abs=0.07)
+    assert all(b >= a_ - 1e-9 for a_, b in zip(ks, ks[1:], strict=False))   # only rises to the peak
+    assert ks[-1] == pytest.approx(fx.cfg["bulge_k"], abs=0.01)

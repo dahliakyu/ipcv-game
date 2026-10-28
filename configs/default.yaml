@@ -414,6 +414,12 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # It starts only when the player eats a consumable (extra_features.md,
   # feature 2).
   bulge_s: 1.0
+  # While a drink sits at the open mouth, the cheeks already bulge gently:
+  # half the drinking puff (a mouthful, not yet swallowed), reached and let
+  # go over bulge_hold_ramp_s so the warp never jumps. The puff after
+  # drinking rises from this level.
+  bulge_hold_k: 0.25
+  bulge_hold_ramp_s: 0.2
 
   # Stub backend only: above_head sits this many shoulder-widths above the
   # nose. ~0.9 clears the top of the head for an average adult.
@@ -632,8 +638,14 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   drink_hold_rim: 0.4
   # Not drunk (mouth closed) within this long, a caught drink falls on, and
   # the same player cannot catch it again: holding the mouth open does not
-  # keep a drink forever.
-  drink_hold_s: 1.0
+  # keep a drink forever. 1 s (the design's value) was too short on the
+  # webcam (logs/run-20261028-231534.csv): 3 of 4 caught drinks fell on,
+  # the mouth closing 1.0-1.1 s after the catch or held open longer; one
+  # closed in time (0.87 s). Closing also shows a frame or two late
+  # (MediaPipe measures each player every other frame). The mouth counted
+  # as closed 0.87, 1.00, 1.14 and 2.07 s after the catches: 2.5 s takes
+  # all four, and is still short enough that a held drink does not block.
+  drink_hold_s: 2.5
   # Buff values from the smallest to the largest drink. hp: health at once
   # (max_health 100: a tenth to a third of the bar). attack: damage dealt
   # times this (a bolt's 10 becomes 12-16). defense: this fraction less
@@ -802,6 +814,12 @@ render:
   # at least this many px so far drinks still show their kind.
   drink_badge: 0.22
   drink_badge_min_px: 7
+  # A drink held at a mouth is drawn at most this many face widths tall
+  # (falling drinks can be taller than a face at ~2.3 m), its top this many
+  # face widths below the mouth anchor (the upper lip): at the lower lip,
+  # so the cheeks stay visible while they bulge. No badge while held.
+  drink_held_fw: 0.8
+  drink_held_drop_fw: 0.15
   # Pick-up text ("+18 HP"): shown this long, rising this fraction of the
   # frame height, beside the head (popup_side_fw face widths from the
   # mouth, towards the middle of the frame, so it does not cover the face),

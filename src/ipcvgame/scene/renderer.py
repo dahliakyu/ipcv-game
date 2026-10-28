@@ -131,14 +131,16 @@ class Renderer:
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
-        # The game's hits start the face effects' hit reaction; a drink drunk
-        # puffs the drinker's cheeks (consumables, extra_features.md feature 2).
-        self.face_effects.update(game.hits, state.faces, state.frame.t)
+        # The game's hits start the face effects' hit reaction; a drink at a
+        # mouth bulges the cheeks gently and a drink drunk puffs them
+        # (consumables, extra_features.md feature 2).
+        holding = [d.held_by for d in game.drinks if d.held_by is not None]
+        self.face_effects.update(game.hits, state.faces, state.frame.t, holding)
         for d in game.drunk:
             self.face_effects.bulge(d.pid, state.frame.t)
         self.face_effects.draw(canvas, state.faces, state.frame.t)
         if phase != "result":
-            self._draw_drinks(canvas, game)             # after the face: a held drink is at the lips
+            self._draw_drinks(canvas, state, game)      # after the face: a held drink is at the lips
         self._draw_status(canvas, state, game)
         self._draw_popups(canvas, state, game)
         if phase in ("countdown", "playing", "result"):
@@ -552,13 +554,25 @@ class Renderer:
             self._drink_sprites[kind] = sprites
         return self._drink_sprites[kind]
 
-    def _draw_drinks(self, canvas: np.ndarray, game: Game) -> None:
+    def _draw_drinks(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
         """Each drink as one of its kind's sprites (Drink.variant picks it),
         scaled to the drink's height with the nearest pixel (pixel art), or
         a circle without sprites; a badge with the buff's icon at its upper
-        right."""
+        right.
+
+        A drink held at a mouth is drawn at most drink_held_fw face widths
+        tall, its top drink_held_drop_fw below the mouth anchor (the upper
+        lip), without its badge: at the lower lip, leaving the cheeks free
+        to show their bulge."""
         for d in game.drinks:
             h = game.drink_height(d)
+            x, y = d.x, d.y
+            f = state.faces.get(d.held_by) if d.held_by is not None else None
+            held = f is not None and f.valid and "mouth" in f.anchors
+            if held:
+                h = min(h, self.cfg["drink_held_fw"] * f.scale)
+                x = float(f.anchors["mouth"][0])
+                y = float(f.anchors["mouth"][1]) + self.cfg["drink_held_drop_fw"] * f.scale + h / 2
             sprites = self.drink_sprites(d.kind)
             if sprites:
                 sprite = sprites[int(d.variant * len(sprites)) % len(sprites)]
@@ -566,12 +580,13 @@ class Renderer:
                 img = cv2.resize(sprite, (max(1, round(sprite.shape[1] * s)), max(1, round(h))),
                                  interpolation=cv2.INTER_NEAREST)
                 w = img.shape[1]
-                blend_rgba(canvas, img, d.x - w / 2, d.y - h / 2)
+                blend_rgba(canvas, img, x - w / 2, y - h / 2)
             else:
                 w = 0.6 * h
-                cv2.circle(canvas, pt((d.x, d.y)), int(h / 2), DRINK_COLORS[d.kind], -1, cv2.LINE_AA)
-            r = max(self.cfg["drink_badge"] * h, self.cfg["drink_badge_min_px"])
-            draw_badge(canvas, d.kind, (d.x + w / 2, d.y - h / 2 + r), r)
+                cv2.circle(canvas, pt((x, y)), int(h / 2), DRINK_COLORS[d.kind], -1, cv2.LINE_AA)
+            if not held:
+                r = max(self.cfg["drink_badge"] * h, self.cfg["drink_badge_min_px"])
+                draw_badge(canvas, d.kind, (x + w / 2, y - h / 2 + r), r)
 
     def _draw_popups(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
         """For popup_s after a drink: "+18 HP", "ATTACK x1.4" or "DEFENSE

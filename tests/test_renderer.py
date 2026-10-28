@@ -594,3 +594,33 @@ def test_faded_blends_the_box():
     with renderer_mod.faded(img, (0, 0, 5, 5), 0.5):
         img[:] = 200
     assert img[2, 2, 0] == 100 and img[8, 8, 0] == 200
+
+
+def test_held_drink_bulges_the_cheeks():
+    from ipcvgame.interaction.game import Drink
+    r = plain()
+    g = drink_game()
+    g.drinks.append(Drink(300.0, 200.0, "hp", 1.0, 20.0, 0.0, held_by=1, held_t=0.0))
+    for i in range(5):
+        r.draw(faces_state(i * 0.1), g)
+    assert r.face_effects._anim[1].hold_level == pytest.approx(r.face_effects.cfg["bulge_hold_k"])
+    assert 2 not in r.face_effects._anim
+
+
+def test_held_drink_at_the_lower_lip_face_sized_without_badge():
+    from ipcvgame.interaction.game import Drink
+    from tests.test_game import mouths
+    r = plain()
+    g = drink_game()
+    s = mouths(0.0, {1: 0.9})                                  # P1's mouth at (200, 260), face 60 px
+    d = Drink(200.0, 300.0, "defense", 1.4, 0.4, 0.0, held_by=1, held_t=0.0)
+    g.drinks.append(d)
+    assert g.drink_height(d) > r.cfg["drink_held_fw"] * 60     # bigger than a face when falling
+    canvas = r.draw(s, g)
+    g.drinks.clear()
+    without = r.draw(mouths(0.0, {1: 0.9}), g)
+    ys, xs = np.nonzero((canvas != without).any(axis=2))      # what the drink drew
+    top = 260 + r.cfg["drink_held_drop_fw"] * 60
+    assert ys.min() >= top - 1 and ys.max() <= top + r.cfg["drink_held_fw"] * 60 + 1
+    assert abs(xs.mean() - 200) < 10                           # centred under the mouth
+    assert not color_mask(canvas, renderer_mod.DRINK_COLORS["defense"]).any()   # no badge
