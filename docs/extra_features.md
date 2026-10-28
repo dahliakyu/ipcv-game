@@ -82,12 +82,34 @@ Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; i
   - **Final smash hits** (feature 2) can also add a short shake of the hat anchor.
 - **Status above the head:** a name tag and icons, so the state is visible on the player. The health bars stay pinned to the bottom corners (Task 5 modifications: a bar that moved with the player was too busy).
   - **Name tag.** "P1" at `above_head`, small, in the team colour; size from `scale` with a minimum so far players stay readable.
-  - **Dizzy stars.** Below 25% HP: 3 stars orbit `above_head` on an ellipse in the head's plane (flattened by cos(pitch), turned by `roll`).
+  - **Dizzy stars.** Below 25% HP: 3 stars orbit `above_head` on an ellipse with a fixed height-to-width ratio from the config, turned by `roll` (`Face` has no pitch; decided 2026-10-28, so `core/types.py` stays as it is).
   - **Crown.** The player with more HP gets a small crown above the tag.
 - **Cheek bulge:** after eating (the `bite` event, feature 3), the cheeks puff up for a second, chipmunk style.
   - **Warp.** A real image warp, not a sticker: a radial "bulge" (magnifying) warp around each cheek anchor with `cv2.remap`. Inside radius r (~0.3 face widths), the source radius is ρ' = ρ · (ρ / r)^k with k rising from 0 to ~0.5 and back over 1 s. A good image-processing technique to explain in the report.
   - **Cost.** Warp only the two small cheek boxes, not the whole frame.
-  - **Optional.** The player can also puff their own cheeks: MediaPipe's `cheekPuff` > 0.5 shows the same bulge.
+  - **Trigger now.** Built before feature 3 (decided 2026-10-28): the player puffing their own cheeks (MediaPipe's `cheekPuff` > 0.5) starts the bulge. A `FaceEffects.bulge(pid, t)` call starts it too, for the `bite` event once feature 3 exists.
+
+**Implementation steps.** One step at a time, each checked by the Task 5 owner before the next. Every new number goes in the module's config section with a reason.
+
+1. **Team colour** (Task 1, `face/`). *Done.*
+   - Cheek anchors `left_cheek` and `right_cheek`: 3D points on the head model (`anchor_points_mm()`), projected like the hat; 2D offsets in `geometry()` when there is no head pose; smoothed with the other anchors.
+   - Hat band: the red band of `hat.png` selected by hue and turned to each team colour once at load (`shift_hue()` on the band pixels only), one hat per team.
+   - War paint: two short stripes in the team colour at each cheek anchor, along the eye line (`roll`), shortened by cos(`yaw`) on the cheek turned away, faded by `alpha`.
+   - As built: `left_cheek` / `right_cheek` are on the image left and right, like `head_model_mm`'s eyes. They sit `cheek_out` 0.33 face widths to each side and `cheek_drop` 0.22 below the eyes (the design's 45 and 30 mm), `cheek_depth_mm` 10 behind the eyes. `geometry()` now takes the face config; `_smoothed_geometry()` smooths every anchor it is given, so new anchors need no change there. In `face/effects.py`: `band_mask()` (hue around the circle, so 178 counts as red), `recolor()`, `FaceEffects.team_hat(pid)` made on first use, `war_paint()` and `fill_polys()` (anti-aliased, blended in the stripes' box only). New `face:` keys: `cheek_out`, `cheek_drop`, `cheek_depth_mm`, `hat_band_hue`, `hat_band_hue_tol`, `hat_band_min_sat`, `hat_band_min_val`, `warpaint_len`, `warpaint_thick`, `warpaint_gap`, `warpaint_opacity`. The band test on `hat.png`: hue less than 8 from red, saturation ≥ 80 and brightness ≥ 100; without the brightness limit, dark reddish pixels along the black outline were taken too.
+   - On `session.mp4`: P1's band and stripes red, P2's blue; the stripes sit on the cheekbones, and at a turn of −31° the turned-away (image-left) stripes are shorter. The war paint adds ~0.16 ms per face (100 px face, 720p).
+2. **Hit event** (Task 4, `interaction/game.py`).
+   - `_apply_damage()` records a hit (target, attacker, direction away from the attacker, damage) in `Game.hits`, cleared each frame like `Game.actions`; logged as the action `hit`.
+3. **Hit reaction** (Task 1, `face/effects.py`; wired in `scene/renderer.py` and `app/pipeline.py`).
+   - `FaceEffects` keeps one animation record per player, fed with `Game.hits` and `Frame.t`; `reset(pid)` on `Player.reentered`.
+   - Hat knocked off: it leaves the anchor with a velocity away from the attacker and upwards, spin and gravity, fades out, then pops back with a short scale-up. A hit while the hat is off does not throw a second hat.
+   - Flash: white, then the attacker's colour, over an ellipse at the face centre, sized by `scale`, turned by `roll`.
+4. **Status above the head** (Task 5, `scene/renderer.py`).
+   - Name tag "P1"/"P2" at `above_head` in the team colour, with a minimum size; "FACE THE CAMERA" takes its place while shown.
+   - Dizzy stars below 25% HP; a crown above the tag for the player with more HP (none at a draw). Both fade with `alpha`.
+5. **Cheek bulge** (Task 1, `face/effects.py`).
+   - Radial bulge warp with `cv2.remap` around each cheek anchor, only in two small boxes; strength rises and falls over 1 s.
+   - Started by `cheekPuff` above the threshold (once per puff) or by `FaceEffects.bulge(pid, t)`.
+6. **Check and docs.** Rendered frames from the clips for each effect, timing per face, then the feature moves to `merge_log.md`.
 
 **Check.**
 

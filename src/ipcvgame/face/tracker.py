@@ -68,20 +68,26 @@ def measure(row: np.ndarray, center_drop: float, forehead_rise: float, lip_to_no
             "landmarks": row[4:14].reshape(5, 2).astype(float)}
 
 
-def geometry(pts: np.ndarray, hat_rise: float, above_head_rise: float) -> dict:
+def geometry(pts: np.ndarray, cfg: dict) -> dict:
     """4 key points (left, right, forehead, lip) -> face width, head roll
     and the anchors effects draw at. Offsets are in face widths along the
     face's own "down", so they follow a tilted head (roll only; up/down tilt
-    and turning need the head pose)."""
+    and turning need the head pose). The cheeks are cheek_out to each side
+    and cheek_drop below the eyes; the face centre is center_drop below them."""
     left, right, top, lip = pts
     d = right - left
     w = float(np.linalg.norm(d))
     roll = float(np.arctan2(d[1], d[0]))                    # 0 = upright, positive = clockwise on screen
+    u = np.array([np.cos(roll), np.sin(roll)])              # along the eye line, to the image right
     down = np.array([-np.sin(roll), np.cos(roll)])
-    hat = top - hat_rise * w * down                         # hat brim
-    return {"width": w, "roll": roll, "center": (left + right) / 2,
+    c = (left + right) / 2
+    hat = top - cfg["hat_rise"] * w * down                  # hat brim
+    cheeks = c + (cfg["cheek_drop"] - cfg["center_drop"]) * w * down
+    return {"width": w, "roll": roll, "center": c,
             "anchors": {"forehead": top, "hat": hat, "mouth": lip,
-                        "above_head": hat - above_head_rise * w * down}}
+                        "above_head": hat - cfg["above_head_rise"] * w * down,
+                        "left_cheek": cheeks - cfg["cheek_out"] * w * u,
+                        "right_cheek": cheeks + cfg["cheek_out"] * w * u}}
 
 
 def head_box(p: Player, kpt_conf_threshold: float, crop_size: float) -> np.ndarray | None:
@@ -309,7 +315,7 @@ class FaceTracker:
         from the eye line, and the head position is fitted to the landmarks.
         """
         cfg = self.cfg
-        g2 = geometry(st.kp, cfg["hat_rise"], cfg["above_head_rise"])
+        g2 = geometry(st.kp, cfg)
         anchors = g2["anchors"]
         st.pose, st.pose_src = None, ""
         if cfg["head_pose"]:
@@ -338,12 +344,11 @@ class FaceTracker:
                                            rvec, tvec, K, None)
                 anchors |= dict(zip(names, img.reshape(-1, 2), strict=True))
                 st.pose = (rvec, tvec, K)
-        s = st.filter(np.array([st.kp[0], st.kp[1], anchors["mouth"], anchors["forehead"],
-                                anchors["hat"], anchors["above_head"]]), t)
+        names = list(anchors)
+        s = st.filter(np.array([st.kp[0], st.kp[1], *(anchors[n] for n in names)]), t)
         d = s[1] - s[0]
         return {"width": float(np.linalg.norm(d)), "roll": float(np.arctan2(d[1], d[0])),
-                "center": (s[0] + s[1]) / 2,
-                "anchors": {"mouth": s[2], "forehead": s[3], "hat": s[4], "above_head": s[5]}}
+                "center": (s[0] + s[1]) / 2, "anchors": dict(zip(names, s[2:], strict=True))}
 
     def _detect(self, image: np.ndarray, box: np.ndarray, st: _FaceState) -> np.ndarray | None:
         """Run YuNet on the head crop and return the detection (shifted to

@@ -6,7 +6,8 @@ import pytest
 
 from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Face
-from ipcvgame.face.effects import FaceEffects, load_sprite, paste
+from ipcvgame.face.effects import FaceEffects, band_mask, load_sprite, paste, war_paint
+from ipcvgame.scene.draw import hue_of, player_color
 
 RED = (0, 0, 255)
 
@@ -69,8 +70,8 @@ def test_load_sprite_rejects_missing_and_opaque(tmp_path):
         load_sprite(rgb)
 
 
-def face(valid=True, alpha=1.0) -> Face:
-    return Face(pid=1, valid=valid, landmarks=None, center=np.array([50.0, 50.0]), scale=30.0,
+def face(valid=True, alpha=1.0, pid=1) -> Face:
+    return Face(pid=pid, valid=valid, landmarks=None, center=np.array([50.0, 50.0]), scale=30.0,
                 roll=0.0, yaw=0.0, anchors={"hat": np.array([50.0, 40.0]),
                                             "mouth": np.array([50.0, 60.0])}, alpha=alpha)
 
@@ -100,3 +101,72 @@ def test_hat_hangs_from_its_brim(tmp_path):
     fx.draw(img, {1: f})
     assert tuple(img[48, 50]) == RED                     # visible hat just above the anchor
     assert img[52, 50].sum() == 0                        # nothing below it
+
+
+def hues(img: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(img[:, :, :3], cv2.COLOR_BGR2HSV)[:, :, 0].astype(int)
+
+
+def test_hat_band_takes_the_team_colour():
+    """Only the red band of hat.png changes: P1 keeps red, P2's band turns
+    to the P2 hue; the straw and the outline stay as they are."""
+    fx = FaceEffects(load_config()["face"])
+    band = fx.band
+    assert 0.05 < band[fx.hat[:, :, 3] > 0].mean() < 0.3   # a stripe, not the whole hat
+    np.testing.assert_array_equal(fx.team_hat(1), fx.hat)
+    p2 = fx.team_hat(2)
+    d = np.abs(hues(p2)[band] - hue_of(player_color(2)))
+    assert np.median(np.minimum(d, 180 - d)) <= 4
+    np.testing.assert_array_equal(p2[~band], fx.hat[~band])
+
+
+def test_band_mask_wraps_around_red():
+    px = np.zeros((1, 2, 4), np.uint8)
+    px[0, 0] = (40, 30, 200, 255)                        # hue ~177: red just below 180
+    px[0, 1] = (40, 150, 200, 255)                       # orange
+    assert band_mask(px, 0, 8, 80, 100).tolist() == [[True, False]]
+
+
+def cheek_face(yaw=0.0, roll=0.0) -> Face:
+    f = face()
+    f.yaw, f.roll = yaw, roll
+    f.anchors = {"left_cheek": np.array([30.0, 50.0]), "right_cheek": np.array([70.0, 50.0])}
+    return f
+
+
+def stripe_length(poly: np.ndarray) -> float:
+    return float(np.linalg.norm(poly[1] - poly[0]))
+
+
+def test_war_paint_two_stripes_per_cheek():
+    polys = war_paint(cheek_face(), 0.2, 0.05, 0.1)
+    assert len(polys) == 4
+    np.testing.assert_allclose(np.mean([p.mean(0) for p in polys[:2]], axis=0), (30, 50))
+    assert all(stripe_length(p) == pytest.approx(0.2 * 30) for p in polys)
+
+
+def test_war_paint_shortens_the_cheek_turned_away():
+    yaw = np.radians(40)                                 # turned to the image right
+    polys = war_paint(cheek_face(yaw=yaw), 0.2, 0.05, 0.1)
+    assert stripe_length(polys[0]) == pytest.approx(0.2 * 30)            # left cheek: full
+    assert stripe_length(polys[2]) == pytest.approx(0.2 * 30 * np.cos(yaw))
+    polys = war_paint(cheek_face(yaw=-yaw), 0.2, 0.05, 0.1)
+    assert stripe_length(polys[0]) < stripe_length(polys[2])
+
+
+def test_war_paint_follows_roll():
+    p = war_paint(cheek_face(roll=np.pi / 2), 0.2, 0.05, 0.1)[0]
+    d = p[1] - p[0]
+    assert abs(d[0]) < 1e-9 and d[1] > 0                 # head on its side: stripes vertical
+
+
+@pytest.mark.parametrize("pid", [1, 2])
+def test_war_paint_drawn_in_the_team_colour(pid):
+    fx = FaceEffects(load_config()["face"])
+    img = canvas()
+    f = cheek_face()
+    f.pid = pid
+    fx.draw(img, {pid: f})
+    px = img[50 - 1, 30]                                 # upper stripe of the left cheek
+    assert px.sum() > 0
+    assert abs(hue_of(tuple(int(v) for v in px)) - hue_of(player_color(pid))) <= 2

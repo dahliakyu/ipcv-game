@@ -275,6 +275,12 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # face widths tall, so this clears it; the Task 1 script drew the player name
   # here (1.6 above the eyes, as now).
   above_head_rise: 1.0
+  # Cheek anchors (war paint, cheek bulge; feature 1): this far to each side
+  # of the face's centre line and below the eye midpoint. 0.33 and 0.22 are
+  # the design's 45 mm and 30 mm on a 136 mm face: on the cheekbone, below
+  # the outer eye corners, about level with the nose tip.
+  cheek_out: 0.33
+  cheek_drop: 0.22
 
   # Head pose: forehead, hat and above_head are 3D points on a
   # canonical head, projected into the image with the head's rotation, so
@@ -306,6 +312,10 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # front of the forehead and the centre of the head, so they drop towards
   # the eyes when the chin goes up and rise when it goes down. Tune by eye.
   hat_depth_mm: 50.0
+  # The cheek points sit this far behind the eyes: the face curves back
+  # from the eyes towards the ears (85 mm), so a turned-away cheek moves in
+  # towards the nose. Tune by eye.
+  cheek_depth_mm: 10.0
   # Uncalibrated webcam: focal length = this many image widths (1.0 = ~53 deg
   # horizontal field of view, typical for laptop webcams).
   focal_per_width: 1.0
@@ -345,6 +355,24 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   hat_width: 1.5
   # Mustache width in face widths; tuned by eye in the Task 1 script.
   mustache_width: 0.8
+  # Team colour on the hat (feature 1): the band pixels of hat.png are those
+  # less than hat_band_hue_tol from hat_band_hue (OpenCV hue, 0-179; 0 = red)
+  # and at least this saturated and bright. The straw is orange (hue 12-20)
+  # and the outline black; the brightness limit leaves out the dark reddish
+  # edge pixels between band and outline. Measured on hat.png.
+  hat_band_hue: 0
+  hat_band_hue_tol: 8
+  hat_band_min_sat: 80
+  hat_band_min_val: 100
+  # War paint: two stripes in the team colour on each cheek anchor, along
+  # the eye line. Length, thickness and the gap between the stripes'
+  # centres, in face widths; tuned by eye so they fit under the eyes.
+  warpaint_len: 0.16
+  warpaint_thick: 0.035
+  warpaint_gap: 0.07
+  # Opacity of the paint (times Face.alpha): a little skin shading shows
+  # through, so it reads as paint on the face, not a sticker.
+  warpaint_opacity: 0.85
 
   # Stub backend only: above_head sits this many shoulder-widths above the
   # nose. ~0.9 clears the top of the head for an average adult.

@@ -47,7 +47,7 @@ def yunet_row(roll_deg: float = 0.0, swap_eyes: bool = False) -> np.ndarray:
 
 def run(row: np.ndarray) -> dict:
     m = measure(row, CFG["center_drop"], CFG["forehead_rise"], CFG["lip_to_nose"])
-    return m | geometry(m["pts"], CFG["hat_rise"], CFG["above_head_rise"])
+    return m | geometry(m["pts"], CFG)
 
 
 def test_upright_face():
@@ -314,6 +314,26 @@ def test_frontal_3d_anchors_match_2d_anchors():
         expected = (eyes_y - a2[name][1]) * shrink              # px closer to the eyes
         assert a3[name][1] - a2[name][1] == pytest.approx(expected, rel=0.02)
         assert a3[name][0] == pytest.approx(a2[name][0])
+    centre = (lm[0] + lm[1]) / 2                                # between the eyes
+    for name in ("left_cheek", "right_cheek"):                  # cheek_depth_mm deeper: a little closer
+        shrink = 1500 / (1500 + CFG["cheek_depth_mm"])
+        np.testing.assert_allclose(a3[name] - centre, (a2[name] - centre) * shrink, atol=0.5)
+
+
+def test_cheeks_on_both_sides_below_the_eyes():
+    a = anchors_2d(seen(head_rvec(), MODEL))
+    eye_y = seen(head_rvec(), MODEL)[0, 1]
+    assert a["left_cheek"][0] < a["mouth"][0] < a["right_cheek"][0]
+    assert eye_y < a["left_cheek"][1] < a["mouth"][1]
+
+
+def test_turned_away_cheek_moves_towards_the_nose():
+    """Turned to the image right (yaw > 0): the image-right cheek turns away
+    and comes closer to the nose on screen than the other one."""
+    lm = seen(head_rvec(0, 30), MODEL)
+    a = anchors_3d(lm)
+    nose = lm[2]
+    assert a["right_cheek"][0] - nose[0] < nose[0] - a["left_cheek"][0]
 
 
 @pytest.mark.parametrize("chin_up", [25, -25])

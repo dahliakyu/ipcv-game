@@ -104,17 +104,21 @@ def sorted_landmarks(landmarks: np.ndarray) -> np.ndarray:
 
 
 def anchor_points_mm(cfg: dict, model_mm: np.ndarray) -> dict[str, np.ndarray]:
-    """The forehead, hat and above_head anchors as 3D points on the head.
+    """The forehead, hat, above_head and cheek anchors as 3D points on the head.
 
     Their frontal projection reproduces geometry()'s 2D offsets: the same
-    forehead_rise, hat_rise and above_head_rise, in YuNet box widths, with
-    the box box_per_eye eye distances wide. The hat points sit hat_depth_mm
-    behind the face, so they move like a hat on the head when it tilts.
+    forehead_rise, hat_rise, above_head_rise, cheek_out and cheek_drop, in
+    YuNet box widths, with the box box_per_eye eye distances wide. The hat
+    points sit hat_depth_mm behind the face, so they move like a hat on the
+    head when it tilts; the cheeks sit cheek_depth_mm behind the eyes.
     """
     box = cfg["box_per_eye"] * float(np.linalg.norm(model_mm[1] - model_mm[0]))
     forehead_y = -cfg["forehead_rise"] * box
     hat_y = forehead_y - cfg["hat_rise"] * box
     d = cfg["hat_depth_mm"]
+    cheek_x, cheek_y = cfg["cheek_out"] * box, cfg["cheek_drop"] * box
     return {"forehead": np.array([0.0, forehead_y, 0.0]),
             "hat": np.array([0.0, hat_y, d]),
-            "above_head": np.array([0.0, hat_y - cfg["above_head_rise"] * box, d])}
+            "above_head": np.array([0.0, hat_y - cfg["above_head_rise"] * box, d]),
+            "left_cheek": np.array([-cheek_x, cheek_y, cfg["cheek_depth_mm"]]),
+            "right_cheek": np.array([cheek_x, cheek_y, cfg["cheek_depth_mm"]])}
