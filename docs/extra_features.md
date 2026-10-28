@@ -160,10 +160,22 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
    - New `game:` keys, all with reasons: `drink_every_s`, `drink_max`, `drink_fall_s`, `drink_h`, `drink_size`, `drink_margin_w`, `drink_hp`, `drink_attack`, `drink_defense`, `drink_buff_s`, `drink_seed`. The buff values and time are used from step 3 on.
    - On `session.mp4` (`--no-intro`, seed 3): drinks at 7.0, 15.7, 25.7 and 32.3 s; at the base size a drink is about as tall as a player's head.
    - One player: drinks fall on `shield.mp4` (`--no-intro`, one player); a test runs the solo intro (`round_players: 1`) to playing and gets drinks, and one runs `--no-intro` with only P1.
-2. **Drinking with the mouth** (Task 4, from Task 1's face data).
+2. **Drinking with the mouth** (Task 4, from Task 1's face data). *Done.*
    - Mouth open/closed per player from `jawOpen`, with hysteresis; a held drink follows the mouth anchor.
    - Catch, drink on closing, drop again after `drink_hold_s`.
    - `Game.drunk` (pid, category, value) for this frame, logged as the action `drink_<category>`. The renderer calls `FaceEffects.bulge()` for each.
+   - As built:
+     - `_track_mouth()` runs every frame for every player. The mouth opens above `drink_mouth_open` (0.5) and closes below `drink_mouth_closed` (0.25). A frame without a score (MediaPipe runs for each player in turn) keeps the state; a new face starts closed, and no visible face means closed.
+     - `_drink_with_mouths()` runs only while playing, before `advance()`.
+       - A drink touches the open mouth when its centre is within `drink_catch_fw` face widths of the mouth anchor plus half its height. Then it is held (`Drink.held_by`, action `catch`), it does not fall, and its rim (`drink_hold_rim` of its height above the centre) sits at the mouth.
+       - Each player holds one drink at a time, and the nearer mouth wins.
+       - Closing the mouth drinks it: `Drunk(pid, kind, value)` in `Game.drunk` for this frame, and the action `drink_<kind>`.
+       - Held longer than `drink_hold_s`, or the face lost, the drink falls on, and that player cannot catch it again (`dropped_by`), so holding the mouth open does not keep a drink.
+     - `reset(pid)` (re-entry) forgets the mouth and lets a held drink fall.
+     - The renderer calls `FaceEffects.bulge()` for each drink drunk.
+     - In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
+   - New `game:` keys: `drink_mouth_open`, `drink_mouth_closed`, `drink_catch_fw`, `drink_hold_rim`, `drink_hold_s`.
+   - On `session.mp4` and `shield.mp4` (`--no-intro`, a drink every 2–3 s): no catch and nothing drunk; talking never reached a `jawOpen` of 0.5 (P1 at most 0.44, P2 0.38). Catching and drinking are covered by tests, also with one player; the clips have no drinking.
 3. **Buffs** (Task 4).
    - HP at once; attack and defense as timed multipliers in `_apply_damage()`; replace and restart.
    - Cleared on a new round. Logged as `game_p<pid>_attack` and `_defense`.

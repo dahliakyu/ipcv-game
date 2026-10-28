@@ -112,8 +112,11 @@ class Renderer:
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
-        # The game's hits start the face effects' hit reaction.
+        # The game's hits start the face effects' hit reaction; a drink drunk
+        # puffs the drinker's cheeks (consumables, extra_features.md feature 2).
         self.face_effects.update(game.hits, state.faces, state.frame.t)
+        for d in game.drunk:
+            self.face_effects.bulge(d.pid, state.frame.t)
         self.face_effects.draw(canvas, state.faces, state.frame.t)
         self._draw_status(canvas, state, game)
         if phase in ("countdown", "playing", "result"):

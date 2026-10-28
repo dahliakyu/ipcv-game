@@ -488,3 +488,13 @@ def test_tag_position_is_smoothed_and_reset(monkeypatch):
     assert np.std(np.diff(xs[10:])) < 2.0                 # anchor noise 4 px: tag far steadier
     r.reset(1)
     assert 1 not in r._tags
+
+
+def test_drinking_puffs_the_cheeks(game):
+    from ipcvgame.interaction.game import Drunk
+    r = plain()
+    game.update(dark(1.0))
+    game.drunk = [Drunk(1, "hp", 20.0)]
+    r.draw(faces_state(1.0), game)
+    assert r.face_effects._anim[1].bulge_t == 1.0
+    assert 2 not in r.face_effects._anim or r.face_effects._anim[2].bulge_t is None

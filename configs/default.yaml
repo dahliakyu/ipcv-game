@@ -618,6 +618,22 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # Drinks appear at a random x this fraction of the width away from the
   # frame edges, where players can reach them.
   drink_margin_w: 0.1
+  # Drinking, only with the mouth. The mouth is open above this jawOpen
+  # score (MediaPipe, 0-1) and closed again below drink_mouth_closed
+  # (hysteresis). On session.mp4 talking and reacting never went above
+  # 0.44, so 0.5 needs a mouth opened on purpose.
+  drink_mouth_open: 0.5
+  drink_mouth_closed: 0.25
+  # A drink touches the open mouth when its centre is within this many face
+  # widths of the mouth anchor plus half its height (the design's ~0.6).
+  drink_catch_fw: 0.6
+  # A caught drink hangs from the mouth: its rim, this fraction of its
+  # height above its centre, at the mouth anchor.
+  drink_hold_rim: 0.4
+  # Not drunk (mouth closed) within this long, a caught drink falls on, and
+  # the same player cannot catch it again: holding the mouth open does not
+  # keep a drink forever.
+  drink_hold_s: 1.0
   # Buff values from the smallest to the largest drink. hp: health at once
   # (max_health 100: a tenth to a third of the bar). attack: damage dealt
   # times this. defense: this fraction less damage taken. Both last

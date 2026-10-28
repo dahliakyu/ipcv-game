@@ -13,7 +13,9 @@ for the face effects' hit reaction (docs/merge_log.md, "Face effects").
 Drinks (consumables, extra_features.md feature 2): while playing, drinks
 fall from the top of the frame, one every drink_every_s, at most drink_max
 at once. Each has a buff category (hp, attack, defense) and a random size;
-the bigger the drink, the bigger its buff value.
+the bigger the drink, the bigger its buff value. A player drinks one only
+with the mouth (_drink_with_mouths()): a drink that touches the open mouth
+sticks to it, and closing the mouth drinks it (Game.drunk, for this frame).
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -164,6 +166,17 @@ class Drink:
     size: float       # size factor (drink_size), times drink_h of the frame height
     value: float      # buff value, from the size (drink_<kind>)
     variant: float    # 0-1: which of the category's drinks is drawn
+    held_by: int | None = None   # the player whose mouth holds it; it does not fall then
+    held_t: float = 0.0          # Frame.t it was caught
+    dropped_by: int | None = None   # held too long by this player: they cannot catch it again
+
+
+@dataclass
+class Drunk:
+    """A drink a player drank this frame."""
+    pid: int
+    kind: str         # "hp" | "attack" | "defense"
+    value: float
 
 
 @dataclass
@@ -210,6 +223,11 @@ class Game:
         # Hits that did damage this frame (cleared by update()), for the face
         # effects; each is also logged as the target's action "hit".
         self.hits: list[Hit] = []
+        # Drinks drunk this frame (cleared by update()), for the buffs and the
+        # face effects' cheek bulge; each is also the action drink_<kind>.
+        self.drunk: list[Drunk] = []
+        # Each player's mouth, open or closed (hysteresis on jawOpen).
+        self.mouth_open: dict[int, bool] = {}
         self.intro = bool(cfg["intro"])
         self.phase = "waiting" if self.intro else "playing"
         self.phase_t: float | None = None   # Frame.t the phase started at; None = at the next update
@@ -374,8 +392,72 @@ class Game:
             self._drink_wait = self._rng.uniform(*cfg["drink_every_s"])
         speed = self.frame_h / cfg["drink_fall_s"]
         for drink in self.drinks:
-            drink.y += speed * dt
+            if drink.held_by is None:
+                drink.y += speed * dt
         self.drinks = [d for d in self.drinks if d.y - self.drink_height(d) / 2 <= self.frame_h]
+
+    def _track_mouth(self, state: FrameState, pid: int) -> None:
+        """Mouth open or closed from MediaPipe's jawOpen score: open above
+        drink_mouth_open, closed again below drink_mouth_closed (hysteresis,
+        so a score near one threshold does not flip it every frame). No
+        score this frame (MediaPipe runs for each player in turn): unchanged.
+        No visible face: closed."""
+        f = state.faces.get(pid)
+        if f is None or not f.valid or "mouth" not in f.anchors:
+            self.mouth_open[pid] = False
+            return
+        self.mouth_open.setdefault(pid, False)          # a new face starts closed
+        jaw = f.blendshapes.get("jawOpen")
+        if jaw is None:
+            return
+        if jaw > self.cfg["drink_mouth_open"]:
+            self.mouth_open[pid] = True
+        elif jaw < self.cfg["drink_mouth_closed"]:
+            self.mouth_open[pid] = False
+
+    def _drink_with_mouths(self, state: FrameState, t: float) -> None:
+        """Drinking, once per frame while playing (only with the mouth):
+
+        - A held drink follows its player's mouth: its rim (drink_hold_rim of
+          its height above the centre) at the mouth anchor. Closing the
+          mouth drinks it; held longer than drink_hold_s, or the face lost,
+          it falls on again, and that player cannot catch it again.
+        - A free drink that touches an open mouth sticks to it: its centre
+          within drink_catch_fw face widths of the mouth anchor plus half
+          its height. Each player holds one drink at a time; the nearer
+          mouth wins.
+        """
+        cfg = self.cfg
+        for d in list(self.drinks):
+            if d.held_by is None:
+                continue
+            f = state.faces.get(d.held_by)
+            if f is None or not f.valid or "mouth" not in f.anchors or t - d.held_t > cfg["drink_hold_s"]:
+                d.held_by, d.dropped_by = None, d.held_by
+                continue
+            if not self.mouth_open.get(d.held_by, False):
+                self.drinks.remove(d)
+                self.drunk.append(Drunk(d.held_by, d.kind, d.value))
+                self.actions.append((d.held_by, f"drink_{d.kind}"))
+                continue
+            mx, my = f.anchors["mouth"]
+            d.x, d.y = float(mx), float(my) + cfg["drink_hold_rim"] * self.drink_height(d)
+        holding = {d.held_by for d in self.drinks if d.held_by is not None}
+        for d in self.drinks:
+            if d.held_by is not None:
+                continue
+            best, best_dist = None, np.inf
+            for pid, open_ in self.mouth_open.items():
+                f = state.faces.get(pid)
+                if not open_ or pid in holding or pid == d.dropped_by or f is None or not f.valid:
+                    continue
+                dist = float(np.hypot(d.x - f.anchors["mouth"][0], d.y - f.anchors["mouth"][1]))
+                if dist <= cfg["drink_catch_fw"] * f.scale + self.drink_height(d) / 2 and dist < best_dist:
+                    best, best_dist = pid, dist
+            if best is not None:
+                d.held_by, d.held_t = best, t
+                holding.add(best)
+                self.actions.append((best, "catch"))
 
     def _find_projectile_target(self, projectile: Projectile, previous_x: float,
                                 visible_player_ids: set[int]) -> int | None:
@@ -471,12 +553,17 @@ class Game:
             self.phase_t = t
         self.actions = []
         self.hits = []
+        self.drunk = []
         for pid in visible:
             self._track_body_yaw(state, pid)
+        for pid in state.players:
+            self._track_mouth(state, pid)
         if self.phase == "playing":
             for e in state.events:
                 if e.pid in positions and self._facing_or_blocked(state, e.pid, e.name, t):
                     self._act(e.pid, e.name, state.motion[e.pid], positions)
+            if self.winner_id is None:
+                self._drink_with_mouths(state, t)
             self.advance(dt, visible)
             if self.winner_id is not None:
                 self._enter("result", t)
@@ -841,6 +928,10 @@ class Game:
                 self._refresh(self.players[pid])
             self.shields.pop(pid, None)
             self.body_yaw.pop(pid, None)
+            self.mouth_open.pop(pid, None)
+            for d in self.drinks:
+                if d.held_by == pid:
+                    d.held_by = None         # falls on
             return
         self._clear_round()
         for player in self.players.values():
@@ -858,6 +949,7 @@ class Game:
         self.shields.clear()
         self.hits.clear()
         self.drinks.clear()
+        self.drunk.clear()
         self._drink_wait = self._rng.uniform(*self.cfg["drink_every_s"])
         self.winner_id = None
         self.not_facing_t.clear()
@@ -922,8 +1014,14 @@ class Game:
 
         for d in self.drinks:
             r = int(self.drink_height(d) / 2)
-            cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_DEBUG_COLORS[d.kind], 2, cv2.LINE_AA)
+            width = 2 if d.held_by is None else 4                # thick while held at a mouth
+            cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_DEBUG_COLORS[d.kind], width, cv2.LINE_AA)
             draw_lines(canvas, [f"{d.kind[0].upper()} {d.value:.2f}"], (int(d.x) - r, int(d.y) + 5))
+        for pid, f in state.faces.items():           # mouths: the catch circle, filled while open
+            if f.valid and "mouth" in f.anchors:
+                r = int(self.cfg["drink_catch_fw"] * f.scale)
+                cv2.circle(canvas, pt(f.anchors["mouth"]), r, player_color(pid),
+                           -1 if self.mouth_open.get(pid) else 1, cv2.LINE_AA)
 
         lines = [f"phase {self.phase} {self.phase_elapsed():.1f} s"]
         if self.phase == "calibration":
@@ -970,6 +1068,8 @@ class Game:
             row[pre + "arm_sw"] = "" if arm is None else round(arm, 3)
             body = self.body_yaw.get(pid)
             row[pre + "body_yaw"] = "" if body is None else round(body, 1)
+            row[pre + "mouth_open"] = int(self.mouth_open.get(pid, False))
+            row[pre + "holding"] = next((d.kind for d in self.drinks if d.held_by == pid), "")
         row["game_level"] = int(self.level)
         row["game_line_gap"] = "" if self.line_gap is None else round(self.line_gap, 3)
         row["game_bolts"] = len(self.projectiles)

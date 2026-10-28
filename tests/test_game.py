@@ -939,3 +939,127 @@ def test_drinks_fall_for_a_single_player():
     no_intro = Game({**cfg, "intro": False, **NO_FACING})
     run(no_intro, 0.0, 1.0, lambda t: frame_state(t, xs=(200.0,)))
     assert no_intro.drinks
+
+
+# --- Drinking with the mouth ------------------------------------------------
+
+from ipcvgame.interaction.game import Drink  # noqa: E402
+
+NO_SPAWN = {"drink_every_s": [1e6, 1e6]}
+
+
+def mouths(t: float, jaw: dict, xs=(200.0, 800.0), mouth_y: float = 260.0) -> FrameState:
+    """A frame with a face per player in xs; jaw[pid] is its jawOpen score
+    (None: not measured this frame). The mouth anchor is at (x, mouth_y)."""
+    s = frame_state(t, xs=xs)
+    for pid, x in enumerate(xs, start=1):
+        b = {} if jaw.get(pid) is None else {"jawOpen": jaw[pid]}
+        s.faces[pid] = Face(pid=pid, valid=True, landmarks=None, center=np.array([x, mouth_y - 30.0]),
+                            scale=60.0, roll=0.0, yaw=0.0,
+                            anchors={"mouth": np.array([x, mouth_y]),
+                                     "above_head": np.array([x, mouth_y - 150.0])},
+                            blendshapes=b)
+    return s
+
+
+def drink_at(g: Game, x: float, y: float, kind: str = "hp") -> Drink:
+    d = Drink(x, y, kind, 1.0, 20.0, 0.0)
+    g.drinks.append(d)
+    return d
+
+
+def test_mouth_open_and_closed_with_hysteresis():
+    g = drink_game(**NO_SPAWN)
+    for jaw, open_ in [(0.3, False), (0.6, True), (0.4, True), (None, True), (0.2, False), (0.4, False)]:
+        g.update(mouths(0.0, {1: jaw}))
+        assert g.mouth_open[1] is open_
+    g.update(mouths(0.0, {1: 0.9}))
+    s = mouths(0.1, {1: 0.9})
+    s.faces[1].valid = False                              # face lost: closed
+    g.update(s)
+    assert g.mouth_open[1] is False
+
+
+def test_drink_caught_by_the_open_mouth_and_drunk_on_closing():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}))
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.1, {1: 0.9}))
+    assert d.held_by == 1 and (1, "catch") in g.actions
+    g.update(mouths(0.2, {1: 0.9}, mouth_y=300.0))            # follows the mouth
+    assert d.y == pytest.approx(300.0 + g.cfg["drink_hold_rim"] * g.drink_height(d))
+    g.update(mouths(0.3, {1: 0.1}))                           # closes: drinks it
+    assert d not in g.drinks
+    assert [(x.pid, x.kind, x.value) for x in g.drunk] == [(1, "hp", 20.0)]
+    assert (1, "drink_hp") in g.actions
+    g.update(mouths(0.4, {1: 0.1}))
+    assert g.drunk == []                                      # for one frame
+
+
+def test_talking_away_from_a_drink_drinks_nothing():
+    g = drink_game(**NO_SPAWN)
+    d = drink_at(g, 500.0, 260.0)                             # between the players
+    for i, jaw in enumerate([0.9, 0.1, 0.9, 0.1]):
+        g.update(mouths(i * 0.1, {1: jaw, 2: jaw}))
+        d.y = 260.0                                           # keep it there
+    assert d.held_by is None and g.drunk == []
+    g = drink_game(**NO_SPAWN)
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.0, {1: 0.1}))                           # closed mouth: no catch
+    assert d.held_by is None
+
+
+def test_drink_held_too_long_falls_on_and_cannot_be_caught_again():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}))
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.1, {1: 0.9}))
+    assert d.held_by == 1
+    g.update(mouths(0.1 + g.cfg["drink_hold_s"] + 0.05, {1: 0.9}))
+    assert d.held_by is None and d.dropped_by == 1
+    y = d.y
+    g.update(mouths(0.2 + g.cfg["drink_hold_s"] + 0.05, {1: 0.9}))
+    assert d.held_by is None and d.y > y                      # falls, not caught again
+    d.x, d.y = 800.0, 250.0                                   # the other player can
+    g.update(mouths(0.3 + g.cfg["drink_hold_s"] + 0.05, {1: 0.9, 2: 0.9}))
+    assert d.held_by == 2
+
+
+def test_nearer_mouth_wins_and_one_drink_per_mouth():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9, 2: 0.9}, xs=(200.0, 260.0)))
+    d = drink_at(g, 250.0, 260.0)
+    g.update(mouths(0.1, {1: 0.9, 2: 0.9}, xs=(200.0, 260.0)))
+    assert d.held_by == 2
+    e = drink_at(g, 255.0, 262.0)
+    g.update(mouths(0.2, {1: 0.9, 2: 0.9}, xs=(200.0, 260.0)))
+    assert e.held_by == 1                                     # P2's mouth is full
+
+
+def test_face_lost_while_holding_drops_the_drink():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}))
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.1, {1: 0.9}))
+    s = mouths(0.2, {1: 0.9})
+    del s.faces[1]
+    g.update(s)
+    assert d.held_by is None and g.drunk == []
+
+
+def test_one_player_can_drink():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}, xs=(200.0,)))
+    d = drink_at(g, 200.0, 240.0, "attack")
+    g.update(mouths(0.1, {1: 0.9}, xs=(200.0,)))
+    g.update(mouths(0.2, {1: 0.0}, xs=(200.0,)))
+    assert [(x.pid, x.kind) for x in g.drunk] == [(1, "attack")] and d not in g.drinks
+    assert g.log_fields(mouths(0.2, {1: 0.0}, xs=(200.0,)))["game_p1_mouth_open"] == 0
+
+
+def test_no_drinking_outside_playing():
+    g = Game({**load_config()["game"], **NO_SPAWN, **NO_FACING})        # intro: waiting
+    d = drink_at(g, 200.0, 240.0)
+    g.update(mouths(0.0, {1: 0.9}))
+    g.update(mouths(0.1, {1: 0.9}))
+    assert d.held_by is None and g.mouth_open[1]
