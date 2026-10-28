@@ -90,7 +90,7 @@ class RecordingIdentity:
 
 
 def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
-    """Feature 1, step 5: ordered by position when calibration starts; a new
+    """Game start (docs/merge_log.md), step 5: ordered by position when calibration starts; a new
     vector when a player's neutral pose is measured."""
     rec = RecordingIdentity()
     pipeline.identity = rec

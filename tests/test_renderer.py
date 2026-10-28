@@ -339,7 +339,7 @@ def test_face_the_camera_shown_after_a_blocked_gesture(monkeypatch):
     assert "FACE THE CAMERA" not in texts
 
 
-# ---------- Status above the head (feature 1, step 4) ----------
+# ---------- Status above the head (merge_log.md, "Face effects", step 4) ----------
 def faces_state(t: float = 0.0):
     from tests.test_game import with_faces
     return with_faces(dark(t))

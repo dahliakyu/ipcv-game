@@ -195,7 +195,7 @@ def test_fading_shield_does_not_block_and_then_disappears(arena):
     assert 2 not in arena.shields
 
 
-# --- Hits for the face effects (feature 1) ---------------------------------
+# --- Hits for the face effects (merge_log.md, "Face effects") -------------
 
 def test_bolt_hit_is_recorded_with_its_direction(arena):
     arena.attack(300, 500, 1, player_id=1)

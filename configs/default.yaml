@@ -275,8 +275,8 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # face widths tall, so this clears it; the Task 1 script drew the player name
   # here (1.6 above the eyes, as now).
   above_head_rise: 1.0
-  # Cheek anchors (war paint, cheek bulge; feature 1): this far to each side
-  # of the face's centre line and below the eye midpoint. 0.33 and 0.22 are
+  # Cheek anchors (war paint, cheek bulge; merge_log.md, "Face effects"):
+  # this far to each side of the face's centre line and below the eye midpoint. 0.33 and 0.22 are
   # the design's 45 mm and 30 mm on a 136 mm face: on the cheekbone, below
   # the outer eye corners, about level with the nose tip.
   cheek_out: 0.33
@@ -355,7 +355,8 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   hat_width: 1.5
   # Mustache width in face widths; tuned by eye in the Task 1 script.
   mustache_width: 0.8
-  # Team colour on the hat (feature 1): the band pixels of hat.png are those
+  # Face effects (merge_log.md, "Face effects").
+  # Team colour on the hat: the band pixels of hat.png are those
   # less than hat_band_hue_tol from hat_band_hue (OpenCV hue, 0-179; 0 = red)
   # and at least this saturated and bright. The straw is orange (hue 12-20)
   # and the outline black; the brightness limit leaves out the dark reddish
@@ -373,7 +374,7 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Opacity of the paint (times Face.alpha): a little skin shading shows
   # through, so it reads as paint on the face, not a sticker.
   warpaint_opacity: 0.85
-  # Hit reaction (feature 1). The hat flies off for hat_fly_s, fully
+  # Hit reaction. The hat flies off for hat_fly_s, fully
   # visible for the first half and fading out in the second, then pops back
   # onto the head over hat_pop_s (the design's 0.6 s and 0.2 s): long enough
   # to see, short enough to be back before the next bolt at a fast pace.
@@ -400,8 +401,8 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   flash_axes: [0.55, 0.7]
   # Peak opacity of the flash (times Face.alpha); the face stays visible.
   flash_opacity: 0.7
-  # Cheek bulge (feature 1): a radial magnifying warp around each cheek
-  # anchor (effects.bulge_map()). Radius in face widths: 0.3 covers the
+  # Cheek bulge: a radial magnifying warp around each cheek anchor
+  # (effects.bulge_map()). Radius in face widths: 0.3 covers the
   # cheek (the cheeks are 0.66 apart, so the two circles do not overlap).
   bulge_radius: 0.3
   # Warp strength at its peak (the exponent k in rho' = rho (rho/r)^k(1-u^2),
@@ -410,7 +411,8 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # like a lens, not a cheek.
   bulge_k: 0.5
   # The bulge rises and falls over this long (half a sine), chipmunk style.
-  # It starts only when the player eats a consumable (feature 3).
+  # It starts only when the player eats a consumable (extra_features.md,
+  # feature 2).
   bulge_s: 1.0
 
   # Stub backend only: above_head sits this many shoulder-widths above the
@@ -574,7 +576,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # Line-up (docs/merge_log.md, "Game start: Modifications"): the neutral
   # pose only counts while both players stand level, side by side at the
   # same distance from the camera, so a later change in depth (a dodge,
-  # extra_features.md feature 7) starts from one line for both. Judged by
+  # extra_features.md feature 6) starts from one line for both. Judged by
   # depth (Player.pos, from the shoulder width): the feet are usually out
   # of frame (they are on session.mp4).
   # Level: the depths less than this far apart (m). Wide, because depth
@@ -693,7 +695,7 @@ render:
   # text scale (at 480 px height, like the other text scales).
   face_camera_s: 1.0
   face_camera_text_scale: 1.2
-  # --- Status above the head (feature 1).
+  # --- Status above the head (merge_log.md, "Face effects").
   # Name tag "P1"/"P2" at the face's above_head anchor: its text height in
   # face widths, so it scales with the player, but at least tag_min_h of the
   # frame height (~14 px at 480p), so a far player's tag stays readable.

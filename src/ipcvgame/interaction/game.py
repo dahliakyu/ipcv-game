@@ -8,7 +8,7 @@ Combat (``advance()``): bolts and beams fly across the frame and damage the
 first other player whose body box they reach, adding paint splats; a raised
 shield blocks them. At 0 health the attacker wins and the game freezes.
 Every hit that does damage is also kept in ``Game.hits`` for that frame,
-for the face effects' hit reaction (feature 1).
+for the face effects' hit reaction (docs/merge_log.md, "Face effects").
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions

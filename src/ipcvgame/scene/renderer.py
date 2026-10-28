@@ -5,7 +5,8 @@ renderer.py), each player's paint splats (renderer.py's pixel crosses, on the
 torso), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
 beam, ring of fire shields), face effects, each player's status above the
-head (name tag, dizzy stars, crown; feature 1), health bars pinned to the bottom,
+head (name tag, dizzy stars, crown; docs/merge_log.md, "Face effects"),
+health bars pinned to the bottom,
 renderer.py's top bar
 with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
@@ -81,7 +82,7 @@ class Renderer:
         self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
-        self._tags: dict[int, _Tag] = {}         # name tag per player (feature 1)
+        self._tags: dict[int, _Tag] = {}         # name tag per player (_draw_tag())
 
     def reset(self, pid: int | None = None) -> None:
         """Forget the name tags' smoothing (one player on re-entry, or all)."""
@@ -111,7 +112,7 @@ class Renderer:
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
-        # The game's hits start the face effects' hit reaction (feature 1).
+        # The game's hits start the face effects' hit reaction.
         self.face_effects.update(game.hits, state.faces, state.frame.t)
         self.face_effects.draw(canvas, state.faces, state.frame.t)
         self._draw_status(canvas, state, game)
@@ -401,8 +402,8 @@ class Renderer:
         return top[0] if len(top) == 1 else None
 
     def _draw_status(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
-        """Above each visible face (feature 1): the name tag "P1" in the team
-        colour at above_head, a crown above it for the player with more HP
+        """Above each visible face (docs/merge_log.md, "Face effects"): the
+        name tag "P1" in the team colour at above_head, a crown above it for the player with more HP
         (_draw_tag()), and dizzy stars around the head below dizzy_hp.
         "FACE THE CAMERA" takes the tag's and crown's place while shown.
         Health only counts from the countdown on. All of it fades with

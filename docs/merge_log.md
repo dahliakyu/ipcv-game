@@ -1805,3 +1805,108 @@ A gesture now counts, as an action in the round and as a move in the calibration
 The arms-crossed rule missed most crosses with the hands on the opposite shoulders, mostly with baggy or dark clothes, because the nano pose model put the wrists in the wrong place (`docs/limitations.md`, "Arms crossed"). With the same rule, the small model found 9 of 10 attempts on `data/clips/shield.mp4` (nano: 3) and 4 real crosses with no false ones on `session.mp4` (nano: 5 real, 2 false). Punches and hands up were the same, and the pose stage still takes ~10 ms per frame on the GPU. Finding the hands with MediaPipe Hand Landmarker was tried first and did not find the hands in most attempts (details in `docs/limitations.md`).
 
 **Changed:** `configs/default.yaml`, `pose.weights`: `models/yolo26s-pose.pt`, with the comparison in its comment. `README.md`: the download command. `docs/phase-1/status.md`: the pose rows and the pose model decision.
+
+## Face effects: team colour, hit reaction, status above the head, cheek bulge
+
+The second feature built from the backlog in `docs/extra_features.md` (feature 1 there after the renumbering of 2026-10-28; before that features 1, 2, 3 and 7; the "face effect extra feature" and "Face effect extra features" commits), by the Task 5 owner on 2026-10-28. It touches Task 1 (`face/`), Task 4 (`interaction/game.py`) and Task 5 (`scene/renderer.py`, `app/pipeline.py`); each step names the files it touched.
+
+### Plan
+
+**What.** Effects on and above each player's face that show who is who and what happens to them: the team colour on the face, a reaction to every hit, a name tag and status icons above the head, and puffed cheeks after eating.
+
+**Decisions (Task 5 owner, 2026-10-28).**
+
+- **Team colour on the face:** the hat's band in the team colour and two stripes of war paint on each cheek. The cheeks are new 3D anchor points on the head model, so they follow tilt and turn like the hat.
+- **Hit reaction:** every hit that does damage knocks the hat off, the way the attack went, and the hat pops back after a moment; the face flashes white, then in the attacker's colour. The game reports hits (`Game.hits`); the face effects keep one animation record per player, timed with `Frame.t`.
+- **Status above the head:** a name tag "P1"/"P2" in the team colour, a crown for the player with more HP and dizzy stars below 25% HP. The health bars stay pinned to the bottom corners.
+- **Dizzy stars:** on an ellipse with a fixed flattening from the config, turned by the head's roll. Following the chin up and down would need the head pitch in `Face`, and `core/types.py` stays as it is.
+- **Cheek bulge:** a real image warp (a radial magnifier with `cv2.remap`) for about a second, not a sticker. Its only trigger is eating a consumable: the consumables feature calls `FaceEffects.bulge(pid, t)`. Puffing the cheeks (MediaPipe's `cheekPuff`) does not start it. Until the consumables are built, the bulge does not appear in the game.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The face effects and the hit event are in Task 1 and Task 4 packages; their owners should check these steps.
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Team colour (Task 1).
+2. Hit event (Task 4).
+3. Hit reaction (Task 1, wired by Task 5).
+4. Status above the head (Task 5).
+5. Cheek bulge (Task 1).
+6. Docs; webcam check by the Task 5 owner.
+
+### Changes
+
+#### Step 1 · Team colour
+
+**Changed:** `src/ipcvgame/face/head_pose.py` (Task 1), `anchor_points_mm()`: `left_cheek` and `right_cheek` as 3D points on the head, `cheek_out` to each side, `cheek_drop` below the eyes and `cheek_depth_mm` behind them. "Left" and "right" are the image sides, like `head_model_mm`'s eyes.
+
+**Changed:** `src/ipcvgame/face/tracker.py` (Task 1)
+- `geometry()` takes the face config and adds the cheeks as 2D offsets, for frames without a head pose.
+- `_smoothed_geometry()` smooths every anchor it is given, in one One Euro filter, so a new anchor needs no change there.
+
+**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+- `band_mask()`: the band pixels of `hat.png`, by hue (measured around the hue circle, so 178 counts as red), saturation and brightness. Without the brightness limit, dark reddish pixels along the black outline were taken too.
+- `recolor()` turns those pixels to the team colour's hue and keeps their shading. `FaceEffects.team_hat(pid)` makes each team's hat on first use.
+- `war_paint()`: two stripes on each cheek anchor, along the eye line, shortened by cos(yaw) on the cheek turned away. `fill_polys()` fills them anti-aliased, blended only in their box.
+
+**Changed:** `configs/default.yaml`, `face:` section: `cheek_out`, `cheek_drop`, `cheek_depth_mm`, `hat_band_hue`, `hat_band_hue_tol`, `hat_band_min_sat`, `hat_band_min_val`, `warpaint_len`, `warpaint_thick`, `warpaint_gap`, `warpaint_opacity`.
+
+**Changed:** `tests/test_face.py`: the cheeks below the eyes on both sides, the 3D cheeks matching the 2D ones when facing the camera, a turned-away cheek moving towards the nose. `tests/test_effects.py`: only the band changes colour, red across 0/180, the stripes' position, roll, squash and colour.
+
+#### Step 2 · Hit event
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+- `Hit` dataclass: `target_id`, `owner_id`, `direction` (the way the bolt or beam travelled, +1 to the right, −1 to the left) and `damage`.
+- `_apply_damage()` takes the direction from both callers and adds a `Hit` to `Game.hits`, and the action `hit` for the target (`game_p<pid>_actions`, `--until game`). Only hits that do damage count: a shield block, a hit on a player already at 0 or after the win adds nothing.
+- `Game.hits` is cleared at the start of `update()` and by `_clear_round()`.
+
+**Changed:** `tests/test_game.py`: bolt hits from both sides with their direction, one beam hit, no hit through a shield, a hit lasting one frame.
+
+#### Step 3 · Hit reaction
+
+**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+- `_Anim`: one record per player with the hat knock-off (time, brim point, face width, roll, direction) and the flash (time, attacker).
+- `FaceEffects.update(hits, faces, t)` starts the reaction for players with a visible face. Every hit restarts the flash; the hat is knocked off only while it is on the head, so hits in a row never throw two hats.
+- `flying_hat()`: the hat stays where it was thrown in the frame, not on the moving head. In face widths: x = direction × vx × t, y = −vy × t + g t² / 2, turning by `hat_spin_deg` per second the same way. It is fully visible for the first half of `hat_fly_s`, then fades. The design's throw of 1.5 face widths/s moved the hat only ~0.3 face widths before it faded on `session.mp4` and looked like a wobble, so it is 3 face widths/s sideways and up, with gravity 14.
+- `hat_size()`: the hat back on the head grows with an ease-out over `hat_pop_s`.
+- `flash()`: white for the first half of `flash_s`, then the attacker's colour, fading. Drawn as an ellipse polygon (`ellipse()`) at the face centre, over the war paint and mustache and under the hat.
+- `draw(canvas, faces, t)`: without `t` (the `--until` debug views, which have no game) it draws the faces as before. `reset(pid)` forgets the reaction.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: `draw()` passes `game.hits` and `Frame.t` to the face effects. `src/ipcvgame/app/pipeline.py`: the face effects are reset on `Player.reentered` and with key `R`.
+
+**Changed:** `configs/default.yaml`, `face:` section: `hat_fly_s`, `hat_pop_s`, `hat_fly_v`, `hat_gravity`, `hat_spin_deg`, `flash_s`, `flash_axes`, `flash_opacity`.
+
+**Changed:** `tests/test_effects.py`: the throw direction, spin and fade, the hat popping back, no second hat, the flash colours, no reaction without a face, drawing, reset.
+
+#### Step 4 · Status above the head
+
+**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+- `_draw_status()`, right after the face effects: the name tag in every phase; the crown and the dizzy stars from the countdown on, when health counts. While a face fades out, its status is drawn on a copy of the frame and blended in with `alpha`.
+- `crowned()`: the round player with strictly the most HP, or None at a draw or with one player.
+- `_draw_tag()`: "P<pid>" upright at `above_head`, sized by the face width with a minimum, and the crown (`_draw_crown()`) above it. "FACE THE CAMERA" takes the place of both while it is shown (`_hint_shown()`).
+- With a head near the top of the frame, there is no room above it under the top bar; on `session.mp4` the tags and crown were hidden there. Then the tag goes beside the hat, on the side towards the middle of the frame.
+- Steady tags (`_Tag` per player, `Renderer.reset(pid)`). The first version jittered: on `session.mp4` the tag jumped between above the head and beside the hat 26–45 times and changed size on 73–94% of frames.
+  - The tag goes back above the head only with `tag_side_hyst` tag heights of room to spare. Beside the hat, it changes sides only `tag_side_flip` of the frame width past the middle.
+  - The text size changes only past `tag_size_tol`.
+  - The position has its own One Euro filter, smoother than the face's, because `above_head` is far from the eyes and shakes most.
+  - On the clip, the jumps between above and beside went from 26/45 to 5/3, the size changes from 1789/1350 to 36/1, and the movement with the head still from 2.0 to 0.6 px per frame (P1).
+- `_draw_stars()`: `stars_n` stars ring the hat (above `above_head` there would be the tag), turning `stars_hz` times a second; the ones behind the head are drawn first and smaller. `star()` gives the five-pointed polygon.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: the renderer is reset with the face effects.
+
+**Changed:** `configs/default.yaml`, `render:` section: `tag_face_h`, `tag_min_h`, `tag_side_fw`, `tag_side_hyst`, `tag_side_flip`, `tag_size_tol`, `tag_filter_min_cutoff`, `tag_filter_beta`, `crown_per_tag`, `dizzy_hp`, `stars_n`, `stars_hz`, `stars_rise`, `stars_orbit`, `stars_flat`, `star_size`.
+
+**Changed:** `tests/test_renderer.py`: tags in every phase, the hint replacing the tag, the crown's rules, stars only at low HP and once health counts, stars moving, the fade, the star shape, the tag beside the hat and back, its side, its size tolerance, its smoothing and reset.
+
+#### Step 5 · Cheek bulge
+
+**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+- `bulge_map()`: the `cv2.remap` maps. An output pixel at distance ρ < r from the cheek anchor takes the source pixel at ρ' = ρ (ρ/r)^e, with e = k (1 − u²) and u = ρ/r. Since ρ' < ρ, the middle is magnified (about 2× within a quarter of the radius at k = 0.5). The design's ρ (ρ/r)^k left a seam at the rim; the (1 − u²) factor makes the warp meet the unwarped image with slope 1.
+- `warp_bulge()` remaps only the circle's box, in place.
+- `bulge(pid, t)` starts a bulge (the only trigger, for eating); `bulge_strength()` follows half a sine over `bulge_s`. The cheek turned away gets a smaller circle, like the war paint. The warp runs after the war paint, so the paint swells with the cheek, and before the mustache.
+
+**Changed:** `configs/default.yaml`, `face:` section: `bulge_radius`, `bulge_k`, `bulge_s`.
+
+**Changed:** `tests/test_effects.py`: the maps (centre, magnification, rim, k = 0), a warped spot, no bulge from puffing the cheeks, the rise and fall, drawing only while bulging.
+
+#### Step 6 · Docs
+
+**Changed:** `docs/extra_features.md`: the code map rows for the face effects and the renderer, the cheek anchors in the face table; the feature moved here and the backlog renumbered (final smash 1, consumables 2, …), with the consumables' eating rule calling `FaceEffects.bulge()`. Code comments, config and tests that said "feature 1" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the face effects in Task 1's list and the new feature numbers.

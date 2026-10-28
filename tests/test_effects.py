@@ -181,7 +181,7 @@ def test_war_paint_drawn_in_the_team_colour(pid):
     assert abs(hue_of(tuple(int(v) for v in px)) - hue_of(player_color(pid))) <= 2
 
 
-# ---------- Hit reaction (feature 1, step 3) ----------
+# ---------- Hit reaction (merge_log.md, "Face effects", step 3) ----------
 def hit_face(pid=2) -> Face:
     f = face(pid=pid)
     f.anchors = {"hat": np.array([50.0, 40.0])}
@@ -266,7 +266,7 @@ def test_reset_forgets_the_reaction():
     assert fx._anim == {}
 
 
-# ---------- Cheek bulge (feature 1, step 5) ----------
+# ---------- Cheek bulge (merge_log.md, "Face effects", step 5) ----------
 def test_bulge_map_magnifies_the_middle_and_keeps_the_rim():
     mx, my = bulge_map((41, 41), (20.0, 20.0), 20.0, 0.5)
     assert (mx[20, 20], my[20, 20]) == (20.0, 20.0)            # centre stays
@@ -289,7 +289,7 @@ def test_warp_bulge_grows_a_spot_and_leaves_the_rest():
 
 
 def test_puffing_the_cheeks_does_not_start_a_bulge():
-    """Only eating a consumable (bulge(), feature 3) starts one."""
+    """Only eating a consumable (bulge(), the consumables feature) starts one."""
     fx = FaceEffects(load_config()["face"])
     f = cheek_face()
     f.blendshapes = {"cheekPuff": 0.9}
@@ -299,7 +299,7 @@ def test_puffing_the_cheeks_does_not_start_a_bulge():
 
 def test_bulge_rises_and_falls_over_its_time():
     fx = FaceEffects(load_config()["face"])
-    fx.bulge(1, 10.0)                                           # e.g. eating (feature 3)
+    fx.bulge(1, 10.0)                                           # e.g. eating a consumable
     a, s, k = fx._anim[1], fx.cfg["bulge_s"], fx.cfg["bulge_k"]
     assert fx.bulge_strength(a, 10.0) == pytest.approx(0.0)
     assert fx.bulge_strength(a, 10.0 + s / 2) == pytest.approx(k)

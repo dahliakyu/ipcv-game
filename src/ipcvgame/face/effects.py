@@ -4,20 +4,23 @@ A hat and a mustache per player, placed at the anchors from FaceTracker:
 scaled to the face width (Face.scale), rotated by the head roll (Face.roll)
 and faded by Face.alpha. The renderer calls draw(canvas, faces).
 
-Team colour (feature 1): each player's hat band is turned to their team
-colour (scene/draw.py), and two stripes of war paint in that colour sit on
-each cheek anchor.
+The rest came with the face effects (docs/merge_log.md, "Face effects").
 
-Hit reaction (feature 1): the renderer passes the game's hits each frame
-(update()). A hit knocks the hat off: it flies away the way the attack
-went, spinning and falling, fades, then pops back onto the head. The face
-flashes white, then in the attacker's colour. The only state kept between
-frames: one _Anim record per player, timed with Frame.t.
+Team colour: each player's hat band is turned to their team colour
+(scene/draw.py), and two stripes of war paint in that colour sit on each
+cheek anchor.
 
-Cheek bulge (feature 1): puffed cheeks, chipmunk style, for about a second.
-A real image warp, not a sticker: around each cheek anchor the camera image
-is magnified by a radial warp with cv2.remap (bulge_map()). Started only by
-bulge(pid, t), when the player eats a consumable (feature 3).
+Hit reaction: the renderer passes the game's hits each frame (update()).
+A hit knocks the hat off: it flies away the way the attack went, spinning
+and falling, fades, then pops back onto the head. The face flashes white,
+then in the attacker's colour. The only state kept between frames: one
+_Anim record per player, timed with Frame.t.
+
+Cheek bulge: puffed cheeks, chipmunk style, for about a second. A real
+image warp, not a sticker: around each cheek anchor the camera image is
+magnified by a radial warp with cv2.remap (bulge_map()). Started only by
+bulge(pid, t), when the player eats a consumable (extra_features.md,
+feature 2).
 """
 
 from __future__ import annotations
@@ -234,8 +237,8 @@ class FaceEffects:
 
     def bulge(self, pid: int, t: float) -> None:
         """Puff this player's cheeks from time t (Frame.t): called when they
-        eat a consumable (feature 3), the only trigger. A bulge already
-        running starts over."""
+        eat a consumable (extra_features.md, feature 2), the only trigger.
+        A bulge already running starts over."""
         self._anim.setdefault(pid, _Anim()).bulge_t = t
 
     def bulge_strength(self, a: _Anim | None, t: float) -> float:
