@@ -6,7 +6,7 @@ import pytest
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Face, Frame, FrameState, GestureEvent, Motion, Player, PoseDetection
-from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, PaintSplat, Shield
+from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Hit, PaintSplat, Shield
 from ipcvgame.scene.draw import player_color
 
 # The made-up frames below have no faces, so the facing-the-camera rule is
@@ -195,6 +195,31 @@ def test_fading_shield_does_not_block_and_then_disappears(arena):
     assert 2 not in arena.shields
 
 
+# --- Hits for the face effects (feature 1) ---------------------------------
+
+def test_bolt_hit_is_recorded_with_its_direction(arena):
+    arena.attack(300, 500, 1, player_id=1)
+    arena.attack(600, 500, -1, player_id=2)
+    arena.advance(0.3, {1, 2})
+    assert sorted(arena.hits, key=lambda h: h.target_id) == [Hit(1, 2, -1, 10), Hit(2, 1, 1, 10)]
+    assert sorted(arena.actions) == [(1, "hit"), (2, "hit")]
+
+
+def test_beam_hit_is_recorded_once(arena):
+    arena.beam_attack(300, 500, 1, player_id=1)
+    arena.advance(0.35, {1, 2})
+    arena.advance(0.15, {1, 2})
+    arena.advance(0.1, {1, 2})
+    assert arena.hits == [Hit(2, 1, 1, arena.cfg["beam_damage"])]
+
+
+def test_blocked_hit_is_not_recorded(arena):
+    arena.activate_shield(700, 500, -1, player_id=2)
+    arena.attack(300, 500, 1, player_id=1)
+    arena.advance(0.3, {1, 2})
+    assert arena.hits == []
+
+
 def test_invisible_player_is_not_hit(arena):
     arena.attack(300, 500, 1, player_id=1)
     arena.advance(0.3, {1})
@@ -312,6 +337,18 @@ def test_bolt_hits_through_update(game):
     for i in range(1, 6):
         game.update(frame_state(i * 0.1))
     assert game.get_player(2).health == 90
+
+
+def test_hits_last_one_frame(game):
+    game.update(frame_state(0.0, events=[(1, "punch")]))
+    hit_frames = []
+    for i in range(1, 8):
+        game.update(frame_state(i * 0.1))
+        if game.hits:
+            hit_frames.append(i)
+            assert game.hits == [Hit(2, 1, 1, 10)]
+            assert game.log_fields(frame_state(i * 0.1))["game_p2_actions"] == "hit"
+    assert len(hit_frames) == 1
 
 
 def test_lost_player_is_not_hit_and_its_events_are_ignored(game):

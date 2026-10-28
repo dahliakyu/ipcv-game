@@ -7,6 +7,8 @@ the ``game:`` config.
 Combat (``advance()``): bolts and beams fly across the frame and damage the
 first other player whose body box they reach, adding paint splats; a raised
 shield blocks them. At 0 health the attacker wins and the game freezes.
+Every hit that does damage is also kept in ``Game.hits`` for that frame,
+for the face effects' hit reaction (feature 1).
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -135,6 +137,15 @@ class PaintBeam:
 
 
 @dataclass
+class Hit:
+    """One hit that did damage this frame, for the face effects."""
+    target_id: int
+    owner_id: int     # the attacker
+    direction: int    # the way the attack travelled: +1 = to the right, -1 = to the left
+    damage: int
+
+
+@dataclass
 class Shield:
     x: float
     y: float
@@ -172,9 +183,12 @@ class Game:
         self.shields: dict[int, Shield] = {}
         self.winner_id: int | None = None
         self._t: float | None = None  # Frame.t of the previous update
-        # Actions this frame as (pid, "bolt" | "beam" | "shield"), and
+        # Actions this frame as (pid, "bolt" | "beam" | "shield" | "hit"), and
         # (pid, "learned_<move>") for a move ticked off in calibration; for the CSV.
         self.actions: list[tuple[int, str]] = []
+        # Hits that did damage this frame (cleared by update()), for the face
+        # effects; each is also logged as the target's action "hit".
+        self.hits: list[Hit] = []
         self.intro = bool(cfg["intro"])
         self.phase = "waiting" if self.intro else "playing"
         self.phase_t: float | None = None   # Frame.t the phase started at; None = at the next update
@@ -273,7 +287,7 @@ class Game:
                 # A shield absorbs the bolt: it disappears without damage.
                 if not self.shielded(target):
                     self._apply_damage(target, projectile.owner_id, projectile.x,
-                                       projectile.y, cfg["bolt_damage"])
+                                       projectile.y, cfg["bolt_damage"], projectile.direction)
             elif 0.0 <= projectile.x <= self.frame_w:
                 remaining.append(projectile)
                 continue
@@ -334,16 +348,18 @@ class Game:
                 if not self.shielded(player_id):
                     self._apply_damage(player_id, beam.owner_id,
                                        min(max(right, beam_left), beam_right), beam.y,
-                                       self.cfg["beam_damage"])
+                                       self.cfg["beam_damage"], beam.direction)
                 beam.hit_player_ids.add(player_id)
 
     def _apply_damage(self, target_id: int, owner_id: int, impact_x: float,
-                      impact_y: float, damage: int) -> None:
+                      impact_y: float, damage: int, direction: int) -> None:
         target = self.get_player(target_id)
         if target.health <= 0 or self.winner_id is not None:
             return
 
         target.health = max(0, target.health - damage)
+        self.hits.append(Hit(target_id, owner_id, direction, damage))
+        self.actions.append((target_id, "hit"))
         if target.bounds is not None:
             lo, hi = self.cfg["splat_band"]
             spread = self.cfg["splat_spread"]
@@ -391,6 +407,7 @@ class Game:
         if self.phase_t is None:
             self.phase_t = t
         self.actions = []
+        self.hits = []
         for pid in visible:
             self._track_body_yaw(state, pid)
         if self.phase == "playing":
@@ -776,6 +793,7 @@ class Game:
         self.bolt_ends.clear()
         self.beams.clear()
         self.shields.clear()
+        self.hits.clear()
         self.winner_id = None
         self.not_facing_t.clear()
 
