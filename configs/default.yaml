@@ -27,9 +27,13 @@ pose:                     # Task 2 — detection
   # "yolo" = real pretrained model; "none" = no detections (for tests
   # without weights or GPU).
   backend: yolo
-  # Nano model: fast enough for real time on a laptop GPU. Downloaded into
+  # Small model (merge_log "Game start: Modifications"). On the arms-crossed
+  # attempts of data/clips/shield.mp4 and session.mp4 it found 13 real
+  # crosses with no false ones, where nano (yolo26n-pose.pt) found 8 with 2
+  # false; punches and hands up were the same. Both take ~10 ms per frame
+  # on the GPU (fp16); on a CPU the small model is slower. Downloaded into
   # models/ on first run (gitignored).
-  weights: models/yolo26n-pose.pt
+  weights: models/yolo26s-pose.pt
   # "auto" = cuda:0 if available, else cpu.
   device: auto
   # Inference size (long side). 640 is the size the model was trained at.
@@ -500,6 +504,33 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # pointing a little towards the camera looks shorter. The two players on
   # session.mp4 measured 1.67 and 1.56 sw. TO TUNE with more players.
   min_arm_sw: 1.3
+  # Line-up (docs/merge_log.md, "Game start: Modifications"): the neutral
+  # pose only counts while both players stand level, side by side at the
+  # same distance from the camera, so a later change in depth (a dodge,
+  # extra_features.md feature 7) starts from one line for both. Judged by
+  # depth (Player.pos, from the shoulder width): the feet are usually out
+  # of frame (they are on session.mp4).
+  # Level: the depths less than this far apart (m). Wide, because depth
+  # assumes one shoulder width for everyone (identity.shoulder_m):
+  # shoulders of 0.37 and 0.41 m standing level at 2.5 m read ~0.25 m apart.
+  line_up_depth_m: 0.4
+  # Once the players are not level, they are level again only when the gap
+  # is under this fraction of the tolerance above. On session.mp4 (players
+  # not asked to line up) the depth gap was a median 0.35 m and crossed
+  # 0.4 m back and forth within 0.1 s; without this, the "step back" hint
+  # flickered.
+  line_up_hysteresis: 0.75
+  # Gestures count only while the player faces the camera with head and
+  # body (Game.facing_camera(), merge_log "Game start: Modifications"). A
+  # gesture made turned away is logged as the action not_facing_<gesture>,
+  # and the player sees "FACE THE CAMERA". false = every gesture counts.
+  act_facing_camera: true
+  # Head: |yaw| from the face stage at most this (degrees).
+  act_max_head_yaw_deg: 30.0
+  # Body: turned at most this (degrees), from the shoulder-to-torso ratio
+  # against the neutral pose (Game.body_yaw_deg()): cos(30) = 0.87, the
+  # shoulders look 13% narrower. Not checked before the calibration.
+  act_max_body_yaw_deg: 30.0
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
@@ -590,6 +621,11 @@ render:
   # After a move is done, "NICE!" with a tick shows this long before the
   # next move, so the player sees it counted.
   nice_s: 0.8
+  # "FACE THE CAMERA" above a player's head this long after a gesture did not
+  # count because they were turned away (game.act_facing_camera), at this
+  # text scale (at 480 px height, like the other text scales).
+  face_camera_s: 1.0
+  face_camera_text_scale: 1.2
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest
