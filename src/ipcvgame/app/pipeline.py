@@ -74,6 +74,7 @@ class Pipeline:
                 if p.reentered:
                     self.face.reset(pid)
                     self.renderer.face_effects.reset(pid)
+                    self.renderer.reset(pid)
                     self.gestures.reset(pid)
         if self._runs("motion"):
             with prof("motion"):
@@ -145,5 +146,5 @@ class Pipeline:
     def reset(self) -> None:
         """Clear every module's state; identity finds the players again."""
         for m in (self.pose, self.identity, self.motion, self.face, self.gestures, self.game,
-                  self.renderer.face_effects):
+                  self.renderer.face_effects, self.renderer):
             m.reset()

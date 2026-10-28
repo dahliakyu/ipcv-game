@@ -4,7 +4,8 @@ The game view, in drawing order: the camera frame (pixelated, as in
 renderer.py), each player's paint splats (renderer.py's pixel crosses, on the
 torso), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
-beam, ring of fire shields), face effects, health bars pinned to the bottom,
+beam, ring of fire shields), face effects, each player's status above the
+head (name tag, dizzy stars, crown; feature 1), health bars pinned to the bottom,
 renderer.py's top bar
 with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
@@ -27,11 +28,13 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
-from ipcvgame.core.types import FrameState
+from ipcvgame.core.filters import OneEuro
+from ipcvgame.core.types import Face, FrameState
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
 from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, hue_of, player_color, pt
@@ -46,6 +49,8 @@ CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
 DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
 GREY = (120, 115, 105)      # moves still to do, in the instruction panels
+STAR = (60, 220, 255)       # dizzy stars (BGR yellow)
+GOLD = (40, 190, 255)       # the crown (BGR gold)
 # Calibration panel while the players do not stand level (Game.line_up_hint()).
 LINE_UP_TEXT = {"back": "STEP BACK TO LINE UP", "wait": "WAIT FOR THE OTHER PLAYER"}
 # Neutral pose with two players: the standing instruction for the line-up.
@@ -59,6 +64,14 @@ PHASE_TEXT = {
 }
 
 
+@dataclass
+class _Tag:
+    """One player's name tag between frames, so it does not jitter."""
+    filter: OneEuro          # on the tag's position (px)
+    text_h: float = 0.0      # text height (px) in use; changes only past tag_size_tol
+    side: int = 0            # 0 = above the head; +1 / -1 = beside the hat, to the right / left
+
+
 class Renderer:
     def __init__(self, cfg: dict, face_effects: FaceEffects):
         self.cfg = cfg
@@ -68,6 +81,14 @@ class Renderer:
         self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
+        self._tags: dict[int, _Tag] = {}         # name tag per player (feature 1)
+
+    def reset(self, pid: int | None = None) -> None:
+        """Forget the name tags' smoothing (one player on re-entry, or all)."""
+        if pid is None:
+            self._tags.clear()
+        else:
+            self._tags.pop(pid, None)
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
         canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
@@ -93,6 +114,7 @@ class Renderer:
         # The game's hits start the face effects' hit reaction (feature 1).
         self.face_effects.update(game.hits, state.faces, state.frame.t)
         self.face_effects.draw(canvas, state.faces, state.frame.t)
+        self._draw_status(canvas, state, game)
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)
@@ -360,6 +382,134 @@ class Renderer:
             cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
                         cv2.LINE_AA)
 
+    def _hint_shown(self, pid: int, t: float, game: Game) -> bool:
+        """"FACE THE CAMERA" is above this player's head now (_draw_not_facing())."""
+        when = game.not_facing_t.get(pid)
+        return (game.phase in ("calibration", "playing") and when is not None
+                and t - when <= self.cfg["face_camera_s"])
+
+    # ---------------------------------------------- status above the head
+
+    def crowned(self, game: Game) -> int | None:
+        """The round player with the most HP, or None at a draw or with
+        fewer than two players."""
+        hp = {pid: game.players[pid].health for pid in game.round_players if pid in game.players}
+        if len(hp) < 2:
+            return None
+        best = max(hp.values())
+        top = [pid for pid, h in hp.items() if h == best]
+        return top[0] if len(top) == 1 else None
+
+    def _draw_status(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """Above each visible face (feature 1): the name tag "P1" in the team
+        colour at above_head, a crown above it for the player with more HP
+        (_draw_tag()), and dizzy stars around the head below dizzy_hp.
+        "FACE THE CAMERA" takes the tag's and crown's place while shown.
+        Health only counts from the countdown on. All of it fades with
+        Face.alpha."""
+        t = state.frame.t
+        fight = game.phase in ("countdown", "playing", "result")
+        crown = self.crowned(game) if fight else None
+        for pid, f in sorted(state.faces.items()):
+            if not f.valid or f.alpha <= 0 or "above_head" not in f.anchors:
+                continue
+            # Fading: draw on a copy and blend it in (only during a face's short fade-out)
+            layer = canvas if f.alpha >= 1 else canvas.copy()
+            player = game.players.get(pid)
+            if fight and player is not None and player.health < self.cfg["dizzy_hp"] * game.max_health:
+                self._draw_stars(layer, f, t)
+            if not self._hint_shown(pid, t, game):
+                self._draw_tag(layer, pid, f, crowned=pid == crown, t=t)
+            if layer is not canvas:
+                cv2.addWeighted(layer, f.alpha, canvas, 1.0 - f.alpha, 0.0, dst=canvas)
+
+    def _draw_tag(self, canvas: np.ndarray, pid: int, f: Face, crowned: bool, t: float) -> None:
+        """"P<pid>", tag_face_h face widths tall (at least tag_min_h of the
+        frame height), with the crown above it when `crowned`. Upright, so
+        it stays readable when the head tilts.
+
+        Centred on above_head with its baseline there; when that would put
+        the tag or crown under the top bar (a head near the top of the
+        frame), it goes beside the hat instead, tag_side_fw face widths
+        from it on the side towards the middle of the frame.
+
+        Kept steady per player (_Tag): the size changes only when the face
+        width has changed by more than tag_size_tol; the tag goes back
+        above the head only once there is tag_side_hyst tag heights of room
+        to spare, so a head near the limit does not flip it every frame;
+        beside the hat, it changes sides only once the player is
+        tag_side_flip frame widths past the middle; and its position has
+        its own One Euro filter, smoother than the face's, because
+        above_head is far from the face and shakes most."""
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        st = self._tags.get(pid)
+        if st is None:
+            st = self._tags[pid] = _Tag(OneEuro(cfg["tag_filter_min_cutoff"], cfg["tag_filter_beta"]))
+        text_h = max(cfg["tag_face_h"] * f.scale, cfg["tag_min_h"] * h)
+        if st.text_h <= 0 or abs(text_h / st.text_h - 1.0) > cfg["tag_size_tol"]:
+            st.text_h = text_h
+        scale = st.text_h / 10.0                            # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        thick = max(1, int(round(st.text_h / 12.0)))
+        text = f"P{pid}"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        crown_h = (0.6 * cfg["crown_per_tag"] + 0.25) * th if crowned else 0.0
+        top_limit = cfg["hud_h"] * h + 4
+        cx, cy = f.anchors["above_head"]
+        hx, hy = f.anchors.get("hat", (cx, cy))
+        room = cy - th - crown_h - top_limit                # px to spare above the head
+        if st.side == 0 and room < 0:
+            st.side = 1 if hx < w / 2 else -1
+        elif st.side != 0 and room > cfg["tag_side_hyst"] * th:
+            st.side = 0
+        elif (hx - w / 2) * st.side > cfg["tag_side_flip"] * w:
+            st.side = -st.side                              # walked past the middle: other side
+        if st.side != 0:
+            cx = hx + st.side * (cfg["tag_side_fw"] * f.scale + tw / 2)
+            cy = max(hy, top_limit + th + crown_h)
+        cx, cy = st.filter(np.array([cx, cy]), t)
+        x = int(np.clip(cx - tw / 2, 4, w - tw - 4))
+        y = int(np.clip(cy, th + 4, h - 4))
+        cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+        cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                    cv2.LINE_AA)
+        if crowned:
+            self._draw_crown(canvas, x + tw / 2, float(y - th), float(th))
+
+    def _draw_crown(self, canvas: np.ndarray, cx: float, top: float, tag_h: float) -> None:
+        """A gold crown with three points just above the name tag, sized by the tag."""
+        w = self.cfg["crown_per_tag"] * tag_h
+        h = 0.6 * w
+        b = top - 0.25 * tag_h                              # small gap above the tag
+        pts = np.array([[cx - w / 2, b], [cx + w / 2, b], [cx + w / 2, b - h], [cx + w / 4, b - 0.45 * h],
+                        [cx, b - h], [cx - w / 4, b - 0.45 * h], [cx - w / 2, b - h]])
+        poly = [np.round(pts).astype(np.int32)]
+        cv2.fillPoly(canvas, poly, GOLD, cv2.LINE_AA)
+        cv2.polylines(canvas, poly, True, DARK, max(1, int(round(tag_h / 12.0))), cv2.LINE_AA)
+
+    def _draw_stars(self, canvas: np.ndarray, f: Face, t: float) -> None:
+        """stars_n stars circling the head at stars_hz turns per second, on
+        an ellipse round the hat (stars_rise face widths above the brim,
+        stars_orbit face widths wide each side, flattened to stars_flat),
+        turned with the head's roll. Stars behind the head are drawn first
+        and smaller, so the ring reads as going round the head."""
+        cfg = self.cfg
+        u = np.array([np.cos(f.roll), np.sin(f.roll)])     # along the eye line
+        down = np.array([-u[1], u[0]])
+        centre = f.anchors.get("hat", f.anchors["above_head"]) - cfg["stars_rise"] * f.scale * down
+        rx = cfg["stars_orbit"] * f.scale
+        ry = cfg["stars_flat"] * rx
+        r = max(cfg["star_size"] * f.scale, 3.0)
+        n = int(cfg["stars_n"])
+        angles = [2 * np.pi * (cfg["stars_hz"] * t + k / n) for k in range(n)]
+        thick = max(1, int(round(r / 6.0)))
+        for a in sorted(angles, key=np.sin):              # sin < 0: behind the head, drawn first
+            p = centre + rx * np.cos(a) * u + ry * np.sin(a) * down
+            size = r * (0.8 + 0.2 * np.sin(a))
+            poly = [np.round(star(p, size, a)).astype(np.int32)]
+            cv2.fillPoly(canvas, poly, STAR, cv2.LINE_AA)
+            cv2.polylines(canvas, poly, True, DARK, thick, cv2.LINE_AA)
+
     def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
         """Text in the middle of the frame, `size` x countdown_h of its height
         tall, off-white with a dark outline so it reads on any background."""
@@ -547,6 +697,14 @@ def status_text(phase: str, has_player: bool) -> str:
     if phase == "playing":
         return CONTROLS if has_player else "STEP INTO VIEW"
     return PHASE_TEXT[phase]
+
+
+def star(centre, radius: float, angle: float) -> np.ndarray:
+    """A five-pointed star (10 points, px): outer radius `radius`, inner
+    0.45 of it, turned by `angle` (rad)."""
+    a = angle + np.arange(10) * np.pi / 5 - np.pi / 2
+    r = np.where(np.arange(10) % 2 == 0, radius, 0.45 * radius)
+    return np.asarray(centre, float) + np.stack([r * np.cos(a), r * np.sin(a)], axis=1)
 
 
 def fit_scale(text: str, scale: float, thickness: int, max_w: float) -> float:

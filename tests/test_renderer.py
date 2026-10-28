@@ -9,6 +9,7 @@ from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Face, GestureEvent
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import Game
+from ipcvgame.scene import renderer as renderer_mod
 from ipcvgame.scene.draw import player_color
 from ipcvgame.scene.renderer import WHITE as WHITE_PX
 from ipcvgame.scene.renderer import Renderer
@@ -336,3 +337,154 @@ def test_face_the_camera_shown_after_a_blocked_gesture(monkeypatch):
     texts.clear()
     r.draw(with_faces(dark(0.5 + r.cfg["face_camera_s"])), game)
     assert "FACE THE CAMERA" not in texts
+
+
+# ---------- Status above the head (feature 1, step 4) ----------
+def faces_state(t: float = 0.0):
+    from tests.test_game import with_faces
+    return with_faces(dark(t))
+
+
+def has_color(img: np.ndarray, color) -> bool:
+    return bool((img == np.array(color, np.uint8)).all(axis=2).any())
+
+
+def test_name_tags_in_every_phase(monkeypatch):
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
+    for intro in (True, False):
+        texts.clear()
+        g = Game({**CFG["game"], "intro": intro, "act_facing_camera": False})
+        plain().draw(faces_state(), g)
+        assert "P1" in texts and "P2" in texts
+
+
+def test_face_the_camera_takes_the_tags_place(monkeypatch):
+    r = plain()
+    game = Game({**CFG["game"], "intro": False})
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
+    s = dark(0.0)
+    s.events.append(GestureEvent(1, "punch", 0.0, 1.0))          # no face: does not count
+    game.update(s)
+    r.draw(faces_state(0.5), game)
+    assert "FACE THE CAMERA" in texts and "P1" not in texts and "P2" in texts
+
+
+def test_crown_for_the_player_with_more_hp(game):
+    r = plain()
+    game.update(dark())
+    assert r.crowned(game) is None                                # both at 100
+    game.players[2].health = 60
+    assert r.crowned(game) == 1
+    assert has_color(r.draw(faces_state(), game), renderer_mod.GOLD)
+    game.players[2].health = 100
+    game.players[1].health = 60
+    assert r.crowned(game) == 2
+    solo = Game({**CFG["game"], "intro": False, "round_players": 1, "act_facing_camera": False})
+    solo.update(dark())
+    assert r.crowned(solo) is None
+
+
+def test_dizzy_stars_below_a_quarter_of_health(game):
+    r = plain()
+    game.update(dark())
+    assert not has_color(r.draw(faces_state(), game), renderer_mod.STAR)
+    game.players[1].health = game.players[2].health = 20
+    assert has_color(r.draw(faces_state(), game), renderer_mod.STAR)
+    waiting = Game({**CFG["game"], "act_facing_camera": False})   # intro: health does not count yet
+    waiting.update(dark())
+    waiting.players[1].health = 20
+    assert not has_color(r.draw(faces_state(), waiting), renderer_mod.STAR)
+
+
+def test_stars_circle_over_time(game):
+    r = plain()
+    game.update(dark())
+    game.players[1].health = 10
+    a, b = r.draw(faces_state(0.0), game), r.draw(faces_state(0.2), game)
+    stars_a = (a == np.array(renderer_mod.STAR, np.uint8)).all(axis=2)
+    stars_b = (b == np.array(renderer_mod.STAR, np.uint8)).all(axis=2)
+    assert stars_a.any() and stars_b.any() and (stars_a != stars_b).any()
+
+
+def test_status_fades_with_the_face(game):
+    r = plain()
+    game.update(dark())
+    game.players[2].health = 60                                   # P1 crowned
+    full = r.draw(faces_state(), game)
+    s = faces_state()
+    s.faces[1].alpha = 0.5
+    s.faces[2].alpha = 0.5
+    half = r.draw(s, game)
+    assert has_color(full, renderer_mod.GOLD) and not has_color(half, renderer_mod.GOLD)
+    assert half[:300].max() < full[:300].max()
+
+
+def test_star_shape():
+    from ipcvgame.scene.renderer import star
+    pts = star((0, 0), 10.0, 0.0)
+    assert pts.shape == (10, 2)
+    np.testing.assert_allclose(np.linalg.norm(pts, axis=1)[::2], 10.0)
+    np.testing.assert_allclose(np.linalg.norm(pts, axis=1)[1::2], 4.5)
+    np.testing.assert_allclose(pts[0], (0, -10), atol=1e-9)     # first point straight up
+
+
+# ---------- Steady name tags ----------
+def tag_face(y: float, x: float = 300.0, scale: float = 60.0) -> Face:
+    return Face(pid=1, valid=True, landmarks=None, center=np.array([x, y + 100]), scale=scale,
+                roll=0.0, yaw=0.0, anchors={"above_head": np.array([x, y]),
+                                            "hat": np.array([x, y + 60])})
+
+
+def tag_org(monkeypatch, r, f, t, crowned=False):
+    orgs = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, org, *a, **k: orgs.append((org, a[1])))
+    r._draw_tag(np.zeros((720, 1280, 3), np.uint8), 1, f, crowned, t)
+    monkeypatch.undo()
+    return orgs[-1]                                       # (org, font scale) of the coloured text
+
+
+def test_tag_goes_beside_the_hat_and_back_only_with_room(monkeypatch):
+    r = plain()
+    top = r.cfg["hud_h"] * 720
+    r.cfg["tag_filter_min_cutoff"] = 1e6                  # no smoothing: positions as placed
+    (x, _), _ = tag_org(monkeypatch, r, tag_face(top + 60), 0.0)
+    assert r._tags[1].side == 0
+    tag_org(monkeypatch, r, tag_face(top + 5), 0.1)       # under the top bar: beside the hat
+    assert r._tags[1].side == 1                           # left half: towards the middle
+    tag_org(monkeypatch, r, tag_face(top + 30), 0.2)      # a little room: stays beside
+    assert r._tags[1].side == 1
+    tag_org(monkeypatch, r, tag_face(top + 80), 0.3)      # plenty of room: back above
+    assert r._tags[1].side == 0
+
+
+def test_tag_side_follows_the_player_past_the_middle(monkeypatch):
+    r = plain()
+    top = r.cfg["hud_h"] * 720
+    tag_org(monkeypatch, r, tag_face(top, x=600), 0.0)
+    assert r._tags[1].side == 1
+    tag_org(monkeypatch, r, tag_face(top, x=700), 0.1)    # just past the middle: kept
+    assert r._tags[1].side == 1
+    tag_org(monkeypatch, r, tag_face(top, x=800), 0.2)    # well past it: other side
+    assert r._tags[1].side == -1
+
+
+def test_tag_size_changes_only_past_the_tolerance(monkeypatch):
+    r = plain()
+    _, s0 = tag_org(monkeypatch, r, tag_face(300, scale=60), 0.0)
+    _, s1 = tag_org(monkeypatch, r, tag_face(300, scale=63), 0.1)       # +5%: same size
+    _, s2 = tag_org(monkeypatch, r, tag_face(300, scale=80), 0.2)       # +33%: new size
+    assert s1 == s0 and s2 > s0
+
+
+def test_tag_position_is_smoothed_and_reset(monkeypatch):
+    r = plain()
+    rng = np.random.default_rng(0)
+    xs = []
+    for i in range(30):
+        (x, _), _ = tag_org(monkeypatch, r, tag_face(300, x=300 + rng.normal(0, 4)), i / 30)
+        xs.append(x)
+    assert np.std(np.diff(xs[10:])) < 2.0                 # anchor noise 4 px: tag far steadier
+    r.reset(1)
+    assert 1 not in r._tags

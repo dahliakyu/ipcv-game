@@ -107,9 +107,26 @@ Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; i
    - Flash: white, then the attacker's colour, over an ellipse at the face centre, sized by `scale`, turned by `roll`.
    - As built: `FaceEffects.update(hits, faces, t)` starts the reaction; `draw(canvas, faces, t)` plays it. Without `t` (the `--until` debug views, which have no game) it draws the faces as before. The state is one `_Anim` record per player: when the hat was knocked off, from where, at what face width, roll and direction, and when the flash started and who hit. A player without a visible face gets no reaction. Every hit restarts the flash; the hat is knocked off again only once it is back on the head (`hat_fly_s` + `hat_pop_s`). The flying hat stays where it was thrown in the frame, not on the moving head, and is drawn even if the face is lost meanwhile. Its path in face widths: x = direction × vx × t, y = −vy × t + g t² / 2, angle = roll + direction × spin × t; fully visible for the first half of the flight, then fading. Back on the head it grows with an ease-out over `hat_pop_s`. The flash is an ellipse polygon (`ellipse()`) filled by `fill_polys()`, drawn over the war paint and mustache and under the hat. The renderer calls `update()` with `game.hits` before drawing; `Pipeline` resets the effects on `reentered` and with key `R`. New `face:` keys: `hat_fly_s`, `hat_pop_s`, `hat_fly_v`, `hat_gravity`, `hat_spin_deg`, `flash_s`, `flash_axes`, `flash_opacity`.
    - On `session.mp4` (P1's beam hits P2 at frame 180; the clip runs at ~17 FPS, so ~4 frames per 0.25 s): white flash, then red; the hat arcs to the left, the way the beam went, spinning, fades out by 0.6 s and is back on the head by 0.78 s. With the design's 1.5 face widths/s, the hat moved only ~0.3 face widths before it faded and looked like a wobble, so the throw is 3 face widths/s sideways and up, with gravity 14 face widths/s².
-4. **Status above the head** (Task 5, `scene/renderer.py`).
+4. **Status above the head** (Task 5, `scene/renderer.py`). *Done.*
    - Name tag "P1"/"P2" at `above_head` in the team colour, with a minimum size; "FACE THE CAMERA" takes its place while shown.
    - Dizzy stars below 25% HP; a crown above the tag for the player with more HP (none at a draw). Both fade with `alpha`.
+   - As built: `Renderer._draw_status()` runs right after the face effects. The name tag is shown in every phase. The crown and stars show from the countdown on, when health counts.
+     - `crowned()` gives the round player with strictly the most HP, or None at a draw or with one player.
+     - `_draw_tag()` draws the tag upright, so it stays readable when the head tilts, and the crown above it.
+     - A head near the top of the frame has no room above it under the top bar. On `session.mp4` the tags and crown were hidden under the bar. In that case the tag goes beside the hat, `tag_side_fw` face widths away, on the side towards the middle of the frame.
+     - The tag is kept steady per player (`_Tag`; `Renderer.reset(pid)` on `reentered` and key `R`). Without this it jittered: on `session.mp4` it jumped between above the head and beside the hat 26–45 times, and changed size on 73–94% of frames.
+       - It goes back above the head only with `tag_side_hyst` tag heights of room to spare (hysteresis).
+       - Beside the hat, it changes sides only once the player is `tag_side_flip` of the frame width past the middle.
+       - The text size changes only when the face width has changed by more than `tag_size_tol`.
+       - Its position has its own One Euro filter (`tag_filter_min_cutoff` 0.5 Hz, smoother than the face's 1.5 Hz), because `above_head` sits far above the eyes and shakes most.
+     - "FACE THE CAMERA" replaces the tag and crown while it is shown (`_hint_shown()`).
+     - The stars ring the hat, `stars_rise` above the brim, instead of `above_head`, where the tag is. Stars behind the head are drawn first and smaller (`star()` gives the five-pointed polygon).
+     - While a face fades out, its status is drawn on a copy of the frame and blended in with `alpha`.
+   - New `render:` keys: `tag_face_h`, `tag_min_h`, `tag_side_fw`, `tag_side_hyst`, `tag_side_flip`, `tag_size_tol`, `tag_filter_min_cutoff`, `tag_filter_beta`, `crown_per_tag`, `dizzy_hp`, `stars_n`, `stars_hz`, `stars_rise`, `stars_orbit`, `stars_flat`, `star_size`. The stars are 0.2 face widths across; 0.12 was hard to see at ~2.3 m.
+   - On `session.mp4` (frame 1400; P1 has 38 HP, P2 has 6): P1's tag and crown sit beside the hat, P2 has stars ringing the hat, and both tags are readable. Frame 400: tags and crown above the heads. Cost: 0.26 ms for two players, 1.4 ms while a face fades. Steadiness over the whole clip, before → after:
+     - jumps between above and beside: 26 → 5 (P1) and 45 → 3 (P2);
+     - size changes: 1789 → 36 and 1350 → 1;
+     - while the head is nearly still, the tag moves 2.0 → 0.6 px per frame on average for P1 (1.3 → 0.6 for P2; 90th percentile 3.2 → 1.4 px). The jumps left over come with the hat itself jumping (~29 px).
 5. **Cheek bulge** (Task 1, `face/effects.py`).
    - Radial bulge warp with `cv2.remap` around each cheek anchor, only in two small boxes; strength rises and falls over 1 s.
    - Started by `cheekPuff` above the threshold (once per puff) or by `FaceEffects.bulge(pid, t)`.
