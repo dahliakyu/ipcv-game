@@ -400,6 +400,18 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   flash_axes: [0.55, 0.7]
   # Peak opacity of the flash (times Face.alpha); the face stays visible.
   flash_opacity: 0.7
+  # Cheek bulge (feature 1): a radial magnifying warp around each cheek
+  # anchor (effects.bulge_map()). Radius in face widths: 0.3 covers the
+  # cheek (the cheeks are 0.66 apart, so the two circles do not overlap).
+  bulge_radius: 0.3
+  # Warp strength at its peak (the exponent k in rho' = rho (rho/r)^k(1-u^2),
+  # the design's ~0.5): within a quarter of the radius the cheek is
+  # magnified ~2x, at half the radius ~1.3x across; stronger starts to look
+  # like a lens, not a cheek.
+  bulge_k: 0.5
+  # The bulge rises and falls over this long (half a sine), chipmunk style.
+  # It starts only when the player eats a consumable (feature 3).
+  bulge_s: 1.0
 
   # Stub backend only: above_head sits this many shoulder-widths above the
   # nose. ~0.9 clears the top of the head for an average adult.
@@ -681,6 +693,52 @@ render:
   # text scale (at 480 px height, like the other text scales).
   face_camera_s: 1.0
   face_camera_text_scale: 1.2
+  # --- Status above the head (feature 1).
+  # Name tag "P1"/"P2" at the face's above_head anchor: its text height in
+  # face widths, so it scales with the player, but at least tag_min_h of the
+  # frame height (~14 px at 480p), so a far player's tag stays readable.
+  tag_face_h: 0.35
+  tag_min_h: 0.03
+  # With no room above the head (under the top bar), the tag goes beside
+  # the hat, this many face widths from the hat anchor: the hat is 1.5 face
+  # widths wide (face.hat_width), so 0.9 clears its brim.
+  tag_side_fw: 0.9
+  # Keeping the tag steady. On the session clip it jumped between above
+  # the head and beside the hat 26-45 times and changed size on 73-94% of
+  # frames. Back above the head only with this many tag heights of room to
+  # spare (hysteresis; the head bobs by about a tag height while playing).
+  tag_side_hyst: 1.0
+  # Beside the hat, the tag is on the side towards the middle of the frame;
+  # it changes sides once the player is this fraction of the frame width
+  # past the middle, so a player standing near the middle does not flip it.
+  tag_side_flip: 0.1
+  # A new text size only once the face width has changed by more than this
+  # fraction: the face width shakes by a few percent every frame.
+  tag_size_tol: 0.12
+  # One Euro filter on the tag's position, smoother than the face's (face.
+  # filter_min_cutoff 1.5 Hz): above_head is 1.6 face widths above the eyes,
+  # so small head-angle noise moves it most. beta (per px/s) lets it keep
+  # up when the player walks.
+  tag_filter_min_cutoff: 0.5
+  tag_filter_beta: 0.02
+  # Crown for the player with more HP: width in tag heights, so it is as
+  # readable as the tag.
+  crown_per_tag: 1.6
+  # Dizzy stars below this fraction of max HP (the design's 25%: the last
+  # two or three hits).
+  dizzy_hp: 0.25
+  # Stars circling the head: number, turns per second, and the ellipse
+  # (centre stars_rise face widths above the hat brim, so they ring the hat;
+  # half-width stars_orbit face widths, just outside a ~1 face-width head;
+  # height stars_flat of the width: a fixed flattening, since Face has no
+  # pitch). Star radius in face widths: 0.2 (~14 px at 2.3 m) after 0.12
+  # was hard to see on the session clip.
+  stars_n: 3
+  stars_hz: 0.7
+  stars_rise: 0.25
+  stars_orbit: 0.75
+  stars_flat: 0.3
+  star_size: 0.2
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest

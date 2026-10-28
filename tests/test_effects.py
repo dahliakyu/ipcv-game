@@ -6,7 +6,15 @@ import pytest
 
 from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Face
-from ipcvgame.face.effects import FaceEffects, band_mask, load_sprite, paste, war_paint
+from ipcvgame.face.effects import (
+    FaceEffects,
+    band_mask,
+    bulge_map,
+    load_sprite,
+    paste,
+    war_paint,
+    warp_bulge,
+)
 from ipcvgame.interaction.game import Hit
 from ipcvgame.scene.draw import hue_of, player_color
 
@@ -256,3 +264,63 @@ def test_reset_forgets_the_reaction():
     fx = knocked()
     fx.reset()
     assert fx._anim == {}
+
+
+# ---------- Cheek bulge (feature 1, step 5) ----------
+def test_bulge_map_magnifies_the_middle_and_keeps_the_rim():
+    mx, my = bulge_map((41, 41), (20.0, 20.0), 20.0, 0.5)
+    assert (mx[20, 20], my[20, 20]) == (20.0, 20.0)            # centre stays
+    assert 20 < mx[20, 25] < 25                                 # 5 px out samples closer in: magnified
+    np.testing.assert_allclose(mx[20, 0], 0.0, atol=1e-4)       # on the rim: unchanged
+    mx0, my0 = bulge_map((41, 41), (20.0, 20.0), 20.0, 0.0)     # k = 0: identity
+    ys, xs = np.mgrid[0:41, 0:41]
+    np.testing.assert_allclose(mx0, xs, atol=1e-4)
+    np.testing.assert_allclose(my0, ys, atol=1e-4)
+
+
+def test_warp_bulge_grows_a_spot_and_leaves_the_rest():
+    img = np.zeros((100, 100, 3), np.uint8)
+    img[48:53, 48:53] = 255                                     # 5 px spot at the centre
+    img[5, 5] = 200                                             # far outside the circle
+    before = int((img[:, :, 0] > 127).sum())
+    warp_bulge(img, (50.0, 50.0), 20.0, 0.5)
+    assert int((img[:, :, 0] > 127).sum()) > 2 * before         # the spot is magnified
+    assert img[5, 5, 0] == 200
+
+
+def test_puffing_the_cheeks_does_not_start_a_bulge():
+    """Only eating a consumable (bulge(), feature 3) starts one."""
+    fx = FaceEffects(load_config()["face"])
+    f = cheek_face()
+    f.blendshapes = {"cheekPuff": 0.9}
+    fx.update([], {1: f}, 1.0)
+    assert fx.bulge_strength(fx._anim.get(1), 1.5) == 0.0
+
+
+def test_bulge_rises_and_falls_over_its_time():
+    fx = FaceEffects(load_config()["face"])
+    fx.bulge(1, 10.0)                                           # e.g. eating (feature 3)
+    a, s, k = fx._anim[1], fx.cfg["bulge_s"], fx.cfg["bulge_k"]
+    assert fx.bulge_strength(a, 10.0) == pytest.approx(0.0)
+    assert fx.bulge_strength(a, 10.0 + s / 2) == pytest.approx(k)
+    assert fx.bulge_strength(a, 10.0 + s) == 0.0
+    assert fx.bulge_strength(None, 10.0) == 0.0
+
+
+def test_draw_warps_the_cheeks_only_while_bulging():
+    fx = FaceEffects(load_config()["face"])
+    rng = np.random.default_rng(1)
+    base = rng.integers(0, 255, (100, 100, 3), dtype=np.uint8)
+    f = cheek_face()
+    plain_img = base.copy()
+    fx.draw(plain_img, {1: f}, 10.0)
+    fx.bulge(1, 10.0)
+    bulged = base.copy()
+    fx.draw(bulged, {1: f}, 10.0 + fx.cfg["bulge_s"] / 2)
+    r = int(fx.cfg["bulge_radius"] * f.scale)
+    diff = (plain_img != bulged).any(axis=2)
+    assert diff[50 - r:50 + r, 30 - r:30 + r].any()             # left cheek warped
+    assert not diff[:, 30 + r + 1:70 - r - 1].any()             # nothing between the cheeks
+    later = base.copy()
+    fx.draw(later, {1: f}, 10.0 + fx.cfg["bulge_s"])
+    np.testing.assert_array_equal(later, plain_img)             # over: as before

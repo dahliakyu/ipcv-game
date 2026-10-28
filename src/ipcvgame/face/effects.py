@@ -13,6 +13,11 @@ Hit reaction (feature 1): the renderer passes the game's hits each frame
 went, spinning and falling, fades, then pops back onto the head. The face
 flashes white, then in the attacker's colour. The only state kept between
 frames: one _Anim record per player, timed with Frame.t.
+
+Cheek bulge (feature 1): puffed cheeks, chipmunk style, for about a second.
+A real image warp, not a sticker: around each cheek anchor the camera image
+is magnified by a radial warp with cv2.remap (bulge_map()). Started only by
+bulge(pid, t), when the player eats a consumable (feature 3).
 """
 
 from __future__ import annotations
@@ -141,9 +146,44 @@ def ellipse(center, axes, angle: float, n: int = 36) -> np.ndarray:
     return np.asarray(center, float) + axes[0] * np.cos(a) * u + axes[1] * np.sin(a) * v
 
 
+def bulge_map(size: tuple[int, int], centre, radius: float, k: float) -> tuple[np.ndarray, np.ndarray]:
+    """Sampling maps for cv2.remap: a radial bulge (magnifier) of strength k
+    around `centre` (px, in the output's coordinates), for an output of
+    `size` (w, h).
+
+    Each output pixel at distance rho < radius from the centre takes the
+    source pixel at rho' = rho * (rho / radius) ** e, with e = k (1 - u^2)
+    and u = rho / radius. Since rho' < rho, the middle is magnified: the
+    cheek swells. The (1 - u^2) factor brings e to 0 at the rim, so rho' =
+    rho there and the warp also has slope 1: it blends into the unwarped
+    image without a seam. k = 0 changes nothing."""
+    w, h = size
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    dx, dy = xs - np.float32(centre[0]), ys - np.float32(centre[1])
+    u = np.minimum(np.sqrt(dx * dx + dy * dy) / max(radius, 1e-6), 1.0)
+    f = np.power(np.maximum(u, 1e-6), k * (1.0 - u * u)).astype(np.float32)
+    return np.float32(centre[0]) + dx * f, np.float32(centre[1]) + dy * f
+
+
+def warp_bulge(img: np.ndarray, centre, radius: float, k: float) -> None:
+    """Bulge `img` in place around `centre` (px): only the box of the
+    circle is remapped, clipped to the frame."""
+    if k <= 0 or radius < 2:
+        return
+    h, w = img.shape[:2]
+    x1, y1 = (max(int(np.floor(c - radius)), 0) for c in centre)
+    x2 = min(int(np.ceil(centre[0] + radius)) + 1, w)
+    y2 = min(int(np.ceil(centre[1] + radius)) + 1, h)
+    if x2 <= x1 or y2 <= y1:
+        return
+    roi = img[y1:y2, x1:x2]
+    mx, my = bulge_map((x2 - x1, y2 - y1), (centre[0] - x1, centre[1] - y1), radius, k)
+    roi[:] = cv2.remap(roi, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
 @dataclass
 class _Anim:
-    """One player's hit reaction. Times are Frame.t; None = not running."""
+    """One player's hit reaction and cheek bulge. Times are Frame.t; None = not running."""
     knock_t: float | None = None     # the hat was knocked off
     knock_at: np.ndarray | None = None   # hat anchor (px) at that moment
     knock_scale: float = 0.0         # face width (px) then, sizes the flight
@@ -151,6 +191,7 @@ class _Anim:
     knock_dir: int = 1               # the way the attack went: +1 right, -1 left
     flash_t: float | None = None     # the face flash started
     flash_owner: int = 0             # the attacker, for the flash colour
+    bulge_t: float | None = None     # the cheek bulge started
 
 
 class FaceEffects:
@@ -190,6 +231,20 @@ class FaceEffects:
             if "hat" in f.anchors and not self._knocked(a, t):
                 a.knock_t, a.knock_at = t, np.array(f.anchors["hat"], float)
                 a.knock_scale, a.knock_roll, a.knock_dir = f.scale, f.roll, h.direction
+
+    def bulge(self, pid: int, t: float) -> None:
+        """Puff this player's cheeks from time t (Frame.t): called when they
+        eat a consumable (feature 3), the only trigger. A bulge already
+        running starts over."""
+        self._anim.setdefault(pid, _Anim()).bulge_t = t
+
+    def bulge_strength(self, a: _Anim | None, t: float) -> float:
+        """Warp strength k at time t: rising from 0 to bulge_k and back
+        over bulge_s (half a sine), 0 when no bulge is running."""
+        if a is None or a.bulge_t is None:
+            return 0.0
+        k = (t - a.bulge_t) / self.cfg["bulge_s"]
+        return float(self.cfg["bulge_k"] * np.sin(np.pi * k)) if 0 <= k < 1 else 0.0
 
     def _knocked(self, a: _Anim, t: float) -> bool:
         """The hat is flying or popping back."""
@@ -231,8 +286,10 @@ class FaceEffects:
         return color, self.cfg["flash_opacity"] * (1.0 - k)
 
     def draw(self, canvas: np.ndarray, faces: dict[int, Face], t: float | None = None) -> None:
-        """Draw every effect. t (Frame.t) runs the hit reaction; None draws
-        the faces only (debug views, which have no game)."""
+        """Draw every effect. t (Frame.t) runs the hit reaction and the cheek
+        bulge; None draws the faces only (debug views, which have no game).
+        Order per face: war paint, cheek bulge (so the paint swells with
+        the cheek), mustache, flash, hat."""
         hw = self.hat.shape[1]
         mh, mw = self.mustache.shape[:2]
         cfg = self.cfg
@@ -243,6 +300,12 @@ class FaceEffects:
             polys = war_paint(f, cfg["warpaint_len"], cfg["warpaint_thick"], cfg["warpaint_gap"])
             if polys:
                 fill_polys(canvas, polys, player_color(f.pid), cfg["warpaint_opacity"] * f.alpha)
+            k = self.bulge_strength(a, t) * f.alpha
+            if k > 0:
+                for name, side in (("left_cheek", -1), ("right_cheek", 1)):
+                    if name in f.anchors:     # the cheek turned away looks smaller, as the war paint
+                        squash = np.cos(f.yaw) if side * f.yaw > 0 else 1.0
+                        warp_bulge(canvas, f.anchors[name], cfg["bulge_radius"] * f.scale * squash, k)
             if "mouth" in f.anchors:     # pivot: centre of the mustache
                 paste(canvas, self.mustache, f.anchors["mouth"], (mw / 2, mh / 2), f.roll,
                       self.mustache_width * f.scale, f.alpha)
@@ -265,8 +328,8 @@ class FaceEffects:
                       self.hat_width * a.knock_scale, alpha)
 
     def reset(self, pid: int | None = None) -> None:
-        """Forget the hit reaction of one player, or of all (the face fade
-        itself lives in FaceTracker, Face.alpha)."""
+        """Forget the hit reaction and cheek bulge of one player, or of all
+        (the face fade itself lives in FaceTracker, Face.alpha)."""
         if pid is None:
             self._anim.clear()
         else:

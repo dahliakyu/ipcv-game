@@ -87,7 +87,7 @@ Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; i
 - **Cheek bulge:** after eating (the `bite` event, feature 3), the cheeks puff up for a second, chipmunk style.
   - **Warp.** A real image warp, not a sticker: a radial "bulge" (magnifying) warp around each cheek anchor with `cv2.remap`. Inside radius r (~0.3 face widths), the source radius is ρ' = ρ · (ρ / r)^k with k rising from 0 to ~0.5 and back over 1 s. A good image-processing technique to explain in the report.
   - **Cost.** Warp only the two small cheek boxes, not the whole frame.
-  - **Trigger now.** Built before feature 3 (decided 2026-10-28): the player puffing their own cheeks (MediaPipe's `cheekPuff` > 0.5) starts the bulge. A `FaceEffects.bulge(pid, t)` call starts it too, for the `bite` event once feature 3 exists.
+  - **Trigger.** Only eating a consumable starts it (decided 2026-10-28): feature 3 calls `FaceEffects.bulge(pid, t)` on the `bite` event. Puffing the cheeks (MediaPipe's `cheekPuff`) does not; until feature 3 is built, the bulge does not appear in the game.
 
 **Implementation steps.** One step at a time, each checked by the Task 5 owner before the next. Every new number goes in the module's config section with a reason.
 
@@ -127,9 +127,18 @@ Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; i
      - jumps between above and beside: 26 → 5 (P1) and 45 → 3 (P2);
      - size changes: 1789 → 36 and 1350 → 1;
      - while the head is nearly still, the tag moves 2.0 → 0.6 px per frame on average for P1 (1.3 → 0.6 for P2; 90th percentile 3.2 → 1.4 px). The jumps left over come with the hat itself jumping (~29 px).
-5. **Cheek bulge** (Task 1, `face/effects.py`).
+5. **Cheek bulge** (Task 1, `face/effects.py`). *Done.*
    - Radial bulge warp with `cv2.remap` around each cheek anchor, only in two small boxes; strength rises and falls over 1 s.
-   - Started by `cheekPuff` above the threshold (once per puff) or by `FaceEffects.bulge(pid, t)`.
+   - Started only by `FaceEffects.bulge(pid, t)`, which feature 3 calls when a player eats a consumable.
+   - As built: `bulge_map()` builds the `cv2.remap` maps, `warp_bulge()` remaps only the circle's box, in place.
+     - Formula: an output pixel at distance ρ < r from the cheek anchor takes the source pixel at ρ' = ρ (ρ/r)^e, with e = k (1 − u²) and u = ρ/r. The design's ρ (ρ/r)^k left a seam at the rim (slope 1 + k there). The (1 − u²) factor brings the exponent to 0 at the rim, so the warp meets the unwarped image with slope 1.
+     - At k = 0.5 the middle of the cheek is magnified about 2× within a quarter of the radius, about 1.3× at half of it.
+     - k follows half a sine over `bulge_s`, times `alpha`. The cheek turned away gets a smaller circle (cos(yaw)), like the war paint.
+     - The warp runs after the war paint and before the mustache, so the paint swells with the cheek.
+     - Trigger: only `bulge(pid, t)`, for eating in feature 3; a running bulge starts over. Puffing the cheeks does not start one.
+   - New `face:` keys: `bulge_radius`, `bulge_k`, `bulge_s`.
+   - On `session.mp4`: a bulge started with `bulge()` at frame 400 swells P2's cheeks and war paint, then settles again. Cost: 0.18 ms per face (70 px face) to 0.36 ms (150 px).
+   - Seen in the game only once feature 3 calls `bulge()`.
 6. **Check and docs.** Rendered frames from the clips for each effect, timing per face, then the feature moves to `merge_log.md`.
 
 **Check.**
@@ -208,6 +217,7 @@ Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; i
 - **Eating.** The mouth is open when `jawOpen` > 0.5, and closed again below 0.25 (hysteresis).
   - An item that enters a circle of ~0.6 face widths around `anchors["mouth"]` while the mouth is open is "in the mouth": it stops falling and sticks to the mouth.
   - Closing the mouth eats it (`bite` event). An item not eaten within 1 s drops again.
+  - Eating puffs the eater's cheeks: on each `bite`, call `FaceEffects.bulge(pid, t)` (built in feature 1). It is the bulge's only trigger; grabbing an item from the floor does not start it.
   - The mouth anchor follows head tilt, so players can lean to catch items.
 - **Floor.** The floor line is the larger y of the players' ankle keypoints, smoothed. A landed item lies there for 5 s, blinks for the last second, and disappears.
 - **Grabbing.** A wrist keypoint within ~0.5 shoulder widths of the item for 0.2 s picks it up (crouching works naturally). Grabbed items take effect at once.
