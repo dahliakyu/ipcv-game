@@ -917,3 +917,25 @@ def test_same_seed_same_drinks():
             g.advance(0.1)
         return [(round(d.x), d.kind, round(d.size, 3)) for d in g.drinks]
     assert drinks() == drinks()
+
+
+def test_drinks_fall_for_a_single_player():
+    """One player is enough: after the solo intro (--solo) and without the
+    intro (--no-intro) with only P1 in view."""
+    cfg = {**load_config()["game"], "drink_every_s": [0.5, 0.5], "drink_seed": 2}
+    solo = Game({**cfg, "intro": True, "round_players": 1})
+    alone = lambda t: with_faces(frame_state(t, lost=(2,)))   # noqa: E731
+    t = run(solo, 0.0, solo.cfg["ready_s"], alone)
+    t = measured(solo, t, lambda t: neutral(alone(t), pids=(1,)))
+    for move in CALIBRATION_MOVES[1:]:
+        t += 0.1
+        s = alone(t)
+        s.events = [GestureEvent(1, move, t, 1.0)]
+        solo.update(s)
+    t = run(solo, t + 0.1, t + solo.countdown_s, alone)
+    assert solo.phase == "playing" and solo.drinks == []
+    run(solo, t + 0.1, t + 1.0, alone)
+    assert solo.drinks
+    no_intro = Game({**cfg, "intro": False, **NO_FACING})
+    run(no_intro, 0.0, 1.0, lambda t: frame_state(t, xs=(200.0,)))
+    assert no_intro.drinks

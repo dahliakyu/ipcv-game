@@ -138,6 +138,7 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
   | Defense | purple: Midnight, Pomegranate, Neon Night | purple shield | 20% to 50% less damage taken, for ~10 s |
 
 - **Stacking.** Another drink of the same category replaces the running buff's value and restarts its time.
+- **One player.** Everything must be testable alone (asked 2026-10-28): with `--solo` (the intro with P1 only) or `--no-intro` with one player in view, drinks fall, can be drunk (cheek bulge, pick-up text) and their buffs show by the health bar and in the log (`game_p1_attack`, `_defense`). Only the attack and defense effect on damage needs an opponent; the tests cover it. An HP drink at full health heals nothing but still shows its text.
 - **Damage with buffs:** damage = base damage × the attacker's attack multiplier × (1 − the target's defense), rounded.
 - **Look.**
   - Falling drinks: the sprite at its size, with the category icon in a small badge.
@@ -158,6 +159,7 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
      - In `--until game`: a circle of the drink's size in the category colour (`DRINK_DEBUG_COLORS`: green, orange, purple), with its letter and value.
    - New `game:` keys, all with reasons: `drink_every_s`, `drink_max`, `drink_fall_s`, `drink_h`, `drink_size`, `drink_margin_w`, `drink_hp`, `drink_attack`, `drink_defense`, `drink_buff_s`, `drink_seed`. The buff values and time are used from step 3 on.
    - On `session.mp4` (`--no-intro`, seed 3): drinks at 7.0, 15.7, 25.7 and 32.3 s; at the base size a drink is about as tall as a player's head.
+   - One player: drinks fall on `shield.mp4` (`--no-intro`, one player); a test runs the solo intro (`round_players: 1`) to playing and gets drinks, and one runs `--no-intro` with only P1.
 2. **Drinking with the mouth** (Task 4, from Task 1's face data).
    - Mouth open/closed per player from `jawOpen`, with hysteresis; a held drink follows the mouth anchor.
    - Catch, drink on closing, drop again after `drink_hold_s`.
@@ -169,7 +171,9 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
    - Drink sprites (loaded on first use, like the other sprites) with the category badge.
    - The held drink at the mouth, the pick-up text, and the buff icons by the health bars.
    - The README credit for the sprites.
-5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's. Then the feature moves to `merge_log.md`.
+5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's, also alone (`--solo`). Then the feature moves to `merge_log.md`.
+
+Every step is checked with one player too (a test, and `data/clips/shield.mp4`, a solo clip, where it applies).
 
 **Check.** A drink cannot be drunk twice or by both players; talking without a drink at the mouth drinks nothing; each buff changes the damage as designed and ends on time; bigger drinks give bigger values.
 
