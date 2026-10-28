@@ -1,11 +1,12 @@
 """Game view (scene/renderer.py): sprites per team, ring and health-bar geometry."""
 
+import cv2
 import numpy as np
 import pytest
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.config import load_config
-from ipcvgame.core.types import Face
+from ipcvgame.core.types import Face, GestureEvent
 from ipcvgame.face.effects import FaceEffects
 from ipcvgame.interaction.game import Game
 from ipcvgame.scene.draw import player_color
@@ -22,7 +23,8 @@ def renderer(**over) -> Renderer:
 
 @pytest.fixture
 def game() -> Game:
-    return Game({**CFG["game"], "intro": False})
+    # The made-up frames have no faces: the facing-the-camera rule is off.
+    return Game({**CFG["game"], "intro": False, "act_facing_camera": False})
 
 
 def face_at(x: float, y: float, scale: float) -> Face:
@@ -162,7 +164,7 @@ def test_health_bars_pinned_to_the_bottom_corners(game):
 # --- Screens around the round (game start) ---------------------------------
 
 def intro_game(**over) -> Game:
-    return Game({**CFG["game"], "intro": True, **over})
+    return Game({**CFG["game"], "intro": True, "act_facing_camera": False, **over})
 
 
 def plain() -> Renderer:
@@ -230,7 +232,7 @@ def test_countdown_numbers_then_fight():
 
 def test_result_panel_fills_while_hands_are_up():
     r = renderer(pixel_size=1, show_timings=False, game_over_dim=1.0)
-    game = Game({**CFG["game"], "intro": False})
+    game = Game({**CFG["game"], "intro": False, "act_facing_camera": False})
     state = dark()
     game.update(state)
     game.winner_id, game.phase = 1, "result"
@@ -288,3 +290,49 @@ def test_instruction_panels_in_each_half_and_the_reminder_flashes():
     late = t + r.cfg["remind_s"] + 0.1                      # flash on: int(8.1 s x 2 x 2 Hz) is even
     canvas = r.draw(dark(late), game)
     assert np.all(border(canvas, b1) == WHITE_PX, axis=1).all()
+
+
+def test_line_up_hint_replaces_the_reminder(monkeypatch):
+    """Players not level: the nearer player's panel says to step back, in
+    their team colour, instead of "TRY IT NOW!"."""
+    from tests.test_game import run, with_faces
+    r, game = plain(), intro_game()
+    t = run(game, 0.0, game.cfg["ready_s"], lambda t: with_faces(dark(t)))
+    late = t + r.cfg["remind_s"] + 0.3                      # reminder on, border not flashing
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
+    r.draw(dark(late), game)
+    assert "TRY IT NOW!" in texts and "STEP BACK TO LINE UP" not in texts
+    texts.clear()
+    monkeypatch.setattr(game, "line_up_hint", lambda pid: "back" if pid == 1 else "wait")
+    r.draw(dark(late), game)
+    assert "STEP BACK TO LINE UP" in texts and "WAIT FOR THE OTHER PLAYER" in texts
+    assert "TRY IT NOW!" not in texts
+
+
+def test_neutral_panel_asks_to_stand_level(monkeypatch):
+    from tests.test_game import run, with_faces
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
+    for players, shown in ((2, True), (1, False)):
+        r, game = plain(), intro_game(round_players=players)
+        t = run(game, 0.0, game.cfg["ready_s"], lambda t: with_faces(dark(t)))
+        texts.clear()
+        r.draw(dark(t), game)
+        assert ("STAND LEVEL WITH THE OTHER PLAYER" in texts) == shown
+
+
+def test_face_the_camera_shown_after_a_blocked_gesture(monkeypatch):
+    from tests.test_game import with_faces
+    r = plain()
+    game = Game({**CFG["game"], "intro": False})
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
+    s = dark(0.0)
+    s.events.append(GestureEvent(1, "punch", 0.0, 1.0))          # no face: does not count
+    game.update(s)
+    r.draw(dark(0.5), game)
+    assert "FACE THE CAMERA" in texts
+    texts.clear()
+    r.draw(with_faces(dark(0.5 + r.cfg["face_camera_s"])), game)
+    assert "FACE THE CAMERA" not in texts

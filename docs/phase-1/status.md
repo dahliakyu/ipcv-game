@@ -15,7 +15,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
 | `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars pinned to the bottom, top bar, end panel |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
-| `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26n-pose, ~10 ms/frame on the RTX 3070 Ti |
+| `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26s-pose (small; nano until 2026-10-28), ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
 | `identity/tracker.py` | Task 3 | Done (merged 2026-10-27) | BoT-SORT on the pose boxes + OSNet re-identification; occluded/lost/re-entry |
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache |
@@ -121,7 +121,7 @@ A player keeps their pid for the whole run: when they leave they stay in `player
 
 | Stage | ms/frame |
 | --- | --- |
-| pose (YOLO26n-pose, fp16) | ~10 |
+| pose (YOLO26s-pose, fp16) | ~10 |
 | face (YuNet on head crops + MediaPipe for one player per frame) | ~10.5 on a small clip, ~19 on a 4K clip; MediaPipe is ~8 of that |
 | motion (EMA smoothing), gestures (rules) | ~0.1 each |
 | identity (BoT-SORT + OSNet, one crop every few frames) | ~0.5 median, ~3 mean, ~13 on frames with an OSNet run |
@@ -166,7 +166,7 @@ pytest                                        # before every PR
 
 ### Task 2: Pose and motion — owner: ____________
 
-**Status (smoothing merged 2026-10-25 from `KeypointTracker` in `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `PoseEstimator` runs YOLO26n-pose (`models/yolo26n-pose.pt`, downloaded automatically), the same model as `bodypose.py`, and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
+**Status (smoothing merged 2026-10-25 from `KeypointTracker` in `Project/bodypose.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic)):** `PoseEstimator` runs YOLO26s-pose (`models/yolo26s-pose.pt`, downloaded automatically; `bodypose.py` used the nano model, replaced on 2026-10-28 because it missed most high arm crosses), and converts its output to canonical keypoints. `MotionFilter` smooths each player's keypoints:
 
 - keypoints under confidence 0.35 count as missing, and keep their last position for 0.33 s;
 - an EMA smooths the positions (time constant 0.048 s);
@@ -260,7 +260,7 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 | --- | --- | --- |
 | Python version | 3.12 (MediaPipe wheels lag newer releases) | ☐ |
 | Demo laptop |  | ☐ |
-| Pose model | YOLO26n-pose (Task 2 confirms on clips) | ☐ |
+| Pose model | YOLO26s-pose: small instead of nano, chosen on the arms-crossed clips (2026-10-28) | ☑ |
 | Motion signal names (Task 2 ↔ Task 4) | | ☐ |
 | Face anchor names beyond `above_head` | `forehead`, `mouth`, `hat` | ☑ |
 | Keypoint left/right on mirrored frames | Swap in the adapter so `L_*` = the player's own left | ☐ |

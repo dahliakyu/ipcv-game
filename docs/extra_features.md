@@ -18,7 +18,7 @@ The features build on the Colour Clash game, merged from the teammates' code (or
 | To change | Code | Config | Tests |
 | --- | --- | --- | --- |
 | Gesture rules and events | `interaction/gestures.py`: `detect_*()`, `GestureRecognizer` | `gestures:` | `tests/test_gestures.py` |
-| Game phases: start places, calibration, countdown, result | `interaction/game.py`: `Game.phase`, `_next_phase()`, `place_taken()`, `_measure()` (neutral pose), `_tick()` (moves); `app/pipeline.py`: `_calibrate_identity()`; measurements in `pose/measure.py` | `game:` (`intro`, `round_players`, `ready_s`, `neutral_*`, …) | `tests/test_game.py` |
+| Game phases: start places, calibration, countdown, result | `interaction/game.py`: `Game.phase`, `_next_phase()`, `place_taken()`, `_measure()` (neutral pose), `_check_line_up()`, `_tick()` (moves); `app/pipeline.py`: `_calibrate_identity()`; measurements in `pose/measure.py` | `game:` (`intro`, `round_players`, `ready_s`, `neutral_*`, …) | `tests/test_game.py` |
 | Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` → `_act()` (events to actions, `facing()`) → `advance()` (movement, hits, `_apply_damage()`); state in `GamePlayer`, `Projectile`, `PaintBeam`, `Shield`, `PaintSplat` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
 | How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`) | `render:` | `tests/test_renderer.py` |
 | Face effects and face data | `face/effects.py` (`FaceEffects.draw()`, stateless), `face/tracker.py` (`Face`, anchors), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
@@ -52,6 +52,8 @@ Renumbered on 2026-10-28. Old numbers in commits and `merge_log.md` map as follo
 | 4. Aiming the normal attack | 11 |
 | 5. Normal attack as splashed paint | 13 (paint stains where the hit landed) |
 | 6. Both players attacking at once | 14 |
+
+Added on 2026-10-28: 7 (dodge by stepping forward).
 
 Dropped: 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups).
 
@@ -245,13 +247,43 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 **Check.** Unit tests: two blobs with equal levels cancel in the middle; a blob with the higher level goes through and hits; two finishing hits in one frame give a draw with equal levels, and a win for the higher level otherwise. On the webcam: both punch at once, with and without a power item.
 
+### 7. Dodge by stepping forward
+
+**What.** A player dodges a normal attack by stepping forward, towards the camera, off the line both players stand on. The paint blob (feature 5) then flies past behind them. The game sees the step as a change in the player's depth (`Player.pos`). For the line to mean the same for both players, the calibration also asks them to stand level with each other, side by side at the same distance from the camera.
+
+**Owners.**
+
+- Task 4: the fight line, the dodge state and the hit rule in `interaction/game.py` (the line-up in the calibration is done).
+- Task 3: the depth (`Player.pos`, done in the game start) and a faster depth signal for the dodge (below).
+- Task 5: the dodge's look in the renderer.
+
+**Design.**
+
+- **Line up in the calibration:** done (`merge_log.md`, "Game start: Modifications"). The neutral pose is only measured while the two players stand level by depth (within 0.4 m); the nearer player is told to step back. Gestures also count only while the player faces the camera (same section).
+- **The fight line:** each player's own depth when the neutral pose is measured (`depth_cal`), kept for new rounds like the other calibration values.
+- **Dodge state,** per player, from the player's own change in depth. depth / depth_cal = torso_cal / torso (`Player.pos`, game start step 6). It is a ratio of the same person's own measurements, so the assumed field of view and shoulder width cancel out.
+  - **Dodging** once the player is at least ~0.5 m closer than their line, i.e. depth < depth_cal − `dodge_step_m`. At 2.5 m that is 20% closer, about four times the depth noise.
+  - **Back on the line** under ~0.3 m (hysteresis), so a dodge does not flicker on and off at the threshold.
+  - **At most ~1 s per dodge;** then the player has to return to the line before the next one. Otherwise standing forward would make a player safe for good. While dodging, the player cannot attack (the one-action-at-a-time rule).
+- **Fast enough to react.** A blob crosses the frame in ~1 s, and `identity.pos_tau_s` (0.3 s) delays the smoothed depth. The dodge reads its own depth signal with a shorter time constant (~0.1 s), or the torso ratio directly. Leaning forward shortens the torso in the image, which reads as further away, so it never fakes a dodge. If the hips leave the frame up close, the depth falls back to the shoulder width, which turning also changes.
+- **Hit rule:** a normal blob passes a dodging player without hitting them, and flies on. The final smash is not dodged by stepping forward: its paint falls on every depth, and stepping sideways is its dodge (feature 2).
+- **Look:** while dodging, the player's outline flashes white. A blob that passes them is drawn behind their body (the body mask of feature 5), with a short "MISS!" at `above_head`.
+
+**Check.** On the webcam, at measured distances:
+
+- a quick step forward of ~0.5 m during a blob's flight makes it miss;
+- standing still, punching to the side, turning, or leaning forward never counts as a dodge;
+- a dodge ends after ~1 s.
+
+Log `p<pid>_depth_m` and the dodge state per player (`log_fields`), and count false dodges on the clips.
+
 ## Technical follow-ups from the game and renderer merges
 
 | Item | Why | Where |
 | --- | --- | --- |
 | Balance on the webcam | Damage, speeds and the shield time are `game.py`'s values; check them over a few real rounds | `game:` config |
 | `tools/eval_gestures.py` | Needs clips with real, labelled gestures; the test clips have none | `tools/` |
-| Webcam check of the game start | The intro was checked on clips only: two players through the start places, calibration, countdown, result and replay; the P1-left swap with players who walked in the other way round | `--until game` |
+| Webcam check of the game start | The intro was checked on clips only: two players through the start places, calibration, countdown, result and replay; the P1-left swap with players who walked in the other way round; the line-up (whether 0.4 m by depth is too strict or too loose for two real players); the facing rule (whether 30° for head and body blocks players who glance at the opponent) | `--until game` |
 | Depth on the webcam | `Player.pos` uses an assumed field of view and shoulder width; stand at a measured distance (e.g. 2 m), compare `p<pid>_depth_m` in the log, and set `camera_hfov_deg` from the camera's spec and `shoulder_m` to match | `identity:` config |
 | Render cost at high resolution | The pixel look costs ~14 ms per frame on a 4K clip (~4.5 ms at 720p) | `render.pixel_size`, `pixelate()` |
 

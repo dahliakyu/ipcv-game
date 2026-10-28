@@ -21,11 +21,11 @@ pip install -e .
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-Model weights are not in the repo. `models/yolo26n-pose.pt` is downloaded
-automatically on first run; to fetch it by hand:
+Model weights are not in the repo. `models/yolo26s-pose.pt` (the small pose
+model) is downloaded automatically on first run; to fetch it by hand:
 
 ```bash
-mkdir -p models && wget -P models https://github.com/ultralytics/assets/releases/latest/download/yolo26n-pose.pt
+mkdir -p models && wget -P models https://github.com/ultralytics/assets/releases/latest/download/yolo26s-pose.pt
 ```
 
 The face detector (YuNet, OpenCV model zoo) is not downloaded automatically:
@@ -67,10 +67,20 @@ python -m ipcvgame.app.main                                   # webcam (configs/
 python -m ipcvgame.app.main --source data/clips/crossing.mp4  # recorded clip
 python tools/run_module.py --until identity --source data/clips/crossing.mp4
 python -m ipcvgame.app.main --set pose.det_conf=0.5           # config override
+python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
+python -m ipcvgame.app.main --solo                            # the intro with one player
 ```
 
-Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players), `R` (shift)
-reset all module state (players are identified again).
+A round starts with an intro: the players stand in their start places (P1
+left, P2 right), learn the moves one at a time while the game measures them,
+and get a 3-2-1 countdown. At the end, both hands up for 2 s starts the next
+round. `--no-intro` (`game.intro=false`) plays from the first frame, for clips
+recorded without the intro. `--solo` (`game.round_players=1`) runs the intro
+with one player, to test it alone; a solo round never ends, so use `r` or `R`.
+
+Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players, from the
+countdown), `R` (shift) reset all module state (players are identified again
+and the game goes back to waiting).
 `--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
 module and shows only its `draw_debug` overlay. `--headless --max-frames N`
 runs without a window.

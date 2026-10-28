@@ -9,11 +9,15 @@ from ipcvgame.core.types import Face, Frame, FrameState, GestureEvent, Motion, P
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, PaintSplat, Shield
 from ipcvgame.scene.draw import player_color
 
+# The made-up frames below have no faces, so the facing-the-camera rule is
+# off unless a test turns it on (test_gesture_counts_only_facing_the_camera).
+NO_FACING = {"act_facing_camera": False}
+
 
 @pytest.fixture
 def game() -> Game:
     """Without the intro: playing from the first frame."""
-    return Game({**load_config()["game"], "intro": False})
+    return Game({**load_config()["game"], "intro": False, **NO_FACING})
 
 
 @pytest.fixture
@@ -21,7 +25,7 @@ def arena() -> Game:
     """The setup of test_game.py in a 1000 x 1000 px frame, so its 0-1
     coordinates become px by multiplying by 1000: P1 on the left, P2 right.
     With game.py's bolt speed (1.4), so its test numbers still hold."""
-    g = Game({**load_config()["game"], "bolt_speed_w": 1.4})
+    g = Game({**load_config()["game"], "bolt_speed_w": 1.4, **NO_FACING})
     g.frame_w, g.frame_h = 1000, 1000
     g.get_player(1).bounds = np.array([100.0, 200, 300, 800])
     g.get_player(2).bounds = np.array([600.0, 200, 800, 800])
@@ -412,7 +416,7 @@ def test_alone_attacks_fly_towards_the_middle(game):
 
 @pytest.fixture
 def intro() -> Game:
-    return Game({**load_config()["game"], "intro": True})
+    return Game({**load_config()["game"], "intro": True, **NO_FACING})
 
 
 def with_faces(state: FrameState, pids=(1, 2)) -> FrameState:
@@ -651,7 +655,11 @@ def test_not_neutral(intro, change):
         return s
     measured(intro, t, make)
     assert intro.current_move(1) == "neutral" and intro.get_player(1).shoulder_px is None
-    assert intro.current_move(2) == "punch"                         # P2 stood still
+    if change == "no_face":
+        # P1 not in view: the line-up cannot be checked, so P2 waits too.
+        assert intro.current_move(2) == "neutral" and intro.line_up_hint(2) == "wait"
+    else:
+        assert intro.current_move(2) == "punch"                     # P2 stood still
 
 
 def test_neutral_hold_starts_over_after_a_long_break(intro):
@@ -678,3 +686,120 @@ def test_short_arm_is_flagged(intro):
         return s
     measured(intro, t, short)
     assert intro.arm_sw(1) == pytest.approx(1.2) and intro.short_arm(1)
+
+
+# --- Line-up in the calibration (merge_log.md, "Game start: Modifications")
+
+def depths(state: FrameState, d: dict[int, float]) -> FrameState:
+    for pid, depth in d.items():
+        state.players[pid].pos = np.array([0.0, depth])
+    return state
+
+
+def test_level_by_depth_allows_measuring(intro):
+    t = to_calibration(intro)
+    measured(intro, t, lambda t: depths(standing(t), {1: 2.5, 2: 2.7}))
+    assert intro.current_move(1) == intro.current_move(2) == "punch"
+    assert intro.level and intro.line_gap == pytest.approx(0.2)
+
+
+def test_not_level_sends_the_nearer_player_back(intro):
+    t = to_calibration(intro)
+    measured(intro, t, lambda t: depths(standing(t), {1: 2.0, 2: 2.6}))
+    assert intro.current_move(1) == intro.current_move(2) == "neutral"
+    assert not intro.level and intro.nearer == 1
+    assert intro.line_up_hint(1) == "back" and intro.line_up_hint(2) == "wait"
+    assert intro.log_fields(standing(t))["game_level"] == 0
+    t = measured(intro, t + 3, lambda t: depths(standing(t), {1: 2.4, 2: 2.6}))
+    assert intro.level and intro.current_move(1) == intro.current_move(2) == "punch"
+    assert intro.line_up_hint(1) is None                                   # nobody needs the line-up now
+
+
+def test_measured_player_still_told_to_step_back(intro):
+    """P1 is measured; P2 still needs the neutral pose and P1 steps forward:
+    P1's (punch) panel tells them to step back."""
+    t = to_calibration(intro)
+    t = measured(intro, t, lambda t: neutral(with_faces(frame_state(t)), pids=(1,)))
+    assert intro.current_move(1) == "punch" and intro.current_move(2) == "neutral"
+    intro.update(depths(standing(t + 0.1), {1: 1.9, 2: 2.6}))
+    assert intro.line_up_hint(1) == "back" and intro.line_up_hint(2) == "wait"
+
+
+def test_solo_has_no_line_up():
+    g = Game({**load_config()["game"], "intro": True, "round_players": 1, **NO_FACING})
+    t = run(g, 0.0, g.cfg["ready_s"], in_place)
+    measured(g, t, lambda t: depths(standing(t), {1: 1.0, 2: 3.0}))
+    assert g.level and g.current_move(1) == "punch"
+
+
+def test_line_up_hysteresis(intro):
+    """Not level at 0.5 m; at 0.35 m (under 0.4 m, but over 0.75 x 0.4 m)
+    still not level; at 0.25 m level again."""
+    t = to_calibration(intro)
+    for gap, level in ((0.5, False), (0.35, False), (0.25, True), (0.35, True)):
+        t += 0.1
+        intro.update(depths(standing(t), {1: 2.0, 2: 2.0 + gap}))
+        assert intro.level == level, gap
+
+
+# --- Gestures count only facing the camera (merge_log.md, "Game start: Modifications")
+
+def facing_game(**over) -> Game:
+    return Game({**load_config()["game"], "intro": False, **over})
+
+
+def test_gesture_counts_only_facing_the_camera():
+    g = facing_game()
+    g.update(frame_state(0.0, events=[(1, "punch")]))                  # no face: does not count
+    assert g.actions == [(1, "not_facing_punch")] and not g.projectiles
+    assert g.not_facing_t == {1: 0.0}
+    s = with_faces(frame_state(0.1, events=[(1, "punch"), (2, "punch")]))
+    s.faces[2].yaw = np.radians(45)                                    # head turned away
+    s.motion[1].kpts[sk.L_WRIST] = (390, 310)
+    g.update(s)
+    assert g.actions == [(1, "bolt"), (2, "not_facing_punch")]
+    assert facing_game(act_facing_camera=False).facing_camera(frame_state(0.0), 1)
+
+
+def test_body_turn_from_shoulders_against_torso_with_arms_down():
+    """Calibrated: shoulders 100 px, torso 300 px. Arms down with shoulders
+    50 px: turned 60 degrees, so a gesture does not count; with the arms up
+    the shoulders' width is not used."""
+    g = facing_game()
+    player = g.get_player(1)
+    player.shoulder_px, player.torso_px = 100.0, 300.0
+
+    def turned(t, events=(), arms_down=True):
+        s = with_faces(frame_state(t, events=events))
+        if arms_down:
+            neutral(s, pids=(1,))
+        k = s.motion[1].kpts
+        k[sk.L_SHOULDER, 0], k[sk.R_SHOULDER, 0] = 225, 175               # 50 px apart
+        return s
+    g.update(turned(0.0))
+    assert g.body_yaw[1] == pytest.approx(60.0)
+    g.update(turned(0.1, events=[(1, "punch")], arms_down=False))
+    assert g.actions == [(1, "not_facing_punch")]
+    g.update(neutral(with_faces(frame_state(0.2)), pids=(1,)))           # facing again, arms down
+    assert g.body_yaw[1] == pytest.approx(0.0)
+    s = with_faces(frame_state(0.3, events=[(1, "punch")]))
+    s.motion[1].kpts[sk.L_WRIST] = (390, 310)
+    g.update(s)
+    assert g.actions == [(1, "bolt")]
+
+
+def test_body_not_checked_before_calibration():
+    g = facing_game()
+    g.update(neutral(with_faces(frame_state(0.0)), pids=(1,)))
+    assert 1 not in g.body_yaw
+
+
+def test_calibration_move_counts_only_facing_the_camera():
+    g = Game({**load_config()["game"], "intro": True})
+    t = run(g, 0.0, g.cfg["ready_s"], in_place)
+    t = measured(g, t)
+    assert g.current_move(1) == "punch"
+    g.update(frame_state(t + 0.1, events=[(1, "punch")]))                # no face
+    assert g.current_move(1) == "punch" and g.actions == [(1, "not_facing_punch")]
+    g.update(with_faces(frame_state(t + 0.2, events=[(1, "punch")])))
+    assert g.current_move(1) == "hands_up"

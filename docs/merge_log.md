@@ -1754,3 +1754,54 @@ The first feature built from the backlog in `docs/extra_features.md` (feature 12
 #### Step 7 · Docs
 
 **Changed:** `README.md`: the intro, `--no-intro`, `--solo` and the keys. `docs/extra_features.md`: the code map rows for the game phases, intro screens, identity and keys; the feature moved here; follow-up rows for the webcam checks. Code comments that said "feature 12" now name this section.
+
+## Game start: Modifications
+
+Changes to the game start after it was finished. Each entry names the files it touched.
+
+### Players line up in the calibration
+
+The neutral pose now also needs the two players to stand level: side by side, at the same distance from the camera. Then each player's calibrated depth lies on one line, which a later dodge by stepping forward needs (`docs/extra_features.md`, feature 7: a dodge is a change in depth from that line).
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `_check_line_up()`, every calibration frame, by depth (`Player.pos`, from the shoulder width; the players face the camera in the neutral pose): level when the two depths are less than `line_up_depth_m` apart. The smaller depth is the nearer player. The feet would be a cue that does not depend on body size, but they are usually out of frame (they are on `session.mp4`). Without a depth for both players there is nothing to check; someone not in view means not level.
+- Hysteresis: once not level, the gap must shrink under `line_up_hysteresis` of the tolerance before the players are level again.
+- `_measure()`: the neutral pose only counts while the players are level, so a player is not measured while they stand off the line.
+- `line_up_hint(pid)`: "back" for the nearer player, "wait" for a player whose neutral pose waits; None when level, or when nobody needs the neutral pose any more. An already measured player is still told to step back while the other is measured.
+- State in `level`, `nearer` and `line_gap`, reset when a phase starts. Logged as `game_level` and `game_line_gap`, and shown in `--until game`.
+- With one round player (`--solo`) there is no one to line up with.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`, `_draw_instructions()`: with two players, the neutral pose panel says "STAND LEVEL WITH THE OTHER PLAYER" in place of "= MEASURING YOU" (the bar shows that), so a reminder still fits. While the players are not level, it shows "STEP BACK TO LINE UP" (nearer player) or "WAIT FOR THE OTHER PLAYER" in the team colour instead (`LINE_UP_TEXT`).
+
+**Changed:** `configs/default.yaml`, `game:` section: `line_up_depth_m` (0.4 m: wide, because depth assumes the same shoulder width for everyone) and `line_up_hysteresis` (0.75).
+
+**Why the hysteresis:** on `session.mp4`, where the players were not asked to line up, they stood a median 0.35 m apart by depth, so the gap crossed 0.4 m back and forth within 0.1 s, and the hint flickered.
+
+**Changed:** tests
+- `tests/test_game.py`: level by depth; the nearer player sent back, then measured once level; a measured player still told to step back; no line-up with one player; hysteresis. In `test_not_neutral`, a player out of view now also holds up the other player's measurement.
+- `tests/test_renderer.py`: the line-up hint replaces the reminder; the stand-level line with two players only.
+
+### Gestures count only while facing the camera
+
+A gesture now counts, as an action in the round and as a move in the calibration, only while the player faces the camera with head and body. A gesture made turned away is ignored, and the player is told to face the camera.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `facing_camera(state, pid)`: a tracked face turned at most `act_max_head_yaw_deg`, and the body turned at most `act_max_body_yaw_deg`. `act_facing_camera: false` turns the rule off.
+- `body_yaw_deg()`: turning shrinks the shoulder width in the image by cos(angle) but not the torso length, so the shoulder-to-torso ratio against the one from the neutral pose (facing the camera) gives the body's turn, at any distance. It needs the calibration, so with `--no-intro` only the head is checked.
+- `_track_body_yaw()`: the body turn is taken only from frames with the arms down, and the last value is used for a gesture. The gestures themselves move the shoulders: crossing the arms rolls them in and raising both hands lifts them, so on `session.mp4` a player crossing her arms while facing the camera read 22–38°. The gesture rules make the player return to a normal position between two actions, so the value is from just before the gesture.
+- `_facing_or_blocked()`: a gesture that does not count is logged as the action `not_facing_<gesture>`, and `not_facing_t` keeps its time for the hint. In the calibration, only the event of the player's current move is checked.
+- `body_yaw` is kept for a new round and cleared by `reset()`; logged as `game_p<pid>_body_yaw`.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`, `_draw_not_facing()`: "FACE THE CAMERA" above the player's head (the face's `above_head` anchor, or above the body box) in their team colour for `face_camera_s` after a gesture did not count.
+
+**Changed:** `configs/default.yaml`: `game:` `act_facing_camera`, `act_max_head_yaw_deg` (30°), `act_max_body_yaw_deg` (30°: the shoulders look 13% narrower); `render:` `face_camera_s`, `face_camera_text_scale`.
+
+**Changed:** tests
+- `tests/test_game.py`: the made-up frames have no faces, so the fixtures turn the rule off (`NO_FACING`). New tests: no face or a turned head blocks a gesture; the body turn from the shoulders against the torso, only with the arms down; no body check before the calibration; a calibration move counts only facing the camera.
+- `tests/test_renderer.py`: the game fixtures turn the rule off; "FACE THE CAMERA" shows after a blocked gesture and goes away.
+
+### Small pose model instead of nano
+
+The arms-crossed rule missed most crosses with the hands on the opposite shoulders, mostly with baggy or dark clothes, because the nano pose model put the wrists in the wrong place (`docs/limitations.md`, "Arms crossed"). With the same rule, the small model found 9 of 10 attempts on `data/clips/shield.mp4` (nano: 3) and 4 real crosses with no false ones on `session.mp4` (nano: 5 real, 2 false). Punches and hands up were the same, and the pose stage still takes ~10 ms per frame on the GPU. Finding the hands with MediaPipe Hand Landmarker was tried first and did not find the hands in most attempts (details in `docs/limitations.md`).
+
+**Changed:** `configs/default.yaml`, `pose.weights`: `models/yolo26s-pose.pt`, with the comparison in its comment. `README.md`: the download command. `docs/phase-1/status.md`: the pose rows and the pose model decision.

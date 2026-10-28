@@ -46,6 +46,10 @@ CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
 DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
 GREY = (120, 115, 105)      # moves still to do, in the instruction panels
+# Calibration panel while the players do not stand level (Game.line_up_hint()).
+LINE_UP_TEXT = {"back": "STEP BACK TO LINE UP", "wait": "WAIT FOR THE OTHER PLAYER"}
+# Neutral pose with two players: the standing instruction for the line-up.
+STAND_LEVEL_TEXT = "STAND LEVEL WITH THE OTHER PLAYER"
 # The top bar's text in the phases around the round (playing: CONTROLS).
 PHASE_TEXT = {
     "waiting": "STAND IN YOUR PLACE",
@@ -107,6 +111,8 @@ class Renderer:
             self._draw_big_text(canvas, "FIGHT!", 0.6)
         elif phase == "result":
             self._draw_game_over(canvas, game)
+        if phase in ("calibration", "playing"):
+            self._draw_not_facing(canvas, state, game)
         if self.show_timings:
             draw_timings(canvas, state.timings, (10, top + 20))
         return canvas
@@ -236,7 +242,10 @@ class Renderer:
         flashes and "TRY IT NOW!" appears. The neutral pose has a bar that
         fills while it is held (game.neutral_fraction()); a player whose arm
         measured short for the punch rule (game.short_arm()) is told to
-        stretch it fully on the punch panel."""
+        stretch it fully on the punch panel. With two players, the neutral
+        pose also asks them to stand level; while it waits for that
+        (game.line_up_hint()), the nearer player is told to step back and
+        the other to wait, instead of that line and the reminder."""
         x1, y1, x2, y2 = self.instruction_box(pid, len(game.round_players), canvas.shape)
         x1, y1 = max(x1, 0), max(y1, 0)
         x2, y2 = min(x2, canvas.shape[1]), min(y2, canvas.shape[0])
@@ -262,6 +271,7 @@ class Renderer:
         pad = int(8 * k)
         fig = y2 - y1 - 2 * pad                      # the figure's square
         fig_center = (x1 + pad + fig / 2, y1 + pad + fig / 2)
+        hint = None
         if nice:
             last = CALIBRATION_MOVES[done - 1]
             title, lines = "NICE!", ["MEASURED" if last == "neutral" else MOVE_TEXT[last][0] + " LEARNED"]
@@ -273,11 +283,21 @@ class Renderer:
             draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
         else:
             title, how, effect = MOVE_TEXT[move]
-            lines = [how, "= " + effect]
+            # With two players the neutral pose asks them to stand level, in
+            # place of "= MEASURING YOU" (the bar shows that), so the panel
+            # still fits a reminder.
+            level = move == "neutral" and len(game.round_players) > 1
+            lines = [how] if level else [how, "= " + effect]
             if move == "punch" and game.short_arm(pid):
                 lines.append("STRETCH YOUR ARM ALL THE WAY")
-            if remind:
-                lines.append("TRY IT NOW!")
+            hint = LINE_UP_TEXT.get(game.line_up_hint(pid))
+            if hint:
+                lines.append(hint)        # more useful than a reminder
+            else:
+                if level:
+                    lines.append(STAND_LEVEL_TEXT)
+                if remind:
+                    lines.append("TRY IT NOW!")
             draw_figure(canvas, move, fig_center, fig, color, mirror=pid == 2)
 
         tx, text_w = x1 + 2 * pad + fig, x2 - x1 - 3 * pad - fig
@@ -290,7 +310,10 @@ class Renderer:
             sc = fit_scale(line, self._scale(canvas, "instruction_text_scale"), thin, text_w)
             (_, lh), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_PLAIN, sc, thin)
             y += int(lh * 1.9)
-            c = (WHITE if flash else color) if line == "TRY IT NOW!" else WHITE
+            if line == "TRY IT NOW!":
+                c = WHITE if flash else color
+            else:
+                c = color if line == hint else WHITE
             cv2.putText(canvas, line, (tx, y), cv2.FONT_HERSHEY_PLAIN, sc, c, thin, cv2.LINE_8)
 
         r = max(4, int(6 * k))                       # progress dots along the bottom
@@ -308,6 +331,32 @@ class Renderer:
                 cv2.circle(canvas, c, r, color, -1, cv2.LINE_AA)
             else:
                 cv2.circle(canvas, c, r, WHITE if i == done else GREY, thin + (i == done), cv2.LINE_AA)
+
+    def _draw_not_facing(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """"FACE THE CAMERA" above a player's head for face_camera_s after a
+        gesture did not count because they were turned away
+        (Game.facing_camera()), in their team colour with a dark outline:
+        at the face's above_head anchor, or above the body box without a
+        face."""
+        t = state.frame.t
+        for pid, when in game.not_facing_t.items():
+            p = state.players.get(pid)
+            if t - when > self.cfg["face_camera_s"] or p is None:
+                continue
+            face = state.faces.get(pid)
+            if face is not None and face.valid and "above_head" in face.anchors:
+                cx, cy = face.anchors["above_head"]
+            else:
+                cx, cy = (p.bbox[0] + p.bbox[2]) / 2.0, p.bbox[1]
+            text = "FACE THE CAMERA"
+            scale = self._scale(canvas, "face_camera_text_scale")
+            thick = max(1, int(round(canvas.shape[0] / 480.0)))
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = int(np.clip(cx - tw / 2, 4, canvas.shape[1] - tw - 4))
+            y = int(np.clip(cy, th + 4, canvas.shape[0] - 4))
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                        cv2.LINE_AA)
 
     def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
         """Text in the middle of the frame, `size` x countdown_h of its height

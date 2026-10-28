@@ -21,9 +21,12 @@ The project uses hand-written rules on the pose keypoints for every gesture (`in
 
 **Seen.** `data/clips/shield.mp4` (24 s, one player, recorded with `--solo --no-intro --record`) has 10 shield attempts. The rule sent 3 `arms_crossed` events; the live run (`logs/run-20261028-113950.csv`) raised 2 shields. In `data/clips/session.mp4`, P2 crosses the same way at about 39, 56 and 77 s, and the rule misses all three. The game itself drops nothing: every `arms_crossed` event in the logs raised a shield.
 
-**Cause.** The rule (`detect_crossed()`) needs the two wrist keypoints in the opposite left/right order to the shoulders. A common way to cross the arms is high, with each hand on the opposite shoulder. The pose model then does not find the wrists where they are. It either places each wrist on its own side, or puts one wrist low on the body where there is no hand. Across these attempts the wrists stay 0.1–0.5 shoulder widths (sw) short of swapping. The 3 hits were the attempts where the hands met in the middle of the chest.
+**Cause.** The rule (`detect_crossed()`) needs the two wrist keypoints in the opposite left/right order to the shoulders. A common way to cross the arms is high, with each hand on the opposite shoulder. The pose model then does not find the wrists where they are. It either places each wrist on its own side, or puts one wrist low on the body where there is no hand. Across these attempts the wrists stay 0.1–0.5 shoulder widths (sw) short of swapping. The 3 hits were the attempts where the hands met in the middle of the chest. Webcam tests also show that the misses come mostly with baggy or dark clothes: then the forearms barely stand out against the torso, so the model has little to place the wrists by. In both clips with misses the players wear such tops (a loose corduroy jacket, a black jumper), and the wrist keypoints were mostly confident (0.4–0.98) but in the wrong place, so the keypoint smoothing (`motion:`, an EMA with a 0.05 s time constant) cannot help: it averages positions, it does not correct them.
 
-**Done.** The calibration panel (`scene/instructions.py`) teaches the cross the rule detects: "CROSS WRISTS IN FRONT OF CHEST", with a figure whose wrists cross just past the middle of the chest. The rule is unchanged.
+**Done.**
+
+- The calibration panel (`scene/instructions.py`) teaches the cross the rule detects: "CROSS WRISTS IN FRONT OF CHEST", with a figure whose wrists cross just past the middle of the chest.
+- The small pose model replaces nano (below), which places the wrists better in these poses. The rule is unchanged.
 
 Two rules that ignore the left/right labels were tried on the clips and not kept:
 
@@ -35,11 +38,37 @@ Two rules that ignore the left/right labels were tried on the clips and not kept
 
 The rules that catch the high cross also fire on hands held in front of the chest, which happens during normal play.
 
+**Then the hands themselves were looked for** with MediaPipe Hand Landmarker on a crop of each player's upper body (2026-10-28), to find where the hands are and which hand is which, independent of the arm keypoints. It did not work for this case:
+
+- in 6 of the 10 attempts on `shield.mp4` it found no hand in any frame, and in the others only for a few frames, also with a tighter crop of the shoulders and chest. Hands gripping a shoulder show their back and curled fingers, and its palm detector looks for an open palm;
+- its left/right label was consistent with the arm keypoints in only 66% of hands on `session.mp4` with the arms clearly apart, so it could not tell which hand had crossed;
+- it costs 11–17 ms per crop on the CPU.
+
+**Then a bigger pose model** (2026-10-28), with the same rule. Nano is the old model, small the new default (`pose.weights`):
+
+| Model | `shield.mp4`: attempts caught (of 10) | `session.mp4`: real crosses / false | Jump and fitness clips | Pose time |
+| --- | --- | --- | --- | --- |
+| Nano (`yolo26n-pose`) | 3 | 5 / 2 (a player walking in side-on, one bent over at the frame edge) | none | ~10 ms |
+| Small (`yolo26s-pose`) | 9 (one fired twice) | 4 / 0 (finds a high cross nano misses, misses two nano finds) | none | ~10 ms |
+| Medium (`yolo26m-pose`) | 4 | not tested | not tested | ~10 ms |
+
+Punches (16) and hands up (3) on `session.mp4` were the same with nano and small. The small model is the default now. Times are on the GPU with fp16; on a CPU the small model is slower.
+
 **Improvement.**
 
-- Find the hands themselves: MediaPipe Hand Landmarker on crops around the wrist keypoints gives the real hand position, also on a shoulder.
 - A rule on more than the wrists, such as the elbows and the forearm direction, tuned on clips labelled frame by frame (crosses, guard fists, arm swings).
 - A learned classifier on the same labelled clips (see "No learned gesture classifier" below).
+- More clips with other players and clothes: the comparison above has two people and three tops.
+
+### Facing the camera: the body is checked with the arms down only
+
+**Seen.** A gesture counts only while the player faces the camera (`Game.facing_camera()`). The body's turn comes from the shoulder-to-torso ratio against the calibration, but the gestures move the shoulders themselves: on `session.mp4`, a player crossing her arms while facing the camera read 22–38°, and hands up 30°.
+
+**Cause.** Crossing the arms rolls the shoulders in, and raising both hands lifts them; both narrow the shoulder width in the image, which reads as a turn.
+
+**Done.** The body's turn is taken only from frames with the arms down, and the last value is used for the gesture (`_track_body_yaw()`). The one-action-at-a-time rule makes the player return to a normal position between actions, so the value is recent. The head is checked in every frame.
+
+**Improvement.** A turn that starts during a gesture is not caught. The hips' width against the calibration would not change with the arms, but the hip keypoints are less precise; tested on clips with labelled turns, it could replace or confirm the shoulders.
 
 ### Punch: decided per frame from the pose, not from the movement
 

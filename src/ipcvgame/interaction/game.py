@@ -188,6 +188,18 @@ class Game:
         self._neutral: dict[int, _Hold] = {}
         self._neutral_held: dict[int, float] = {}
         self._samples: dict[int, list[tuple[float, float, float]]] = {}
+        # Frame.t of each player's last gesture that did not count because
+        # they were not facing the camera (facing_camera()), for the hint.
+        self.not_facing_t: dict[int, float] = {}
+        # Each player's body turn (degrees) the last time their arms were
+        # down (_track_body_yaw()); gestures move the shoulders.
+        self.body_yaw: dict[int, float] = {}
+        # Line-up this frame (calibration, _check_line_up()): the round
+        # players stand level; else the one nearer the camera (None when
+        # someone is not in view) and the depth gap (m; None when unknown).
+        self.level = True
+        self.nearer: int | None = None
+        self.line_gap: float | None = None
         # Phase lengths and the beam's hit band, for drawing (the renderer
         # reads them here instead of from the game: config).
         self.beam_charge_s = float(cfg["beam_charge_s"])
@@ -379,16 +391,20 @@ class Game:
         if self.phase_t is None:
             self.phase_t = t
         self.actions = []
+        for pid in visible:
+            self._track_body_yaw(state, pid)
         if self.phase == "playing":
             for e in state.events:
-                if e.pid in positions:
+                if e.pid in positions and self._facing_or_blocked(state, e.pid, e.name, t):
                     self._act(e.pid, e.name, state.motion[e.pid], positions)
             self.advance(dt, visible)
             if self.winner_id is not None:
                 self._enter("result", t)
         elif self.phase == "calibration":
             for e in state.events:
-                self._tick(e.pid, e.name, t)
+                if e.name == self.current_move(e.pid) and self._facing_or_blocked(state, e.pid, e.name, t):
+                    self._tick(e.pid, e.name, t)
+            self._check_line_up(state)
             for pid in self.round_players:
                 if self.current_move(pid) == "neutral":
                     self._measure(state, pid, t)
@@ -398,6 +414,7 @@ class Game:
 
     def _enter(self, phase: str, t: float | None) -> None:
         self.phase, self.phase_t, self._hold, self._held = phase, t, _Hold(), 0.0
+        self.level, self.nearer, self.line_gap = True, None, None
         if phase == "calibration":
             for pid in self.round_players:
                 player = self.get_player(pid)
@@ -456,9 +473,10 @@ class Game:
         """Calibration, neutral pose: one (shoulder, arm, torso) sample (px)
         per frame in the pose. Once the pose has held neutral_s (gaps up to
         hold_gap_s allowed), the medians are stored and the move is ticked
-        off. A hold that starts again starts with no samples."""
+        off. A hold that starts again starts with no samples. The pose only
+        counts while the players stand level (_check_line_up())."""
         hold = self._neutral.setdefault(pid, _Hold())
-        on = self._neutral_pose(state, pid)
+        on = self.level and self._neutral_pose(state, pid)
         held = self._neutral_held[pid] = hold.update(on, t, self.cfg["hold_gap_s"])
         if hold.since == t:
             self._samples[pid] = []
@@ -496,6 +514,49 @@ class Game:
         still = (np.linalg.norm(m.vel[wrists], axis=1) < cfg["neutral_max_speed_sw"] * sw).all()
         return bool(low and still)
 
+    def _check_line_up(self, state: FrameState) -> None:
+        """Calibration: do the two round players stand level, side by side at
+        the same distance from the camera? Then a later change in a
+        player's depth starts from one line for both.
+
+        - By depth (Player.pos, identity: from the shoulder width in px, the
+          players face the camera in the neutral pose): level when less than
+          line_up_depth_m apart. The smaller depth is the nearer player.
+          Without a depth for both, nothing to check.
+        - Someone not in view: not level, and no one to send back.
+        - Hysteresis: once not level, the gap must shrink under
+          line_up_hysteresis of the tolerance before the players are level
+          again, so a gap near the tolerance does not flicker.
+        With one round player there is no one to line up with."""
+        was_level = self.level
+        self.level, self.nearer, self.line_gap = True, None, None
+        if len(self.round_players) < 2:
+            return
+        a, b = self.round_players[:2]
+        if not (self.in_view(state, a) and self.in_view(state, b)):
+            self.level = False
+            return
+        da, db = state.players[a].pos[1], state.players[b].pos[1]
+        if da <= 0 or db <= 0:
+            return
+        k = 1.0 if was_level else self.cfg["line_up_hysteresis"]
+        self.line_gap = abs(db - da)
+        self.level = self.line_gap < k * self.cfg["line_up_depth_m"]
+        if not self.level:
+            self.nearer = a if da < db else b
+
+    def line_up_hint(self, pid: int) -> str | None:
+        """Calibration panel: "back" when pid has to step back to stand
+        level, "wait" when pid's neutral pose waits for the line-up; None
+        when the players are level or nobody needs the neutral pose any more."""
+        if self.phase != "calibration" or self.level:
+            return None
+        if not any(self.current_move(p) == "neutral" for p in self.round_players):
+            return None
+        if pid == self.nearer:
+            return "back"
+        return "wait" if self.current_move(pid) == "neutral" else None
+
     def neutral_fraction(self, pid: int) -> float:
         """How far pid's neutral-pose hold has got, 0-1 (for the panel)."""
         return min(1.0, self._neutral_held.get(pid, 0.0) / self.cfg["neutral_s"])
@@ -519,6 +580,68 @@ class Game:
             player = self.get_player(pid)
             player.move, player.move_t = player.move + 1, t
             self.actions.append((pid, f"learned_{gesture}"))
+
+    def body_yaw_deg(self, state: FrameState, pid: int) -> float | None:
+        """How far pid's body is turned away from the camera this frame
+        (degrees). Turning shrinks the shoulder width in the image by
+        cos(angle) but not the torso length, so the shoulder-to-torso ratio
+        against the one measured in the neutral pose (facing the camera)
+        gives the angle, at any distance. Only meaningful with the arms
+        down: crossing the arms rolls the shoulders in and raising them
+        lifts the shoulders, both narrowing the shoulder width (on
+        session.mp4, 22-38 degrees while facing the camera). None before
+        the calibration, or without both shoulders and hips."""
+        player, m = self.players.get(pid), state.motion.get(pid)
+        if player is None or player.shoulder_px is None or not player.torso_px or m is None:
+            return None
+        sw, torso = shoulder_px(m.kpts, m.valid), torso_px(m.kpts, m.valid)
+        if not sw or not torso:
+            return None
+        ratio = (sw / torso) / (player.shoulder_px / player.torso_px)
+        return math.degrees(math.acos(min(1.0, ratio)))
+
+    def _track_body_yaw(self, state: FrameState, pid: int) -> None:
+        """Keep pid's body turn from frames with both wrists below the
+        shoulder line by neutral_wrist_below_sw (arms down), where the
+        shoulder width is not changed by a gesture. Between two actions the
+        gesture rules make the player return to a normal position, so the
+        value is from just before the gesture."""
+        m = state.motion.get(pid)
+        if m is None:
+            return
+        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
+        wrists = [sk.L_WRIST, sk.R_WRIST]
+        if sw is None or not m.valid[wrists].all():
+            return
+        shoulder_y = (m.kpts[sk.L_SHOULDER][1] + m.kpts[sk.R_SHOULDER][1]) / 2.0
+        if (m.kpts[wrists, 1] > shoulder_y + self.cfg["neutral_wrist_below_sw"] * sw).all():
+            yaw = self.body_yaw_deg(state, pid)
+            if yaw is not None:
+                self.body_yaw[pid] = yaw
+
+    def facing_camera(self, state: FrameState, pid: int) -> bool:
+        """pid faces the camera with head and body, so their gesture counts:
+        a tracked face turned at most act_max_head_yaw_deg this frame, and
+        the body turned at most act_max_body_yaw_deg the last time the arms
+        were down (body_yaw; not checked before the calibration, e.g. with
+        --no-intro). Off with act_facing_camera: false."""
+        cfg = self.cfg
+        if not cfg["act_facing_camera"]:
+            return True
+        face = state.faces.get(pid)
+        if face is None or not face.valid or abs(math.degrees(face.yaw)) > cfg["act_max_head_yaw_deg"]:
+            return False
+        body = self.body_yaw.get(pid)
+        return body is None or body <= cfg["act_max_body_yaw_deg"]
+
+    def _facing_or_blocked(self, state: FrameState, pid: int, gesture: str, t: float) -> bool:
+        """True if pid's gesture counts; else it is logged as
+        not_facing_<gesture> and the hint time is set."""
+        if self.facing_camera(state, pid):
+            return True
+        self.not_facing_t[pid] = t
+        self.actions.append((pid, f"not_facing_{gesture}"))
+        return False
 
     def place_taken(self, state: FrameState, place: int) -> bool:
         """Waiting: someone in view with a face stands in start place `place`
@@ -637,11 +760,13 @@ class Game:
             if pid in self.players:
                 self._refresh(self.players[pid])
             self.shields.pop(pid, None)
+            self.body_yaw.pop(pid, None)
             return
         self._clear_round()
         for player in self.players.values():
             player.move, player.move_t = 0, 0.0
             player.shoulder_px = player.arm_px = player.torso_px = None
+        self.body_yaw.clear()
         self._enter("waiting" if self.intro else "playing", self._t)
 
     def _clear_round(self) -> None:
@@ -652,6 +777,7 @@ class Game:
         self.beams.clear()
         self.shields.clear()
         self.winner_id = None
+        self.not_facing_t.clear()
 
     def _refresh(self, player: GamePlayer) -> None:
         player.health = self.max_health
@@ -716,6 +842,11 @@ class Game:
                 move = self.current_move(pid)
                 extra = f" {self.neutral_fraction(pid):.0%}" if move == "neutral" else ""
                 lines.append(f"P{pid} next: {move or 'done'}{extra}")
+            if self.line_gap is not None:
+                line = f"line-up: {self.line_gap:.2f} m apart"
+                lines.append(line + (" level" if self.level else f", P{self.nearer} step back"))
+            elif not self.level:
+                lines.append("line-up: waiting for both players")
         for pid in self.round_players:
             arm = self.arm_sw(pid)
             if arm is not None:
@@ -732,8 +863,10 @@ class Game:
         '+'), game_p<pid>_move (next calibration move, empty when all are
         done), game_p<pid>_shoulder_px, game_p<pid>_arm_px,
         game_p<pid>_torso_px and game_p<pid>_arm_sw (the calibration, empty
-        before it); game_bolts and
-        game_beams (in flight), game_winner (pid or empty)."""
+        before it); game_p<pid>_body_yaw (degrees, the last arms-down
+        body_yaw_deg(); empty before the calibration); game_level (1 while the players stand
+        level) and game_line_gap (m); game_bolts and game_beams (in flight),
+        game_winner (pid or empty)."""
         row: dict = {"game_phase": self.phase}
         for pid, player in sorted(self.players.items()):
             pre = f"game_p{pid}_"
@@ -746,6 +879,10 @@ class Game:
             row[pre + "arm_px"] = "" if player.arm_px is None else round(player.arm_px, 1)
             row[pre + "torso_px"] = "" if player.torso_px is None else round(player.torso_px, 1)
             row[pre + "arm_sw"] = "" if arm is None else round(arm, 3)
+            body = self.body_yaw.get(pid)
+            row[pre + "body_yaw"] = "" if body is None else round(body, 1)
+        row["game_level"] = int(self.level)
+        row["game_line_gap"] = "" if self.line_gap is None else round(self.line_gap, 3)
         row["game_bolts"] = len(self.projectiles)
         row["game_beams"] = len(self.beams)
         row["game_winner"] = self.winner_id if self.winner_id is not None else ""
