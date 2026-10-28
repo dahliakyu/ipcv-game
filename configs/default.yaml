@@ -432,7 +432,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # A bolt's end point (a hit, a shield or the frame edge) is kept this long,
   # so the renderer can play its break-up there (game.Game.bolt_ends).
   bolt_end_s: 0.25
-  # --- Game phases (feature 12, docs/extra_features.md): waiting ->
+  # --- Game phases (feature 1, docs/extra_features.md): waiting ->
   # calibration -> countdown -> playing -> result. false = no waiting,
   # calibration or countdown: the game plays at once, as before (tests, and
   # clips recorded without the intro, e.g. data/clips/session.mp4).
@@ -458,6 +458,29 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # far above the shoulders (shoulder widths). Same as
   # gestures.head_above_shoulders; each module reads only its own section.
   head_above_shoulders: 0.3
+  # Pose calibration, the first calibration move: the neutral pose held this
+  # long while shoulder width and arm length are measured every frame; the
+  # median of ~60 samples at 30 FPS ignores a few bad keypoints.
+  neutral_s: 2.0
+  # Neutral pose: both wrists at least this far below the shoulder line
+  # (shoulder widths). Hanging arms put them ~1.5 sw below; 0.8 still
+  # counts slightly bent arms, but not hands at the chest.
+  neutral_wrist_below_sw: 0.8
+  # Standing still: both wrists slower than this (shoulder widths per s),
+  # so the arm length is not measured mid-swing. On session.mp4, wrists of
+  # lowered arms moved at a median 0.34 sw/s (90th percentile 0.81), from
+  # keypoint noise and small sways.
+  neutral_max_speed_sw: 1.0
+  # Facing the camera: head yaw at most this (degrees). Turned by 20 deg,
+  # the shoulders still show cos(20) = 94% of their width. On session.mp4,
+  # 90% of frames had the head turned less than 14 deg.
+  neutral_max_yaw_deg: 20.0
+  # Warning when the calibrated arm (shoulder-elbow-wrist) is shorter than
+  # this (shoulder widths): the punch needs the wrist 1 sw to the side
+  # (gestures.punch_min_reach) with the elbow over 150 deg, and an arm
+  # pointing a little towards the camera looks shorter. The two players on
+  # session.mp4 measured 1.67 and 1.56 sw. TO TUNE with more players.
+  min_arm_sw: 1.3
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
@@ -512,7 +535,7 @@ render:
   # End of the game: the frame behind renderer.py's panel is darkened to this
   # fraction, so the panel stands out and nothing looks frozen.
   game_over_dim: 0.5
-  # --- Screens around the round (feature 12, docs/extra_features.md).
+  # --- Screens around the round (feature 1, docs/extra_features.md).
   # Waiting: each player's start place, a box this wide (fraction of the
   # frame width) in their half of the frame; 0.3 is about a player with
   # arms down at the usual distance. From just under the top bar to just

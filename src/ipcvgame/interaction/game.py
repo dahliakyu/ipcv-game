@@ -13,12 +13,15 @@ body box and position from the frame state, turns gesture events into actions
 (punch -> bolt, hands up -> beam, arms crossed -> shield), then advances the
 game by the real time since the last frame.
 
-Phases (feature 12, docs/extra_features.md), in ``Game.phase``:
+Phases (feature 1, docs/extra_features.md), in ``Game.phase``:
 
 - ``waiting``: until both start places are taken (``ready_s``): someone in
   view with a face stands in each half of the frame (``place_taken()``).
 - ``calibration``: each player performs the moves of ``CALIBRATION_MOVES``
-  in turn; a move's gesture event ticks it off instead of firing.
+  in turn; a move's gesture event ticks it off instead of firing. The first
+  move is the neutral pose (``_neutral_pose()``), held for ``neutral_s``
+  while the shoulder width and arm length are measured (pose/measure.py);
+  the medians are kept in ``GamePlayer`` until ``reset()``.
 - ``countdown``: ``countdown_s``, then a fresh round.
 - ``playing``: the only phase with combat (actions and ``advance()``).
 - ``result``: after a win; both players holding their hands up for
@@ -33,6 +36,7 @@ test the intro alone.
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 
@@ -42,11 +46,16 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
+from ipcvgame.pose.measure import arm_px, shoulder_px
 from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
 PHASES = ("waiting", "calibration", "countdown", "playing", "result")
-# The moves taught in the calibration phase, in this order (gesture event names).
-CALIBRATION_MOVES = ("punch", "hands_up", "arms_crossed")
+# The moves taught in the calibration phase, in this order: the neutral pose
+# (measured by the game), then the gesture event names.
+CALIBRATION_MOVES = ("neutral", "punch", "hands_up", "arms_crossed")
+# Keypoints the neutral pose needs: the whole upper body and the hips.
+NEUTRAL_KPTS = [sk.L_SHOULDER, sk.R_SHOULDER, sk.L_ELBOW, sk.R_ELBOW, sk.L_WRIST, sk.R_WRIST,
+                sk.L_HIP, sk.R_HIP]
 
 
 @dataclass
@@ -87,6 +96,10 @@ class GamePlayer:
     # at len), and the Frame.t it was shown at (for a reminder).
     move: int = 0
     move_t: float = 0.0
+    # Pose calibration: median shoulder width and arm length (px) in the
+    # neutral pose; None until measured. Kept for new rounds.
+    shoulder_px: float | None = None
+    arm_px: float | None = None
 
 
 @dataclass
@@ -169,6 +182,11 @@ class Game:
         self.round_players = tuple(range(1, int(cfg["round_players"]) + 1))
         self._hold = _Hold()                 # the condition that ends this phase
         self._held = 0.0                     # how long it has held (s), for hold_fraction()
+        # Neutral pose per player: how long it has held, and this hold's
+        # (shoulder px, arm px) samples, one per frame.
+        self._neutral: dict[int, _Hold] = {}
+        self._neutral_held: dict[int, float] = {}
+        self._samples: dict[int, list[tuple[float, float]]] = {}
         # Phase lengths and the beam's hit band, for drawing (the renderer
         # reads them here instead of from the game: config).
         self.beam_charge_s = float(cfg["beam_charge_s"])
@@ -370,6 +388,9 @@ class Game:
         elif self.phase == "calibration":
             for e in state.events:
                 self._tick(e.pid, e.name, t)
+            for pid in self.round_players:
+                if self.current_move(pid) == "neutral":
+                    self._measure(state, pid, t)
         self._next_phase(state, t)
 
     # ----------------------------------------------------------------- phases
@@ -380,6 +401,9 @@ class Game:
             for pid in self.round_players:
                 player = self.get_player(pid)
                 player.move, player.move_t = 0, t if t is not None else 0.0
+            self._neutral.clear()
+            self._neutral_held.clear()
+            self._samples.clear()
 
     def _start_round(self, t: float | None) -> None:
         """A fresh round: from the countdown, or at once without the intro."""
@@ -426,6 +450,65 @@ class Game:
         """The calibration move pid has to perform next; None when all are done."""
         move = self.players[pid].move if pid in self.players else 0
         return CALIBRATION_MOVES[move] if move < len(CALIBRATION_MOVES) else None
+
+    def _measure(self, state: FrameState, pid: int, t: float) -> None:
+        """Calibration, neutral pose: one (shoulder px, arm px) sample per
+        frame in the pose. Once the pose has held neutral_s (gaps up to
+        hold_gap_s allowed), the medians are stored and the move is ticked
+        off. A hold that starts again starts with no samples."""
+        hold = self._neutral.setdefault(pid, _Hold())
+        on = self._neutral_pose(state, pid)
+        held = self._neutral_held[pid] = hold.update(on, t, self.cfg["hold_gap_s"])
+        if hold.since == t:
+            self._samples[pid] = []
+        if on:
+            m = state.motion[pid]
+            sw, arm = shoulder_px(m.kpts, m.valid), arm_px(m.kpts, m.valid)
+            if sw is not None and arm is not None:
+                self._samples.setdefault(pid, []).append((sw, arm))
+        samples = self._samples.get(pid)
+        if held >= self.cfg["neutral_s"] and samples:
+            player = self.get_player(pid)
+            player.shoulder_px, player.arm_px = (float(v) for v in np.median(samples, axis=0))
+            self._tick(pid, "neutral", t)
+
+    def _neutral_pose(self, state: FrameState, pid: int) -> bool:
+        """pid stands in the neutral pose this frame: in view, head turned at
+        most neutral_max_yaw_deg (so the shoulders show their full width),
+        upper body and hips seen, both wrists at least neutral_wrist_below_sw
+        below the shoulder line (arms down) and slower than
+        neutral_max_speed_sw (standing still)."""
+        if not self.in_view(state, pid) or pid not in state.motion:
+            return False
+        cfg, m = self.cfg, state.motion[pid]
+        if abs(math.degrees(state.faces[pid].yaw)) > cfg["neutral_max_yaw_deg"]:
+            return False
+        if not m.valid[NEUTRAL_KPTS].all():
+            return False
+        sw = shoulder_width(m.kpts, m.valid, cfg["min_shoulder_px"])
+        if sw is None:
+            return False
+        shoulder_y = (m.kpts[sk.L_SHOULDER][1] + m.kpts[sk.R_SHOULDER][1]) / 2.0
+        wrists = [sk.L_WRIST, sk.R_WRIST]
+        low = (m.kpts[wrists, 1] > shoulder_y + cfg["neutral_wrist_below_sw"] * sw).all()
+        still = (np.linalg.norm(m.vel[wrists], axis=1) < cfg["neutral_max_speed_sw"] * sw).all()
+        return bool(low and still)
+
+    def neutral_fraction(self, pid: int) -> float:
+        """How far pid's neutral-pose hold has got, 0-1 (for the panel)."""
+        return min(1.0, self._neutral_held.get(pid, 0.0) / self.cfg["neutral_s"])
+
+    def arm_sw(self, pid: int) -> float | None:
+        """pid's calibrated arm length in shoulder widths; None before calibration."""
+        player = self.players.get(pid)
+        if player is None or player.shoulder_px is None or player.arm_px is None:
+            return None
+        return player.arm_px / player.shoulder_px
+
+    def short_arm(self, pid: int) -> bool:
+        """pid's arm is short for the punch rule (under min_arm_sw)."""
+        arm = self.arm_sw(pid)
+        return arm is not None and arm < self.cfg["min_arm_sw"]
 
     def _tick(self, pid: int, gesture: str, t: float) -> None:
         """Calibration: the player's current move is ticked off by its event;
@@ -552,6 +635,7 @@ class Game:
         self._clear_round()
         for player in self.players.values():
             player.move, player.move_t = 0, 0.0
+            player.shoulder_px = player.arm_px = None
         self._enter("waiting" if self.intro else "playing", self._t)
 
     def _clear_round(self) -> None:
@@ -622,7 +706,15 @@ class Game:
 
         lines = [f"phase {self.phase} {self.phase_elapsed():.1f} s"]
         if self.phase == "calibration":
-            lines += [f"P{pid} next: {self.current_move(pid) or 'done'}" for pid in self.round_players]
+            for pid in self.round_players:
+                move = self.current_move(pid)
+                extra = f" {self.neutral_fraction(pid):.0%}" if move == "neutral" else ""
+                lines.append(f"P{pid} next: {move or 'done'}{extra}")
+        for pid in self.round_players:
+            arm = self.arm_sw(pid)
+            if arm is not None:
+                lines.append(f"P{pid} shoulders {self.players[pid].shoulder_px:.0f} px, arm {arm:.2f} sw"
+                             + (" SHORT" if self.short_arm(pid) else ""))
         lines += [f"P{pid} {action}" for pid, action in self.actions]
         if self.winner_id is not None:
             lines.append(f"P{self.winner_id} wins")
@@ -632,7 +724,9 @@ class Game:
         """CSV columns: game_phase; game_p<pid>_health, game_p<pid>_shield (1
         while it blocks), game_p<pid>_actions (this frame's actions joined by
         '+'), game_p<pid>_move (next calibration move, empty when all are
-        done); game_bolts and game_beams (in flight), game_winner (pid or empty)."""
+        done), game_p<pid>_shoulder_px, game_p<pid>_arm_px and
+        game_p<pid>_arm_sw (the calibration, empty before it); game_bolts and
+        game_beams (in flight), game_winner (pid or empty)."""
         row: dict = {"game_phase": self.phase}
         for pid, player in sorted(self.players.items()):
             pre = f"game_p{pid}_"
@@ -640,6 +734,10 @@ class Game:
             row[pre + "shield"] = int(self.shielded(pid))
             row[pre + "actions"] = "+".join(a for p, a in self.actions if p == pid)
             row[pre + "move"] = self.current_move(pid) or ""
+            arm = self.arm_sw(pid)
+            row[pre + "shoulder_px"] = "" if player.shoulder_px is None else round(player.shoulder_px, 1)
+            row[pre + "arm_px"] = "" if player.arm_px is None else round(player.arm_px, 1)
+            row[pre + "arm_sw"] = "" if arm is None else round(arm, 3)
         row["game_bolts"] = len(self.projectiles)
         row["game_beams"] = len(self.beams)
         row["game_winner"] = self.winner_id if self.winner_id is not None else ""

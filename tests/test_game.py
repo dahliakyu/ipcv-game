@@ -408,7 +408,7 @@ def test_alone_attacks_fly_towards_the_middle(game):
     assert game.beams[0].direction == -1          # right half, no one else in view
 
 
-# --- Phases (feature 12): waiting -> calibration -> countdown -> playing -> result
+# --- Phases (feature 1): waiting -> calibration -> countdown -> playing -> result
 
 @pytest.fixture
 def intro() -> Game:
@@ -440,11 +440,41 @@ def run(game: Game, t0: float, t1: float, make=lambda t: frame_state(t), dt: flo
     return t1
 
 
+def neutral(state: FrameState, pids=(1, 2)) -> FrameState:
+    """The neutral pose for pids: arms hanging down, wrists 1.6 sw below the
+    shoulders, standing still. Shoulders 100 px apart, each arm 1.6 sw
+    (80.6 + 80.2 px)."""
+    for pid in pids:
+        k = state.motion[pid].kpts
+        cx = k[sk.L_SHOULDER][0] - 50
+        k[sk.L_ELBOW], k[sk.R_ELBOW] = (cx + 60, 380), (cx - 60, 380)
+        k[sk.L_WRIST], k[sk.R_WRIST] = (cx + 65, 460), (cx - 65, 460)
+    return state
+
+
+def in_place(t: float) -> FrameState:
+    return with_faces(frame_state(t))
+
+
+def standing(t: float) -> FrameState:
+    return neutral(with_faces(frame_state(t)))
+
+
+def to_calibration(game: Game, t: float = 0.0) -> float:
+    t = run(game, t, t + game.cfg["ready_s"], in_place)
+    assert game.phase == "calibration"
+    return t
+
+
+def measured(game: Game, t: float, make=standing) -> float:
+    """Hold the neutral pose until it is measured; returns the time."""
+    return run(game, t + 0.1, t + 0.2 + game.cfg["neutral_s"], make)
+
+
 def calibrated(game: Game, t: float = 0.0) -> float:
     """Through waiting and calibration into the countdown; returns the time."""
-    t = run(game, t, t + game.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
-    assert game.phase == "calibration"
-    for move in CALIBRATION_MOVES:
+    t = measured(game, to_calibration(game, t))
+    for move in CALIBRATION_MOVES[1:]:
         t += 0.1
         game.update(frame_state(t, events=[(1, move), (2, move)]))
     assert game.phase == "countdown"
@@ -479,7 +509,11 @@ def test_hold_survives_short_gaps():
 
 
 def test_calibration_ticks_moves_in_order_and_fires_nothing(intro):
-    t = run(intro, 0.0, intro.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
+    t = to_calibration(intro)
+    assert intro.current_move(1) == intro.current_move(2) == "neutral"
+    intro.update(frame_state(t + 0.1, events=[(1, "punch")]))      # not the current move
+    assert intro.current_move(1) == "neutral" and intro.actions == []
+    t = measured(intro, t + 0.1)
     assert intro.current_move(1) == intro.current_move(2) == "punch"
     intro.update(frame_state(t + 0.1, events=[(1, "hands_up")]))   # not the current move
     assert intro.current_move(1) == "punch" and intro.actions == []
@@ -527,8 +561,10 @@ def test_new_round_and_reset_with_intro(intro):
     intro.new_round()
     assert intro.phase == "countdown" and intro.get_player(1).health == intro.max_health
     assert intro.current_move(1) is None                            # calibration kept
+    assert intro.get_player(1).shoulder_px == pytest.approx(100.0)
     intro.reset()
-    assert intro.phase == "waiting" and intro.current_move(1) == "punch"
+    assert intro.phase == "waiting" and intro.current_move(1) == "neutral"
+    assert intro.get_player(1).shoulder_px is None and intro.arm_sw(1) is None
 
 
 def test_without_intro_rounds_start_at_once(game):
@@ -540,12 +576,17 @@ def test_without_intro_rounds_start_at_once(game):
 
 
 def test_phase_in_log_and_debug_view(intro):
-    t = run(intro, 0.0, intro.cfg["ready_s"], lambda t: with_faces(frame_state(t)))
+    t = to_calibration(intro)
     row = intro.log_fields(frame_state(t))
-    assert row["game_phase"] == "calibration" and row["game_p1_move"] == "punch"
+    assert row["game_phase"] == "calibration" and row["game_p1_move"] == "neutral"
+    assert row["game_p1_arm_sw"] == ""
     canvas = np.zeros((H, W, 3), np.uint8)
     intro.draw_debug(canvas, frame_state(t))
     assert canvas.any()
+    measured(intro, t)
+    row = intro.log_fields(frame_state(t))
+    assert row["game_p1_shoulder_px"] == 100.0 and row["game_p1_arm_sw"] == pytest.approx(1.608, abs=1e-3)
+    intro.draw_debug(canvas, frame_state(t))
 
 
 def test_solo_intro_needs_only_p1():
@@ -553,7 +594,8 @@ def test_solo_intro_needs_only_p1():
     alone = lambda t: with_faces(frame_state(t, lost=(2,)))   # noqa: E731
     t = run(solo, 0.0, solo.cfg["ready_s"], alone)
     assert solo.phase == "calibration"
-    for move in CALIBRATION_MOVES:
+    t = measured(solo, t, lambda t: neutral(alone(t), pids=(1,)))
+    for move in CALIBRATION_MOVES[1:]:
         t += 0.1
         s = alone(t)
         s.events = [GestureEvent(1, move, t, 1.0), GestureEvent(2, move, t, 1.0)]
@@ -569,3 +611,70 @@ def test_places_are_taken_by_position_not_by_player_number(intro):
     assert intro.place_taken(state, 1) and intro.place_taken(state, 2)
     state = with_faces(frame_state(0.0, xs=(800.0, 200.0)), pids=(1,))
     assert not intro.place_taken(state, 1) and intro.place_taken(state, 2)   # only P1, on the right
+
+
+# --- Pose calibration (feature 1, step 4) ----------------------------------
+
+def test_neutral_pose_measures_the_medians(intro):
+    t = to_calibration(intro)
+
+    def noisy(t):
+        s = standing(t)
+        if round(t * 10) % 7 == 0:                                  # an odd frame: a wrist jumps
+            s.motion[1].kpts[sk.L_WRIST] += (0, 40)
+        return s
+    measured(intro, t, noisy)
+    p1 = intro.get_player(1)
+    assert p1.shoulder_px == pytest.approx(100.0)
+    assert p1.arm_px == pytest.approx(80.62 + 80.16, abs=0.01)     # the median ignores the odd frames
+    assert intro.arm_sw(1) == pytest.approx(1.608, abs=1e-3) and not intro.short_arm(1)
+    assert intro.actions == [] or all(a == "learned_neutral" for _, a in intro.actions)
+
+
+@pytest.mark.parametrize("change", ["wrists_up", "moving", "turned", "no_hips", "no_face"])
+def test_not_neutral(intro, change):
+    t = to_calibration(intro)
+
+    def make(t):
+        s = standing(t)
+        m = s.motion[1]
+        if change == "wrists_up":
+            m.kpts[sk.L_WRIST] = (m.kpts[sk.L_SHOULDER][0], 350)    # only 0.5 sw below the shoulders
+        elif change == "moving":
+            m.vel[sk.R_WRIST] = (150.0, 0.0)                        # 1.5 sw/s
+        elif change == "turned":
+            s.faces[1].yaw = np.radians(30)
+        elif change == "no_hips":
+            m.valid[sk.L_HIP] = False
+        elif change == "no_face":
+            del s.faces[1]
+        return s
+    measured(intro, t, make)
+    assert intro.current_move(1) == "neutral" and intro.get_player(1).shoulder_px is None
+    assert intro.current_move(2) == "punch"                         # P2 stood still
+
+
+def test_neutral_hold_starts_over_after_a_long_break(intro):
+    t = to_calibration(intro)
+    half = intro.cfg["neutral_s"] / 2
+    t = run(intro, t + 0.1, t + 0.1 + half, standing)
+    assert 0.4 < intro.neutral_fraction(1) < 0.6
+    t = run(intro, t + 0.1, t + 1.0, in_place)                     # arms up for 1 s
+    assert intro.neutral_fraction(1) == 0.0
+    run(intro, t + 0.1, t + 0.1 + half, standing)
+    assert intro.current_move(1) == "neutral"                       # half again is not enough
+
+
+def test_short_arm_is_flagged(intro):
+    t = to_calibration(intro)
+
+    def short(t):
+        s = standing(t)
+        for pid in (1, 2):
+            k = s.motion[pid].kpts
+            cx = k[sk.L_SHOULDER][0] - 50
+            k[sk.L_ELBOW], k[sk.L_WRIST] = (cx + 50, 360), (cx + 50, 420)   # 0.6 + 0.6 sw
+            k[sk.R_ELBOW], k[sk.R_WRIST] = (cx - 50, 360), (cx - 50, 420)
+        return s
+    measured(intro, t, short)
+    assert intro.arm_sw(1) == pytest.approx(1.2) and intro.short_arm(1)

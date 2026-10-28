@@ -10,7 +10,7 @@ with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
-Around the round (feature 12, docs/extra_features.md), the game's phase
+Around the round (feature 1, docs/extra_features.md), the game's phase
 decides what else is drawn: the players' start places while waiting, an
 instruction panel per player during calibration, 3-2-1 during the countdown,
 "FIGHT!" as a round starts and the result panel after a win. The top bar says
@@ -147,7 +147,7 @@ class Renderer:
     def _draw_game_over(self, canvas: np.ndarray, game: Game) -> None:
         """renderer.py's end panel: the frame dimmed, a dark panel in the
         middle framed in the winner's colour, "PLAYER N WINS!" and the keys.
-        Added (feature 12): each player's final health in their colour, and
+        Added (feature 1): each player's final health in their colour, and
         "HANDS UP TO PLAY AGAIN" with a bar that fills while everyone holds
         their hands up (game.hold_fraction())."""
         h, w = canvas.shape[:2]
@@ -233,7 +233,10 @@ class Renderer:
         and one dot per move (filled = done, white ring = now, grey = to do).
         Just after a move is done, "NICE!" with a tick for nice_s; when all
         are done, "DONE!". A move not done within remind_s: the frame
-        flashes and "TRY IT NOW!" appears."""
+        flashes and "TRY IT NOW!" appears. The neutral pose has a bar that
+        fills while it is held (game.neutral_fraction()); a player whose arm
+        measured short for the punch rule (game.short_arm()) is told to
+        stretch it fully on the punch panel."""
         x1, y1, x2, y2 = self.instruction_box(pid, len(game.round_players), canvas.shape)
         x1, y1 = max(x1, 0), max(y1, 0)
         x2, y2 = min(x2, canvas.shape[1]), min(y2, canvas.shape[0])
@@ -260,7 +263,8 @@ class Renderer:
         fig = y2 - y1 - 2 * pad                      # the figure's square
         fig_center = (x1 + pad + fig / 2, y1 + pad + fig / 2)
         if nice:
-            title, lines = "NICE!", [MOVE_TEXT[CALIBRATION_MOVES[done - 1]][0] + " LEARNED"]
+            last = CALIBRATION_MOVES[done - 1]
+            title, lines = "NICE!", ["MEASURED" if last == "neutral" else MOVE_TEXT[last][0] + " LEARNED"]
             draw_figure(canvas, CALIBRATION_MOVES[done - 1], fig_center, fig, GREY, mirror=pid == 2)
             draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
         elif move is None:
@@ -269,7 +273,11 @@ class Renderer:
             draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
         else:
             title, how, effect = MOVE_TEXT[move]
-            lines = [how, "= " + effect] + (["TRY IT NOW!"] if remind else [])
+            lines = [how, "= " + effect]
+            if move == "punch" and game.short_arm(pid):
+                lines.append("STRETCH YOUR ARM ALL THE WAY")
+            if remind:
+                lines.append("TRY IT NOW!")
             draw_figure(canvas, move, fig_center, fig, color, mirror=pid == 2)
 
         tx, text_w = x1 + 2 * pad + fig, x2 - x1 - 3 * pad - fig
@@ -286,6 +294,14 @@ class Renderer:
             cv2.putText(canvas, line, (tx, y), cv2.FONT_HERSHEY_PLAIN, sc, c, thin, cv2.LINE_8)
 
         r = max(4, int(6 * k))                       # progress dots along the bottom
+        if move == "neutral" and not nice:
+            # Under the last line of text, above the dots.
+            bar_h = max(4, int(6 * k))
+            top = min(y + int(10 * k), y2 - pad - 2 * r - int(6 * k) - bar_h)
+            cv2.rectangle(canvas, (tx, top), (tx + text_w, top + bar_h), WHITE, 1, cv2.LINE_8)
+            fill = int((text_w - 2) * game.neutral_fraction(pid))
+            if fill > 0:
+                cv2.rectangle(canvas, (tx + 1, top + 1), (tx + fill, top + bar_h - 1), color, -1)
         for i in range(len(CALIBRATION_MOVES)):
             c = (tx + r + i * 3 * r, y2 - pad - r)
             if i < done:

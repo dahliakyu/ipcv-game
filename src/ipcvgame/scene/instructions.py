@@ -1,5 +1,5 @@
 """Task 5 — pictures and text for the calibration phase's instructions
-(feature 12, docs/extra_features.md).
+(feature 1, docs/extra_features.md).
 
 Each move is shown as a stick figure drawn with OpenCV lines, so no image
 assets are needed. A figure is a few fixed joint positions in shoulder widths
@@ -32,15 +32,18 @@ ARMS = {
     "punch": {"a": ((-0.95, 0.8), (-0.35, 0.45)), "b": ((1.25, 0.0), (2.0, 0.0))},
     # Both wrists above the head.
     "hands_up": {"a": ((-0.85, -0.7), (-0.6, -1.45)), "b": ((0.85, -0.7), (0.6, -1.45))},
-    # Forearms crossed in front of the chest: each wrist past the other side.
-    "arms_crossed": {"a": ((-0.65, 0.8), (0.45, 0.25)), "b": ((0.65, 0.8), (-0.45, 0.25))},
+    # Wrists crossed in front of the chest, each just past the middle. Not
+    # the hands on the opposite shoulders: there the pose model puts each
+    # wrist back on its own side, and the rule misses the cross
+    # (docs/limitations.md).
+    "arms_crossed": {"a": ((-0.65, 0.8), (0.25, 0.4)), "b": ((0.65, 0.8), (-0.25, 0.4))},
 }
 # What each move is called, how to do it and what it does in the game.
 MOVE_TEXT = {
     "neutral": ("STAND STILL", "ARMS DOWN, FACE THE CAMERA", "MEASURING YOU"),
     "punch": ("PUNCH", "ONE ARM OUT TO THE SIDE", "FIRES A BOLT"),
     "hands_up": ("HANDS UP", "BOTH HANDS ABOVE YOUR HEAD", "MAGIC BEAM"),
-    "arms_crossed": ("CROSS ARMS", "FOREARMS IN FRONT OF CHEST", "SHIELD"),
+    "arms_crossed": ("CROSS ARMS", "CROSS WRISTS IN FRONT OF CHEST", "SHIELD"),
 }
 
 

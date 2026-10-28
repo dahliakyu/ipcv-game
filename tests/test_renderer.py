@@ -159,7 +159,7 @@ def test_health_bars_pinned_to_the_bottom_corners(game):
     assert np.all(r.draw(lost, game)[h - 60:] == player_color(2), axis=2).any()   # still shown
 
 
-# --- Screens around the round (feature 12) ---------------------------------
+# --- Screens around the round (feature 1) ---------------------------------
 
 def intro_game(**over) -> Game:
     return Game({**CFG["game"], "intro": True, **over})
@@ -219,9 +219,10 @@ def test_countdown_numbers_then_fight():
     r, game = plain(), intro_game()
     t = calibrated(game)
     assert np.all(middle(r.draw(dark(t), game)) == WHITE_PX, axis=2).any()        # "3"
-    game.update(dark(t + game.countdown_s))
+    start = t + game.countdown_s + 0.01                    # just past the countdown (float sums of t)
+    game.update(dark(start))
     assert game.phase == "playing"
-    assert np.all(middle(r.draw(dark(t + game.countdown_s), game)) == WHITE_PX, axis=2).any()  # FIGHT!
+    assert np.all(middle(r.draw(dark(start), game)) == WHITE_PX, axis=2).any()  # FIGHT!
     late = t + game.countdown_s + r.cfg["fight_s"] + 0.1
     game.update(dark(late))
     assert not np.all(middle(r.draw(dark(late), game)) == WHITE_PX, axis=2).any()
@@ -239,7 +240,7 @@ def test_result_panel_fills_while_hands_are_up():
     assert np.all(r.draw(state, game) == WHITE_PX, axis=2).sum() > empty
 
 
-# --- Instruction panels (feature 12, step 3) --------------------------------
+# --- Instruction panels (feature 1, step 3) --------------------------------
 
 def figure_kpts(pose: str) -> tuple[np.ndarray, np.ndarray]:
     """A stick figure as skeleton keypoints, 100 px per shoulder width."""
