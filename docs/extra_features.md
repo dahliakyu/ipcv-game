@@ -176,9 +176,17 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
      - In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
    - New `game:` keys: `drink_mouth_open`, `drink_mouth_closed`, `drink_catch_fw`, `drink_hold_rim`, `drink_hold_s`.
    - On `session.mp4` and `shield.mp4` (`--no-intro`, a drink every 2–3 s): no catch and nothing drunk; talking never reached a `jawOpen` of 0.5 (P1 at most 0.44, P2 0.38). Catching and drinking are covered by tests, also with one player; the clips have no drinking.
-3. **Buffs** (Task 4).
+3. **Buffs** (Task 4). *Done.*
    - HP at once; attack and defense as timed multipliers in `_apply_damage()`; replace and restart.
    - Cleared on a new round. Logged as `game_p<pid>_attack` and `_defense`.
+   - As built:
+     - `GamePlayer.attack` / `attack_left` and `defense` / `defense_left`: 1 and 0 without a buff.
+     - `_apply_drink()` runs as a drink is drunk. HP adds the value, rounded, up to `max_health`; attack and defense take the value and `drink_buff_s`, replacing a running buff of the same kind.
+     - `_tick_buffs()` counts them down in `advance()`, so only while playing; an ended buff goes back to no effect.
+     - `_apply_damage()`: damage = base × attacker's `attack` × (1 − target's `defense`), rounded, for bolts and beams alike. `Hit.damage` is the damage after the buffs.
+     - `_refresh()` clears the buffs (new round, reset).
+     - Logged as `game_p<pid>_attack`, `_attack_left`, `_defense`, `_defense_left`; `--until game` adds "atk x1.42 7s" and "def 35% 7s" to the player's label.
+   - On `session.mp4` (`--no-intro`, nobody drinks): the round is the same as before the buffs (7 and 10 hits, P1 wins with 28 HP). The buffs are covered by tests, also for one player through the log.
 4. **Look** (Task 5, `scene/renderer.py`).
    - Drink sprites (loaded on first use, like the other sprites) with the category badge.
    - The held drink at the mouth, the pick-up text, and the buff icons by the health bars.

@@ -636,8 +636,10 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   drink_hold_s: 1.0
   # Buff values from the smallest to the largest drink. hp: health at once
   # (max_health 100: a tenth to a third of the bar). attack: damage dealt
-  # times this. defense: this fraction less damage taken. Both last
-  # drink_buff_s.
+  # times this (a bolt's 10 becomes 12-16). defense: this fraction less
+  # damage taken (a bolt's 10 becomes 8-5). Both last drink_buff_s: ~10 s
+  # is a few exchanges, long enough to use, short enough to drink again.
+  # Damage = base x attacker's attack x (1 - target's defense), rounded.
   drink_hp: [10, 30]
   drink_attack: [1.2, 1.6]
   drink_defense: [0.2, 0.5]

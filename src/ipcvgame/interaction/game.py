@@ -16,6 +16,10 @@ at once. Each has a buff category (hp, attack, defense) and a random size;
 the bigger the drink, the bigger its buff value. A player drinks one only
 with the mouth (_drink_with_mouths()): a drink that touches the open mouth
 sticks to it, and closing the mouth drinks it (Game.drunk, for this frame).
+Its buff (_apply_drink()): hp heals at once; attack multiplies the damage
+the player deals and defense cuts the damage they take, each for
+drink_buff_s. A second drink of the same kind replaces the value and
+restarts the time.
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -115,6 +119,12 @@ class GamePlayer:
     shoulder_px: float | None = None
     arm_px: float | None = None
     torso_px: float | None = None
+    # Drink buffs (consumables): damage dealt times `attack`, damage taken
+    # times (1 - `defense`), each for the seconds left; 1 and 0 without one.
+    attack: float = 1.0
+    attack_left: float = 0.0
+    defense: float = 0.0
+    defense_left: float = 0.0
 
 
 @dataclass
@@ -311,6 +321,7 @@ class Game:
 
         for player in self.players.values():
             player.cooldown = max(0.0, player.cooldown - dt)
+            self._tick_buffs(player, dt)
 
         for player_id, shield in list(self.shields.items()):
             shield.age += dt
@@ -396,6 +407,30 @@ class Game:
                 drink.y += speed * dt
         self.drinks = [d for d in self.drinks if d.y - self.drink_height(d) / 2 <= self.frame_h]
 
+    def _apply_drink(self, drunk: Drunk) -> None:
+        """A drink's buff: hp heals at once (rounded, up to max_health);
+        attack and defense take the drink's value and last drink_buff_s,
+        replacing a running buff of the same kind."""
+        player = self.get_player(drunk.pid)
+        if drunk.kind == "hp":
+            player.health = min(self.max_health, player.health + int(round(drunk.value)))
+        elif drunk.kind == "attack":
+            player.attack, player.attack_left = drunk.value, self.cfg["drink_buff_s"]
+        elif drunk.kind == "defense":
+            player.defense, player.defense_left = drunk.value, self.cfg["drink_buff_s"]
+
+    @staticmethod
+    def _tick_buffs(player: GamePlayer, dt: float) -> None:
+        """Count the buffs down; an ended buff goes back to no effect."""
+        if player.attack_left > 0:
+            player.attack_left -= dt
+            if player.attack_left <= 0:
+                player.attack, player.attack_left = 1.0, 0.0
+        if player.defense_left > 0:
+            player.defense_left -= dt
+            if player.defense_left <= 0:
+                player.defense, player.defense_left = 0.0, 0.0
+
     def _track_mouth(self, state: FrameState, pid: int) -> None:
         """Mouth open or closed from MediaPipe's jawOpen score: open above
         drink_mouth_open, closed again below drink_mouth_closed (hysteresis,
@@ -438,6 +473,7 @@ class Game:
             if not self.mouth_open.get(d.held_by, False):
                 self.drinks.remove(d)
                 self.drunk.append(Drunk(d.held_by, d.kind, d.value))
+                self._apply_drink(self.drunk[-1])
                 self.actions.append((d.held_by, f"drink_{d.kind}"))
                 continue
             mx, my = f.anchors["mouth"]
@@ -502,6 +538,9 @@ class Game:
         if target.health <= 0 or self.winner_id is not None:
             return
 
+        # Drink buffs: the attacker's attack and the target's defense.
+        owner = self.players.get(owner_id)
+        damage = int(round(damage * (owner.attack if owner else 1.0) * (1.0 - target.defense)))
         target.health = max(0, target.health - damage)
         self.hits.append(Hit(target_id, owner_id, direction, damage))
         self.actions.append((target_id, "hit"))
@@ -958,6 +997,8 @@ class Game:
         player.health = self.max_health
         player.cooldown = 0.0
         player.paint_splats.clear()
+        player.attack, player.attack_left = 1.0, 0.0
+        player.defense, player.defense_left = 0.0, 0.0
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
         """The game state as plain shapes, for checking the logic (the game's
@@ -977,6 +1018,10 @@ class Game:
             left, top, right, bottom = player.bounds
             w, h = right - left, bottom - top
             label = f"P{pid} {player.health}" + (" shield" if self.shielded(pid) else "")
+            if player.attack_left > 0:
+                label += f" atk x{player.attack:.2f} {player.attack_left:.0f}s"
+            if player.defense_left > 0:
+                label += f" def {player.defense:.0%} {player.defense_left:.0f}s"
             draw_bbox(canvas, player.bounds, player_color(pid), label, dashed=True)
             for splat in player.paint_splats:
                 c = (left + splat.x * w, top + splat.y * h)
@@ -1069,6 +1114,10 @@ class Game:
             body = self.body_yaw.get(pid)
             row[pre + "body_yaw"] = "" if body is None else round(body, 1)
             row[pre + "mouth_open"] = int(self.mouth_open.get(pid, False))
+            row[pre + "attack"] = round(player.attack, 3)
+            row[pre + "attack_left"] = round(player.attack_left, 2)
+            row[pre + "defense"] = round(player.defense, 3)
+            row[pre + "defense_left"] = round(player.defense_left, 2)
             row[pre + "holding"] = next((d.kind for d in self.drinks if d.held_by == pid), "")
         row["game_level"] = int(self.level)
         row["game_line_gap"] = "" if self.line_gap is None else round(self.line_gap, 3)

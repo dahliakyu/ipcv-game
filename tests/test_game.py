@@ -1063,3 +1063,84 @@ def test_no_drinking_outside_playing():
     g.update(mouths(0.0, {1: 0.9}))
     g.update(mouths(0.1, {1: 0.9}))
     assert d.held_by is None and g.mouth_open[1]
+
+
+# --- Drink buffs -----------------------------------------------------------
+
+from ipcvgame.interaction.game import Drunk  # noqa: E402
+
+
+def bolt_damage(g: Game, owner: int = 1, target: int = 2) -> int:
+    before = g.get_player(target).health
+    x, direction = (300, 1) if owner == 1 else (600, -1)
+    g.attack(x, 500, direction, player_id=owner)
+    g.advance(0.3, {1, 2})
+    return before - g.get_player(target).health
+
+
+def test_hp_drink_heals_up_to_the_maximum(arena):
+    p = arena.get_player(1)
+    p.health = 50
+    arena._apply_drink(Drunk(1, "hp", 18.4))
+    assert p.health == 68
+    arena._apply_drink(Drunk(1, "hp", 30.0))
+    assert p.health == 98
+    arena._apply_drink(Drunk(1, "hp", 30.0))
+    assert p.health == arena.max_health
+
+
+def test_attack_drink_multiplies_damage_until_it_ends(arena):
+    arena._apply_drink(Drunk(1, "attack", 1.42))
+    assert bolt_damage(arena) == 14
+    arena.advance(arena.cfg["drink_buff_s"], {1, 2})
+    assert arena.get_player(1).attack == 1.0
+    assert bolt_damage(arena) == 10
+
+
+def test_defense_drink_cuts_damage_taken(arena):
+    arena._apply_drink(Drunk(2, "defense", 0.3))
+    assert bolt_damage(arena) == 7
+    assert arena.hits[-1].damage == 7
+    arena._apply_drink(Drunk(1, "defense", 0.3))              # P1's defense: not P2's damage dealt
+    assert bolt_damage(arena) == 7
+
+
+def test_attack_and_defense_together(arena):
+    arena._apply_drink(Drunk(1, "attack", 1.6))
+    arena._apply_drink(Drunk(2, "defense", 0.5))
+    assert bolt_damage(arena) == 8                            # 10 x 1.6 x 0.5
+    arena.beam_attack(300, 500, 1, player_id=1)
+    arena.advance(0.35, {1, 2})
+    before = arena.get_player(2).health
+    arena.advance(0.15, {1, 2})
+    assert before - arena.get_player(2).health == round(arena.cfg["beam_damage"] * 1.6 * 0.5)
+
+
+def test_same_kind_replaces_the_value_and_restarts_the_time(arena):
+    arena._apply_drink(Drunk(1, "attack", 1.6))
+    arena.advance(6.0, {1, 2})
+    arena._apply_drink(Drunk(1, "attack", 1.2))
+    p = arena.get_player(1)
+    assert (p.attack, p.attack_left) == (1.2, arena.cfg["drink_buff_s"])
+    arena.advance(6.0, {1, 2})
+    assert p.attack == 1.2                                    # still running: restarted
+
+
+def test_buffs_end_with_the_round(arena):
+    arena._apply_drink(Drunk(1, "attack", 1.5))
+    arena._apply_drink(Drunk(2, "defense", 0.4))
+    arena.new_round()
+    p1, p2 = arena.get_player(1), arena.get_player(2)
+    assert (p1.attack, p1.attack_left, p2.defense, p2.defense_left) == (1.0, 0.0, 0.0, 0.0)
+
+
+def test_one_player_drinks_a_buff_and_sees_it_in_the_log():
+    g = drink_game(**NO_SPAWN)
+    g.update(mouths(0.0, {1: 0.9}, xs=(200.0,)))
+    drink_at(g, 200.0, 240.0, "defense").value = 0.35
+    g.update(mouths(0.1, {1: 0.9}, xs=(200.0,)))
+    g.update(mouths(0.2, {1: 0.0}, xs=(200.0,)))
+    row = g.log_fields(mouths(0.2, {1: 0.0}, xs=(200.0,)))
+    assert row["game_p1_defense"] == 0.35 and row["game_p1_defense_left"] == pytest.approx(
+        g.cfg["drink_buff_s"] - 0.0, abs=0.11)
+    assert row["game_p1_attack"] == 1.0
