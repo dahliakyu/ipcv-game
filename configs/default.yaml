@@ -600,6 +600,35 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # against the neutral pose (Game.body_yaw_deg()): cos(30) = 0.87, the
   # shoulders look 13% narrower. Not checked before the calibration.
   act_max_body_yaw_deg: 30.0
+  # --- Drinks (consumables, extra_features.md feature 2). They fall only
+  # while playing. A new one every drink_every_s (random in this range, s):
+  # often enough to matter in a ~1-2 minute round, rare enough that
+  # fighting stays the main thing.
+  drink_every_s: [6.0, 10.0]
+  # At most this many in the air at once, so the frame does not fill up.
+  drink_max: 2
+  # Time to fall through the whole frame height (s), at a constant speed:
+  # slow, so a player sees one coming and can get their head under it.
+  drink_fall_s: 4.0
+  # Base height of a drink as a fraction of the frame height (~1 face
+  # height for players at ~2.3 m on session.mp4), times its random size
+  # factor from drink_size. Bigger drinks are easier to catch and give more.
+  drink_h: 0.1
+  drink_size: [0.7, 1.4]
+  # Drinks appear at a random x this fraction of the width away from the
+  # frame edges, where players can reach them.
+  drink_margin_w: 0.1
+  # Buff values from the smallest to the largest drink. hp: health at once
+  # (max_health 100: a tenth to a third of the bar). attack: damage dealt
+  # times this. defense: this fraction less damage taken. Both last
+  # drink_buff_s.
+  drink_hp: [10, 30]
+  drink_attack: [1.2, 1.6]
+  drink_defense: [0.2, 0.5]
+  drink_buff_s: 10.0
+  # Seed of the drinks' random generator: a number replays the same drinks
+  # every run (tests, clip comparisons); null = different every game.
+  drink_seed: null
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player

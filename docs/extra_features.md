@@ -48,7 +48,7 @@ Renumbered twice on 2026-10-28, the second time when the face effects were built
 | Game start: built, recorded in `merge_log.md` ("Game start") | — | 12 |
 | Face effects: built, recorded in `merge_log.md` ("Face effects") | 1 | 1 (team colour), 2 (hit reaction), 3 (status above the head), 7 (cheek bulge) |
 | 1. Final smash | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
-| 2. Consumables | 3 | 6 |
+| 2. Consumables (drinks, redesigned 2026-10-28) | 3 | 6 |
 | 3. Aiming the normal attack | 4 | 11 |
 | 4. Normal attack as splashed paint | 5 | 13 (paint stains where the hit landed) |
 | 5. Both players attacking at once | 6 | 14 |
@@ -108,41 +108,70 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 - Blink: on the webcam, a deliberate blink always ends the rain; looking down at the floor for 2 s does not; turning away ends it. Log blinks and the rain's length per attack, and count false blinks on the clips.
 - Attack: the rain follows the opponent at the set speed; standing still takes every drop, a quick long step out avoids some; the rain never lasts past the cap; the shield blocks the drops while it is up.
 
-### 2. Consumables, Smash Bros style
+### 2. Consumables: drinks caught with the mouth
 
-**What.** Items drop from the sky during the round. A player can **eat** a falling item by catching it with their mouth (chomp), or, once it has landed, **grab** it from the floor with a hand. Each item has an effect tied to the existing mechanics. Power items raise the attack level, which decides who gets the shot when both players attack at once (feature 5).
+**What.** Drinks fall from the sky during the round. A player drinks one by catching it with their open mouth and closing it. Each drink gives one of three buffs: **HP**, **attack** or **defense**. Drinks fall in random sizes, and a bigger drink gives a bigger buff. The attack buff also decides who gets the shot when both players attack at once (feature 5).
 
 **Owners.**
 
-- Task 4: spawning, physics, pick-up rules and effects in `interaction/game.py`; the `bite` event in `interaction/gestures.py`.
-- Task 1: mouth state (`jawOpen`, `anchors["mouth"]`).
-- Task 2: wrist and ankle keypoints.
-- Task 5: item sprites.
+- Task 4: spawning, falling, the mouth rule (open, catch, close), the buffs and their effect on damage, in `interaction/game.py`.
+- Task 1: mouth state (`jawOpen`, `anchors["mouth"]`); the cheek bulge on drinking (`FaceEffects.bulge()`).
+- Task 5: drink sprites, category icons, buff display and pick-up text in the renderer.
 
-**Design.**
+**Design (decided 2026-10-28).**
 
-- **Spawning.** Every 6–10 s (random), one item appears at a random x over the play area, above the top of the frame, and falls with gravity (~1 frame height per 1.5 s at the end).
-- **Eating.** The mouth is open when `jawOpen` > 0.5, and closed again below 0.25 (hysteresis).
-  - An item that enters a circle of ~0.6 face widths around `anchors["mouth"]` while the mouth is open is "in the mouth": it stops falling and sticks to the mouth.
-  - Closing the mouth eats it (`bite` event). An item not eaten within 1 s drops again.
-  - Eating puffs the eater's cheeks: on each `bite`, call `FaceEffects.bulge(pid, t)` (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)). It is the bulge's only trigger; grabbing an item from the floor does not start it.
-  - The mouth anchor follows head tilt, so players can lean to catch items.
-- **Floor.** The floor line is the larger y of the players' ankle keypoints, smoothed. A landed item lies there for 5 s, blinks for the last second, and disappears.
-- **Grabbing.** A wrist keypoint within ~0.5 shoulder widths of the item for 0.2 s picks it up (crouching works naturally). Grabbed items take effect at once.
-- **Item types**, using the existing mechanics:
+- **Spawning.** Only while playing. Every 6–10 s (random), one drink appears at a random x over the play area, just above the top of the frame. At most two drinks are in the air at once.
+- **Falling.** Slowly and at a constant speed (one frame height in ~4 s), so a player can get under it. A drink that falls out of the bottom of the frame is gone.
+- **Size and value.** Each drink gets a random size factor (e.g. 0.7–1.4 × the base size, a fraction of the frame height). Its buff value scales linearly with the size, from the category's smallest to its largest value.
+- **Drinking: only with the mouth.** There is no grabbing with the hands.
+  - The mouth is open when `jawOpen` > 0.5, and closed again below 0.25 (hysteresis, per player).
+  - A drink that touches the open mouth (within ~0.6 face widths of `anchors["mouth"]`, plus the drink's half size) sticks to the mouth and stops falling.
+  - Closing the mouth drinks it. A drink not drunk within 1 s falls on again.
+  - The mouth anchor follows head tilt, so players can lean to catch drinks. Talking does not drink anything that is not at the mouth.
+  - Drinking puffs the drinker's cheeks: `FaceEffects.bulge(pid, t)` (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)), its only trigger.
+- **Buff categories.** Each uses its own drinks from `assets/Fancy Drinks/`, in colours that do not look like the team colours (red P1, blue P2), with an icon on the drink:
 
-  | Item | Effect |
-  | --- | --- |
-  | Paint thinner | +20 HP and removes some paint splats |
-  | Shield snack | an immediate shield (`activate_shield`) |
-  | Chili (power item) | +1 attack level for ~15 s, up to 3: more damage per blob, and the blob wins a clash (feature 5). Another chili adds a level and restarts the time |
-  | Rotten item | splashes the eater with paint (−10 HP): a risk when grabbing blindly |
+  | Category | Drinks | Icon | Effect (value from the size) |
+  | --- | --- | --- | --- |
+  | HP | green: Lime Lemonade, Cucumber Water, Power Up | green "+" | +10 to +30 HP at once, up to the maximum |
+  | Attack | orange: Orange Juice, Tropic Cider, Poolside | orange lightning bolt | ×1.2 to ×1.6 damage dealt, for ~10 s |
+  | Defense | purple: Midnight, Pomegranate, Neon Night | purple shield | 20% to 50% less damage taken, for ~10 s |
 
-- **Attack level** (`GamePlayer.attack`, 1 without items): shown as small flames by the health bar, one per level, fading in the last 2 s.
-- **Feedback.** Eating triggers the cheek bulge (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)); grabbing a short sparkle at the wrist.
-- **Sprites (candidate):** `assets/Fancy Drinks/` (64 × 64 and 128 × 128 drinks and glasses, by Savannah; its Read Me states no licence). Not in git yet; add it with a README credit before using it.
+- **Stacking.** Another drink of the same category replaces the running buff's value and restarts its time.
+- **Damage with buffs:** damage = base damage × the attacker's attack multiplier × (1 − the target's defense), rounded.
+- **Look.**
+  - Falling drinks: the sprite at its size, with the category icon in a small badge.
+  - On drinking: "+18 HP", "ATTACK ×1.4" or "DEFENSE 35%" rises from the drinker's head in the category colour.
+  - Running attack and defense buffs: an icon with the value by the player's health bar, with a bar for the time left, fading in the last 2 s.
+- **Sprites:** `assets/Fancy Drinks/` (64 × 64 drinks, by Savannah). Its Read Me states no licence: check the pack's download page, and credit it in the README before the final ZIP.
 
-**Check.** Items can be eaten and grabbed on the webcam; an item cannot be taken twice; mouth movements while talking do not eat items that are not near the mouth.
+**Implementation steps.** One step at a time, each checked by the Task 5 owner before the next. Every new number goes in the module's config section with a reason.
+
+1. **Falling drinks** (Task 4, `interaction/game.py`; plain shapes in `--until game`). *Done.*
+   - `Drink` (position, category, size factor, value, sprite index) and spawning with a seedable random generator, only while playing, at most `drink_max` at once.
+   - Constant-speed fall; gone below the frame; cleared on a new round and on reset.
+   - Logged as `game_drinks`; drawn as circles with the category letter in `draw_debug()`.
+   - As built: `Drink` has `x`, `y` (centre, px), `kind`, `size`, `value` and `variant` (0–1). With `variant`, the renderer picks one of the category's sprites, so the game needs no sprite list.
+     - `_advance_drinks()` runs inside `advance()`, so only while playing and not after a win. It counts `_drink_wait` down and spawns a drink when it is due and fewer than `drink_max` are in the air; when it is full, the next drink comes as soon as there is room.
+     - `_spawn_drink()`: a random category and size; the value is linear in the size; a random x between the `drink_margin_w` margins; the drink starts just above the frame. `drink_height()` gives its height on screen.
+     - The random generator is seeded from `drink_seed` (null: different every game). `_clear_round()` clears the drinks and draws a new wait.
+     - In `--until game`: a circle of the drink's size in the category colour (`DRINK_DEBUG_COLORS`: green, orange, purple), with its letter and value.
+   - New `game:` keys, all with reasons: `drink_every_s`, `drink_max`, `drink_fall_s`, `drink_h`, `drink_size`, `drink_margin_w`, `drink_hp`, `drink_attack`, `drink_defense`, `drink_buff_s`, `drink_seed`. The buff values and time are used from step 3 on.
+   - On `session.mp4` (`--no-intro`, seed 3): drinks at 7.0, 15.7, 25.7 and 32.3 s; at the base size a drink is about as tall as a player's head.
+2. **Drinking with the mouth** (Task 4, from Task 1's face data).
+   - Mouth open/closed per player from `jawOpen`, with hysteresis; a held drink follows the mouth anchor.
+   - Catch, drink on closing, drop again after `drink_hold_s`.
+   - `Game.drunk` (pid, category, value) for this frame, logged as the action `drink_<category>`. The renderer calls `FaceEffects.bulge()` for each.
+3. **Buffs** (Task 4).
+   - HP at once; attack and defense as timed multipliers in `_apply_damage()`; replace and restart.
+   - Cleared on a new round. Logged as `game_p<pid>_attack` and `_defense`.
+4. **Look** (Task 5, `scene/renderer.py`).
+   - Drink sprites (loaded on first use, like the other sprites) with the category badge.
+   - The held drink at the mouth, the pick-up text, and the buff icons by the health bars.
+   - The README credit for the sprites.
+5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's. Then the feature moves to `merge_log.md`.
+
+**Check.** A drink cannot be drunk twice or by both players; talking without a drink at the mouth drinks nothing; each buff changes the damage as designed and ends on time; bigger drinks give bigger values.
 
 ### 3. Aiming the normal attack: a pointing laser and paint blobs towards the opponent
 
@@ -199,7 +228,7 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 ### 5. Both players attacking at the same time: the stronger attack gets the shot
 
-**What.** Make simultaneous attacks fair and visible, and link them to the consumables (feature 2): power items raise a player's attack level, and when both attack at once, the higher attack level gets the shot. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
+**What.** Make simultaneous attacks fair and visible, and link them to the consumables (feature 2): an attack drink raises a player's attack multiplier, and when both attack at once, the higher attack multiplier gets the shot. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
 
 - bolts and beams fly through each other, and both hits land;
 - when both hits would finish the round in the same frame, the attack fired first wins: `_apply_damage()` ignores everything once `winner_id` is set, so the order of the `projectiles` list decides.
@@ -208,7 +237,7 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 **Design.**
 
-- **Attack level:** `GamePlayer.attack`, 1 without items, raised by power items (feature 2).
+- **Attack level:** the attack multiplier from the consumables (feature 2), 1 without an attack drink.
 - **Blob meets blob:** two blobs (feature 4) of different players whose paths cross in a frame (x segments overlap, y within the blob's size):
   - the blob with the higher attack level flies on and hits; the other bursts at the meeting point, a splash in mid-air in its colour;
   - with equal levels, both burst, with a splash in both team colours.

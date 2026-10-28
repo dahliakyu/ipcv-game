@@ -10,6 +10,11 @@ shield blocks them. At 0 health the attacker wins and the game freezes.
 Every hit that does damage is also kept in ``Game.hits`` for that frame,
 for the face effects' hit reaction (docs/merge_log.md, "Face effects").
 
+Drinks (consumables, extra_features.md feature 2): while playing, drinks
+fall from the top of the frame, one every drink_every_s, at most drink_max
+at once. Each has a buff category (hp, attack, defense) and a random size;
+the bigger the drink, the bigger its buff value.
+
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
 (punch -> bolt, hands up -> beam, arms crossed -> shield), then advances the
@@ -52,6 +57,11 @@ from ipcvgame.pose.measure import arm_px, shoulder_px, torso_px
 from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
 PHASES = ("waiting", "calibration", "countdown", "playing", "result")
+# Buff categories of the drinks; their values are drink_<kind> in the config.
+DRINK_KINDS = ("hp", "attack", "defense")
+# Category colours (BGR) for --until game: green, orange, purple, away from
+# the team colours (red, blue).
+DRINK_DEBUG_COLORS = {"hp": (80, 200, 60), "attack": (30, 140, 255), "defense": (200, 60, 160)}
 # The moves taught in the calibration phase, in this order: the neutral pose
 # (measured by the game), then the gesture event names.
 CALIBRATION_MOVES = ("neutral", "punch", "hands_up", "arms_crossed")
@@ -146,6 +156,17 @@ class Hit:
 
 
 @dataclass
+class Drink:
+    """A falling drink (consumables). The renderer picks the sprite."""
+    x: float          # centre, px
+    y: float          # centre, px
+    kind: str         # "hp" | "attack" | "defense"
+    size: float       # size factor (drink_size), times drink_h of the frame height
+    value: float      # buff value, from the size (drink_<kind>)
+    variant: float    # 0-1: which of the category's drinks is drawn
+
+
+@dataclass
 class Shield:
     x: float
     y: float
@@ -221,6 +242,12 @@ class Game:
         self.shield_fade_s = float(cfg["shield_fade_s"])
         self.bolt_end_s = float(cfg["bolt_end_s"])
         self.splat_band = (float(cfg["splat_band"][0]), float(cfg["splat_band"][1]))
+        # Drinks (consumables): in the air now, a seedable random generator
+        # (drink_seed; null = a different game every time) and the time to
+        # the next one (s), counted down while playing.
+        self.drinks: list[Drink] = []
+        self._rng = random.Random(cfg["drink_seed"])
+        self._drink_wait = self._rng.uniform(*cfg["drink_every_s"])
 
     def get_player(self, player_id: int) -> GamePlayer:
         if player_id not in self.players:
@@ -273,6 +300,8 @@ class Game:
             if shield.remaining <= -cfg["shield_fade_s"]:
                 del self.shields[player_id]
 
+        self._advance_drinks(dt)
+
         active_player_ids = set(self.players) if visible_player_ids is None else visible_player_ids
         for end in self.bolt_ends:
             end.age += dt
@@ -313,6 +342,40 @@ class Game:
             if beam.age < charge + cfg["beam_duration_s"]:
                 active_beams.append(beam)
         self.beams = active_beams
+
+    def drink_height(self, drink: Drink) -> float:
+        """A drink's height on screen (px)."""
+        return self.cfg["drink_h"] * self.frame_h * drink.size
+
+    def _spawn_drink(self) -> Drink:
+        """A new drink just above the top of the frame, at a random x in the
+        play area, of a random category and size. Its value goes linearly
+        from the category's smallest (smallest size) to largest value."""
+        cfg, rng = self.cfg, self._rng
+        lo, hi = cfg["drink_size"]
+        size = rng.uniform(lo, hi)
+        kind = rng.choice(DRINK_KINDS)
+        v0, v1 = cfg[f"drink_{kind}"]
+        value = v0 + (v1 - v0) * (size - lo) / (hi - lo)
+        margin = cfg["drink_margin_w"]
+        drink = Drink(rng.uniform(margin, 1.0 - margin) * self.frame_w, 0.0, kind, size, value,
+                      rng.random())
+        drink.y = -self.drink_height(drink) / 2
+        return drink
+
+    def _advance_drinks(self, dt: float) -> None:
+        """Spawn a drink when one is due (and fewer than drink_max are in the
+        air; else as soon as there is room), let all fall at a constant
+        speed, and drop those below the frame."""
+        cfg = self.cfg
+        self._drink_wait -= dt
+        if self._drink_wait <= 0 and len(self.drinks) < cfg["drink_max"]:
+            self.drinks.append(self._spawn_drink())
+            self._drink_wait = self._rng.uniform(*cfg["drink_every_s"])
+        speed = self.frame_h / cfg["drink_fall_s"]
+        for drink in self.drinks:
+            drink.y += speed * dt
+        self.drinks = [d for d in self.drinks if d.y - self.drink_height(d) / 2 <= self.frame_h]
 
     def _find_projectile_target(self, projectile: Projectile, previous_x: float,
                                 visible_player_ids: set[int]) -> int | None:
@@ -794,6 +857,8 @@ class Game:
         self.beams.clear()
         self.shields.clear()
         self.hits.clear()
+        self.drinks.clear()
+        self._drink_wait = self._rng.uniform(*self.cfg["drink_every_s"])
         self.winner_id = None
         self.not_facing_t.clear()
 
@@ -808,7 +873,8 @@ class Game:
         and shield; splats as dots; bolts as dots with a tail and an x where
         they ended; beams as a line with their hit band (a growing circle while
         charging); shields as an ellipse beside the player (thin while
-        fading); this frame's actions and the winner."""
+        fading); drinks as a circle of their size with the category's
+        letter; this frame's actions and the winner."""
         unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid), 1)
@@ -853,6 +919,11 @@ class Game:
             axes = (int(1.5 * unit), int(0.3 * h))
             cv2.ellipse(canvas, center, axes, 0, 0, 360, player_color(pid),
                         3 if shield.remaining > 0 else 1, cv2.LINE_AA)
+
+        for d in self.drinks:
+            r = int(self.drink_height(d) / 2)
+            cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_DEBUG_COLORS[d.kind], 2, cv2.LINE_AA)
+            draw_lines(canvas, [f"{d.kind[0].upper()} {d.value:.2f}"], (int(d.x) - r, int(d.y) + 5))
 
         lines = [f"phase {self.phase} {self.phase_elapsed():.1f} s"]
         if self.phase == "calibration":
@@ -903,5 +974,6 @@ class Game:
         row["game_line_gap"] = "" if self.line_gap is None else round(self.line_gap, 3)
         row["game_bolts"] = len(self.projectiles)
         row["game_beams"] = len(self.beams)
+        row["game_drinks"] = len(self.drinks)
         row["game_winner"] = self.winner_id if self.winner_id is not None else ""
         return row

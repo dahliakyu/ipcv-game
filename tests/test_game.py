@@ -840,3 +840,80 @@ def test_calibration_move_counts_only_facing_the_camera():
     assert g.current_move(1) == "punch" and g.actions == [(1, "not_facing_punch")]
     g.update(with_faces(frame_state(t + 0.2, events=[(1, "punch")])))
     assert g.current_move(1) == "hands_up"
+
+
+# --- Drinks (consumables, extra_features.md feature 2) ---------------------
+
+def drink_game(**over) -> Game:
+    g = Game({**load_config()["game"], "intro": False, "drink_seed": 1, **NO_FACING, **over})
+    g.frame_w, g.frame_h = 1000, 1000
+    return g
+
+
+def test_drinks_fall_one_by_one_up_to_the_maximum():
+    g = drink_game(drink_every_s=[1.0, 1.0], drink_fall_s=100.0)
+    g.advance(0.9)
+    assert g.drinks == []
+    g.advance(0.2)
+    assert len(g.drinks) == 1
+    for _ in range(10):
+        g.advance(1.0)
+    assert len(g.drinks) == g.cfg["drink_max"]
+
+
+def test_drink_starts_above_the_frame_and_falls_at_constant_speed():
+    g = drink_game(drink_every_s=[0.0, 0.0], drink_max=1)
+    g.advance(0.0)
+    (d,) = g.drinks
+    lo, hi = g.cfg["drink_margin_w"], 1 - g.cfg["drink_margin_w"]
+    assert lo * 1000 <= d.x <= hi * 1000
+    assert d.y == pytest.approx(-g.drink_height(d) / 2)
+    y0 = d.y
+    g.advance(0.5)
+    g.advance(0.5)
+    assert d.y == pytest.approx(y0 + 1000 / g.cfg["drink_fall_s"])
+
+
+def test_drink_is_gone_below_the_frame():
+    g = drink_game(drink_every_s=[0.0, 0.0], drink_max=1)
+    g.advance(0.0)
+    d = g.drinks[0]
+    g._drink_wait = 1e9                                   # no new drinks
+    for _ in range(int(g.cfg["drink_fall_s"] * 10) + 20):
+        g.advance(0.1)
+    assert d not in g.drinks and g.drinks == []
+
+
+def test_bigger_drinks_give_bigger_values():
+    g = drink_game()
+    lo, hi = g.cfg["drink_size"]
+    seen = {}
+    for _ in range(300):
+        d = g._spawn_drink()
+        v0, v1 = g.cfg[f"drink_{d.kind}"]
+        assert d.value == pytest.approx(v0 + (v1 - v0) * (d.size - lo) / (hi - lo))
+        assert lo <= d.size <= hi
+        seen[d.kind] = seen.get(d.kind, 0) + 1
+    assert set(seen) == {"hp", "attack", "defense"}
+
+
+def test_drinks_only_while_playing_and_cleared_by_a_new_round():
+    g = Game({**load_config()["game"], "drink_every_s": [0.0, 0.0], **NO_FACING})   # intro: waiting
+    for i in range(5):
+        g.update(frame_state(i * 0.1))
+    assert g.phase == "waiting" and g.drinks == []
+    g = drink_game(drink_every_s=[0.0, 0.0])
+    for i in range(3):
+        g.update(frame_state(i * 0.1))
+    assert g.drinks and g.log_fields(frame_state(0.3))["game_drinks"] == len(g.drinks)
+    g.new_round()
+    assert g.drinks == []
+
+
+def test_same_seed_same_drinks():
+    def drinks():
+        g = drink_game(drink_every_s=[0.5, 2.0])
+        for _ in range(40):
+            g.advance(0.1)
+        return [(round(d.x), d.kind, round(d.size, 3)) for d in g.drinks]
+    assert drinks() == drinks()
