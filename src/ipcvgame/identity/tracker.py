@@ -36,13 +36,25 @@ Changed from bodypose.py (merge_log, Task 3):
 - New players take the lowest free id, so reset(pid) frees that id.
 - Seconds instead of frames (NEW_PLAYER_CONFIRMATION = 5 frames).
 
+Game start (feature 1, docs/extra_features.md, step 5), called by the
+pipeline:
+- When calibration starts, `order_left_to_right()` renumbers the players by
+  where they stand, so P1 is the one in the left start place: players are
+  numbered in the order they were first seen, which need not match. Their
+  vectors and track links move with them, and they come out as `reentered`
+  on the next update, so the other modules drop their per-player state.
+- When a player's neutral pose is measured, `refresh_vector()` replaces
+  their stored vector with one from that frame: standing apart and facing
+  the camera, a cleaner reference than the first sight, which may be from
+  walking in at an angle.
+
 backend "zones" is the phase-1 stub: Player 1 = best detection in the left
 half of the screen, Player 2 = best in the right half; no model needed (tests).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -106,6 +118,9 @@ class IdentityTracker:
         self._sim: dict[int, float] = {}                    # this frame's OSNet similarity per pid
         self._new_best_sim: float | None = None             # best similarity of a new track this frame
         self._osnet_runs = 0                                # OSNet crops this frame
+        self._renumbered: set[int] = set()                  # reentered on the next update
+        self._vector_wanted: set[int] = set()               # refresh_vector() still to do
+        self.calibrated: set[int] = set()                   # vector from the neutral pose
 
     # ------------------------------------------------------------------ reid
 
@@ -133,7 +148,10 @@ class IdentityTracker:
             if pid is not None:
                 seen[pid] = dets[i]
 
-        relinked = self._check_and_update(frame, seen)
+        relinked = self._check_and_update(frame, seen) | self._renumbered
+        self._renumbered = set()
+        for pid in sorted(self._vector_wanted & set(seen)):
+            self._take_vector(frame, pid, seen[pid])
 
         occluded = {pid: tracks.lost[tid] for tid, pid in self.track_to_player.items()
                     if tid in tracks.lost and pid not in seen}
@@ -307,6 +325,54 @@ class IdentityTracker:
             pending.last_try_t = -np.inf     # pid is free to be found again right away
         return {other}
 
+    # ------------------------------------------------------------ game start
+
+    def order_left_to_right(self, xs: dict[int, float]) -> set[int]:
+        """Renumber the players in xs (pid -> x position in px) so that the
+        lowest number is the leftmost, the next one the next, and so on.
+        Players not in xs keep their numbers. Their stored vectors, track
+        links and pending vector refreshes move with them. Returns the new
+        numbers that changed; they are `reentered` on the next update, since
+        the player behind each of them is someone else now."""
+        if self.backend != "reid":
+            return set()            # zones: P1 is always the left half already
+        new = dict(zip(sorted(xs, key=xs.get), sorted(xs), strict=True))
+        changed = {old: n for old, n in new.items() if old != n}
+        if not changed:
+            return set()
+
+        def renumber(pid: int) -> int:
+            return changed.get(pid, pid)
+        self.embeddings = {renumber(p): v for p, v in self.embeddings.items()}
+        self.last_update_t = {renumber(p): v for p, v in self.last_update_t.items()}
+        self.track_to_player = {t: renumber(p) for t, p in self.track_to_player.items()}
+        self.players = {renumber(p): replace(pl, pid=renumber(p)) for p, pl in self.players.items()}
+        self.calibrated = {renumber(p) for p in self.calibrated}
+        self._vector_wanted = {renumber(p) for p in self._vector_wanted}
+        self._sim = {}
+        self._renumbered |= set(changed.values())
+        return set(changed.values())
+
+    def refresh_vector(self, pid: int, frame: Frame) -> None:
+        """Replace pid's stored vector with one from this frame's crop. If the
+        crop is not usable now (another person overlaps it, or pid is not
+        active), it is taken on the first update where it is."""
+        if self.backend != "reid" or pid not in self.embeddings:
+            return
+        self._vector_wanted.add(pid)
+        p = self.players.get(pid)
+        if p is not None and p.status == "active":
+            self._take_vector(frame, pid, p.det)
+
+    def _take_vector(self, frame: Frame, pid: int, det: PoseDetection) -> None:
+        person = self._clear_crop(frame, det)
+        if person is None:
+            return
+        self.embeddings[pid] = self._embed(person)
+        self.last_update_t[pid] = frame.t
+        self._vector_wanted.discard(pid)
+        self.calibrated.add(pid)
+
     # ----------------------------------------------------------------- zones
 
     def _update_zones(self, dets: list[PoseDetection], frame: Frame) -> dict[int, Player]:
@@ -349,6 +415,8 @@ class IdentityTracker:
         self.players.pop(pid, None)
         self.embeddings.pop(pid, None)
         self.last_update_t.pop(pid, None)
+        self.calibrated.discard(pid)
+        self._vector_wanted.discard(pid)
         self.track_to_player = {tid: p for tid, p in self.track_to_player.items() if p != pid}
 
     def _track_of(self) -> dict[int, int]:
@@ -370,6 +438,8 @@ class IdentityTracker:
                 label += f" t{track_of[p.pid]}"
             if p.pid in self._sim:
                 label += f" sim {self._sim[p.pid]:.2f}"
+            if p.pid in self.calibrated:
+                label += " cal"
             if p.reentered:
                 label += " REENTER"
             draw_bbox(canvas, p.bbox, player_color(p.pid), label, dashed=p.status != "active")
@@ -385,9 +455,10 @@ class IdentityTracker:
         identity_p<pid>_track: BoT-SORT track id linked to the player, empty
         when none; identity_p<pid>_sim: OSNet similarity this frame (a match
         or a vector update), empty when OSNet did not run for the player;
-        identity_new_best_sim: best similarity of a track without a player to
-        any stored player (shows how close a returning player came to
-        reid_threshold); identity_pending: tracks without a player;
+        identity_p<pid>_calibrated: 1 once the stored vector is from the
+        neutral pose (refresh_vector), else 0; identity_new_best_sim: best
+        similarity of a track without a player to any stored player (shows
+        how close a returning player came to reid_threshold); identity_pending: tracks without a player;
         identity_osnet_runs: OSNet crops this frame (cost)."""
         if self.backend != "reid":
             return {}
@@ -396,6 +467,7 @@ class IdentityTracker:
         for pid in sorted(self.players):
             row[f"identity_p{pid}_track"] = track_of.get(pid, "")
             row[f"identity_p{pid}_sim"] = self._sim.get(pid, "")
+            row[f"identity_p{pid}_calibrated"] = int(pid in self.calibrated)
         row["identity_new_best_sim"] = "" if self._new_best_sim is None else self._new_best_sim
         row["identity_pending"] = sum(tid not in self.track_to_player for tid, _ in self._tracks.active)
         row["identity_osnet_runs"] = self._osnet_runs

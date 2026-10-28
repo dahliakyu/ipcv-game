@@ -89,7 +89,9 @@ class Pipeline:
 
         if self._runs("game"):
             with prof("game"):
+                phase = self.game.phase
                 self.game.update(state)
+            self._calibrate_identity(state, phase)
 
         with prof("render"):
             if self.until is None or self.until == "render":
@@ -102,6 +104,25 @@ class Pipeline:
                 draw_timings(canvas, state.timings)
         prof.end_frame()
         return state, canvas
+
+    def _calibrate_identity(self, state: FrameState, phase_before: str) -> None:
+        """Game start (feature 1, step 5): the game tells identity who is who.
+
+        - Calibration has just started: P1 becomes the player in the left
+          start place, P2 the one in the right, so the place colours and the
+          player colours match (identity numbers players in the order it
+          first sees them). With one round player there is nothing to order.
+        - A player's neutral pose was just measured: their stored OSNet
+          vector is replaced with one from this frame.
+        """
+        game = self.game
+        if phase_before == "waiting" and game.phase == "calibration":
+            xs = {pid: game.player_x(state, pid) for pid in game.round_players
+                  if game.in_view(state, pid)}
+            self.identity.order_left_to_right(xs)
+        for pid, action in game.actions:
+            if action == "learned_neutral":
+                self.identity.refresh_vector(pid, state.frame)
 
     def log_fields(self, state: FrameState) -> dict:
         """Extra CSV columns from modules that define log_fields(state)."""

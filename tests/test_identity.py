@@ -394,3 +394,87 @@ def test_check_does_not_swap_on_one_doubtful_crop():
     players = step(ident, tr, 0.7, [(det(20), GREEN), (det(250), GREEN)], [1, 2])
     assert ident.track_to_player == {1: 1, 2: 2}
     assert not players[1].reentered and not players[2].reentered
+
+
+# --- Game start (feature 1, step 5): P1 on the left, vector from the neutral pose
+
+def two_players(ident, tr):
+    """BLUE is seen first on the right (P1), GREEN on the left (P2)."""
+    right, left = det(300), det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(right, BLUE)], [1])
+    for t in (0.2, 0.35):
+        players = step(ident, tr, t, [(right, BLUE), (left, GREEN)], [1, 2])
+    assert players[1].det is right and players[2].det is left
+    return right, left
+
+
+def test_order_left_to_right_renumbers_players():
+    ident, tr = make(update_every_s=100.0)
+    right, left = two_players(ident, tr)
+    assert ident.order_left_to_right({1: 330.0, 2: 50.0}) == {1, 2}
+    players = step(ident, tr, 0.4, [(right, BLUE), (left, GREEN)], [1, 2])
+    assert players[1].det is left and players[2].det is right
+    assert players[1].reentered and players[2].reentered      # other modules start over
+    assert ident.track_to_player == {1: 2, 2: 1}
+    np.testing.assert_allclose(ident.embeddings[1], [0, 1, 0], atol=1e-6)   # GREEN's vector moved to P1
+    players = step(ident, tr, 0.45, [(right, BLUE), (left, GREEN)], [1, 2])
+    assert not players[1].reentered and not players[2].reentered
+
+
+def test_order_left_to_right_keeps_players_already_in_order():
+    ident, tr = make(update_every_s=100.0)
+    right, left = two_players(ident, tr)
+    assert ident.order_left_to_right({1: 50.0, 2: 330.0}) == set()
+    assert ident.order_left_to_right({2: 50.0}) == set()      # one player: nothing to order
+    players = step(ident, tr, 0.4, [(right, BLUE), (left, GREEN)], [1, 2])
+    assert not players[1].reentered and players[1].det is right
+
+
+def test_refresh_vector_replaces_first_sight():
+    ident, tr = make(update_every_s=100.0)
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    first = ident.embeddings[1].copy()
+    now = scene(0.2, [(a, (255, 60, 0))])                     # a bit different from the first sight
+    step(ident, tr, 0.2, [(a, (255, 60, 0))], [1])
+    ident.refresh_vector(1, now)
+    assert ident.calibrated == {1}
+    assert ident.embeddings[1] @ first < 0.99
+    assert ident.log_fields(None)["identity_p1_calibrated"] == 1
+
+
+def test_refresh_vector_waits_for_a_clear_crop():
+    """Another person overlaps the crop: the vector is taken on the first
+    update where the crop is clear."""
+    ident, tr = make(update_every_s=100.0)
+    a, b = det(20), det(250)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE), (b, GREEN)], [1, 2])
+    near = det(60)                                            # overlaps a
+    people = [(a, BLUE), (near, GREEN)]
+    step(ident, tr, 0.2, people, [1, 2])
+    ident.refresh_vector(1, scene(0.2, people))
+    assert ident.calibrated == set()
+    step(ident, tr, 0.25, [(a, BLUE), (b, GREEN)], [1, 2])
+    assert ident.calibrated == {1}
+
+
+def test_reset_forgets_calibration():
+    ident, tr = make(update_every_s=100.0)
+    a = det(20)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(a, BLUE)], [1])
+    ident.refresh_vector(1, scene(0.15, [(a, BLUE)]))
+    ident.reset(1)
+    assert ident.calibrated == set()
+    ident.reset()
+    assert ident.calibrated == set()
+
+
+def test_zones_backend_ignores_game_start():
+    ident = IdentityTracker({"backend": "zones", "max_players": 2})
+    assert ident.order_left_to_right({1: 300.0, 2: 20.0}) == set()
+    ident.refresh_vector(1, scene(0, []))
+    assert ident.calibrated == set()

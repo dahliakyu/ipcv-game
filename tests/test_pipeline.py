@@ -73,3 +73,35 @@ def test_until_each_stage(until, monkeypatch):
     state, canvas = p.step(frame(0))
     assert canvas.shape == (H, W, 3)
     assert bool(state.players) == (STAGES.index(until) >= STAGES.index("identity"))
+
+
+class RecordingIdentity:
+    def __init__(self):
+        self.ordered, self.refreshed = [], []
+
+    def order_left_to_right(self, xs):
+        self.ordered.append(xs)
+
+    def refresh_vector(self, pid, frame):
+        self.refreshed.append(pid)
+
+
+def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
+    """Feature 1, step 5: ordered by position when calibration starts; a new
+    vector when a player's neutral pose is measured."""
+    rec = RecordingIdentity()
+    pipeline.identity = rec
+    game = pipeline.game
+    monkeypatch.setattr(game, "in_view", lambda state, pid: True)
+    monkeypatch.setattr(game, "player_x", lambda state, pid: {1: 500.0, 2: 100.0}[pid])
+    state = FrameState(frame(0), {}, {}, {}, [], {})
+
+    game.phase = "calibration"
+    pipeline._calibrate_identity(state, "waiting")
+    assert rec.ordered == [{1: 500.0, 2: 100.0}]
+    pipeline._calibrate_identity(state, "calibration")      # only when it starts
+    assert len(rec.ordered) == 1
+
+    game.actions = [(2, "learned_neutral"), (1, "learned_punch")]
+    pipeline._calibrate_identity(state, "calibration")
+    assert rec.refreshed == [2]

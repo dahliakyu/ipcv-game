@@ -526,14 +526,18 @@ class Game:
         first sees them, not by where they stand."""
         n, w = len(self.round_players), state.frame.image.shape[1]
         lo, hi = (place - 1) / n * w, place / n * w
-        for pid, p in state.players.items():
-            if not self.in_view(state, pid):
-                continue
-            pos = self.body_position(state.motion[pid]) if pid in state.motion else None
-            x = pos[0] if pos is not None else (p.bbox[0] + p.bbox[2]) / 2.0
-            if lo <= x < hi:
-                return True
-        return False
+        return any(lo <= self.player_x(state, pid) < hi
+                   for pid in state.players if self.in_view(state, pid))
+
+    def player_x(self, state: FrameState, pid: int) -> float:
+        """Where pid stands (px): the shoulder midpoint, or the box centre
+        without shoulders. Decides the start places, and P1 / P2 when
+        calibration starts (app/pipeline.py)."""
+        pos = self.body_position(state.motion[pid]) if pid in state.motion else None
+        if pos is not None:
+            return pos[0]
+        bbox = state.players[pid].bbox
+        return float(bbox[0] + bbox[2]) / 2.0
 
     @staticmethod
     def in_view(state: FrameState, pid: int) -> bool:
