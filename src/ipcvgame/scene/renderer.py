@@ -10,7 +10,7 @@ with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
-Around the round (feature 1, docs/extra_features.md), the game's phase
+Around the round (game start, docs/merge_log.md), the game's phase
 decides what else is drawn: the players' start places while waiting, an
 instruction panel per player during calibration, 3-2-1 during the countdown,
 "FIGHT!" as a round starts and the result panel after a win. The top bar says
@@ -147,7 +147,7 @@ class Renderer:
     def _draw_game_over(self, canvas: np.ndarray, game: Game) -> None:
         """renderer.py's end panel: the frame dimmed, a dark panel in the
         middle framed in the winner's colour, "PLAYER N WINS!" and the keys.
-        Added (feature 1): each player's final health in their colour, and
+        Added (game start): each player's final health in their colour, and
         "HANDS UP TO PLAY AGAIN" with a bar that fills while everyone holds
         their hands up (game.hold_fraction())."""
         h, w = canvas.shape[:2]

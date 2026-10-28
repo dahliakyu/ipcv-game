@@ -194,7 +194,7 @@ Velocities are the finite difference of the smoothed points. `motion.backend: st
 - [x] Re-entry and position swaps checked on edited copies of `data/clips/session.mp4` (merge log, Task 3, step 5).
 - [ ] Record real crossing, occlusion and re-entry clips; hand-label who is who; `tools/eval_identity.py` counts ID switches.
 - [ ] Check `reid_threshold` (0.6) on re-entry clips: on the fitness test clip (similar clothes, lying down) same-player similarities are often lower.
-- [ ] `pos` as `(x, depth)` in metres (calibration from shoulder width or box height); still `(0, 0)`.
+- [x] `pos` as `(x, depth)` in metres, by the pinhole model from the shoulder width, and from the torso length after the game's calibration (`docs/merge_log.md`, "Game start", step 6). The field of view and shoulder width in `identity:` are assumed values; check them on the webcam at a measured distance.
 - [ ] Optional: Hungarian matching instead of greedy; baseline comparison with plain ByteTrack.
 
 ### Task 4: Interaction — owner: ____________
@@ -219,13 +219,13 @@ Hands up and crossed must hold for 0.03 s to turn on, and stay on until their ru
 - **`hands_up` → beam:** a magic ball between the hands charges for 0.35 s, then a beam grows across the frame for 0.8 s, 12 damage, each player hit once; one beam per player at a time;
 - **`arms_crossed` → shield:** a ring of fire on the chest for 1 s that blocks bolts and beams, then fades.
 
-A hit lowers health (100) and adds paint splats; at 0 the attacker wins and the round stops until `r` (a new round with the same players). Only `active` players can be hit; time comes from `Frame.t`. Positions are pixels; speeds and sizes are fractions of the frame in `game:`. The game keeps only state; `scene/renderer.py` draws it, and `--until game` shows it as plain shapes.
+A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, the moves learned one at a time while the game measures each player, and a 3-2-1 countdown; `--no-intro` skips it. A hit lowers health (100) and adds paint splats; at 0 the attacker wins, and both players' hands up for 2 s (or `r`) start the next round with the same players. Only `active` players can be hit; time comes from `Frame.t`. Positions are pixels; speeds and sizes are fractions of the frame in `game:`. The game keeps only state; `scene/renderer.py` draws it, and `--until game` shows it as plain shapes.
 
 - [x] Combat from `game.py` in pixels, with its tests; the shield blocks (new).
 - [x] Events to actions from `main.py`; bolts from the punching hand; one action at a time.
 - [x] `log_fields`: `game_p<pid>_health`, `_shield`, `_actions`, `game_bolts`, `game_beams`, `game_winner`.
 - [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 7); the other features are there too.
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 6); the other features are there too.
 
 ### Task 5: Integration — owner: @el
 
@@ -279,8 +279,6 @@ Record with `python tools/record_clip.py <name>`. Each clip is stored with its `
 | `fast_arms` | Fast arm movements | | | ☐ |
 | `low_light` | Poor lighting | | | ☐ |
 
-## Known limitations of the current stubs
+## Known limitations
 
-These are expected, and each goes away when its stub is replaced:
-
-- `Player.pos` is always `(0, 0)` in the CSV logs.
+The limits of the current version, with evidence and possible improvements, are in [limitations.md](../limitations.md).

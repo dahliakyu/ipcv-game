@@ -85,6 +85,9 @@ class RecordingIdentity:
     def refresh_vector(self, pid, frame):
         self.refreshed.append(pid)
 
+    def set_body_reference(self, pid, shoulder, torso):
+        self.refs = {pid: (shoulder, torso)}
+
 
 def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
     """Feature 1, step 5: ordered by position when calibration starts; a new
@@ -102,6 +105,7 @@ def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
     pipeline._calibrate_identity(state, "calibration")      # only when it starts
     assert len(rec.ordered) == 1
 
+    game.get_player(2).shoulder_px, game.get_player(2).torso_px = 80.0, 150.0
     game.actions = [(2, "learned_neutral"), (1, "learned_punch")]
     pipeline._calibrate_identity(state, "calibration")
-    assert rec.refreshed == [2]
+    assert rec.refreshed == [2] and rec.refs == {2: (80.0, 150.0)}

@@ -159,7 +159,7 @@ def test_health_bars_pinned_to_the_bottom_corners(game):
     assert np.all(r.draw(lost, game)[h - 60:] == player_color(2), axis=2).any()   # still shown
 
 
-# --- Screens around the round (feature 1) ---------------------------------
+# --- Screens around the round (game start) ---------------------------------
 
 def intro_game(**over) -> Game:
     return Game({**CFG["game"], "intro": True, **over})
@@ -240,7 +240,7 @@ def test_result_panel_fills_while_hands_are_up():
     assert np.all(r.draw(state, game) == WHITE_PX, axis=2).sum() > empty
 
 
-# --- Instruction panels (feature 1, step 3) --------------------------------
+# --- Instruction panels (game start, step 3) --------------------------------
 
 def figure_kpts(pose: str) -> tuple[np.ndarray, np.ndarray]:
     """A stick figure as skeleton keypoints, 100 px per shoulder width."""

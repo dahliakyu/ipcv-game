@@ -99,6 +99,25 @@ identity:                 # Task 3 — Colour Clash identity (bodypose.py Player
   # Only update when the player's box overlaps no other detection (IoU above
   # this): the other person would be in the crop.
   update_max_iou: 0.0
+  # Player.pos, (x, depth) in metres, by the pinhole model (game start, step
+  # 6; identity/tracker.py): depth = f * shoulder_m / shoulder width in px.
+  # Horizontal field of view of the webcam (degrees), which gives the focal
+  # length f = (width / 2) / tan(hfov / 2) in px. ~70 is typical for a
+  # 720p/1080p webcam (Logitech C920: 78 diagonal, ~70 horizontal); set it
+  # to the demo camera's value from its spec.
+  camera_hfov_deg: 70.0
+  # Real shoulder width (m), assumed the same for every player: adult
+  # surveys give about 0.37 m for women and 0.41 m for men (biacromial
+  # breadth), so a player's depth can be off by ~5% either way, and more if
+  # the pose model's shoulder points sit inside the shoulder tips. Check it
+  # once on the webcam at a measured distance.
+  shoulder_m: 0.39
+  # Shoulder and hip keypoints count for the position at this confidence or
+  # more: the same as motion.kpt_conf_threshold for the smoothed keypoints.
+  pos_kpt_conf: 0.35
+  # Time constant (s) of the EMA on the position: the keypoints jitter by a
+  # few px per frame, a few percent of the depth; 0.3 s still follows a step.
+  pos_tau_s: 0.3
   # BoT-SORT on the pose boxes (identity/tracks.py), from Colour Clash
   # Project/botsort.yaml (Ultralytics' defaults) with two changes, marked.
   botsort:
@@ -432,7 +451,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # A bolt's end point (a hit, a shield or the frame edge) is kept this long,
   # so the renderer can play its break-up there (game.Game.bolt_ends).
   bolt_end_s: 0.25
-  # --- Game phases (feature 1, docs/extra_features.md): waiting ->
+  # --- Game phases (game start, docs/merge_log.md): waiting ->
   # calibration -> countdown -> playing -> result. false = no waiting,
   # calibration or countdown: the game plays at once, as before (tests, and
   # clips recorded without the intro, e.g. data/clips/session.mp4).
@@ -535,7 +554,7 @@ render:
   # End of the game: the frame behind renderer.py's panel is darkened to this
   # fraction, so the panel stands out and nothing looks frozen.
   game_over_dim: 0.5
-  # --- Screens around the round (feature 1, docs/extra_features.md).
+  # --- Screens around the round (game start, docs/merge_log.md).
   # Waiting: each player's start place, a box this wide (fraction of the
   # frame width) in their half of the frame; 0.3 is about a player with
   # arms down at the usual distance. From just under the top bar to just

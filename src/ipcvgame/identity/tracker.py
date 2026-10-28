@@ -36,7 +36,7 @@ Changed from bodypose.py (merge_log, Task 3):
 - New players take the lowest free id, so reset(pid) frees that id.
 - Seconds instead of frames (NEW_PLAYER_CONFIRMATION = 5 frames).
 
-Game start (feature 1, docs/extra_features.md, step 5), called by the
+Game start (docs/merge_log.md, "Game start", step 5), called by the
 pipeline:
 - When calibration starts, `order_left_to_right()` renumbers the players by
   where they stand, so P1 is the one in the left start place: players are
@@ -46,7 +46,17 @@ pipeline:
 - When a player's neutral pose is measured, `refresh_vector()` replaces
   their stored vector with one from that frame: standing apart and facing
   the camera, a cleaner reference than the first sight, which may be from
-  walking in at an angle.
+  walking in at an angle. `set_body_reference()` stores the measured shoulder
+  width and torso length for the position below.
+
+Player.pos (step 6): (x, depth) in metres from the pinhole model, depth =
+f * S / s, with f the focal length in px (from camera_hfov_deg), S the real
+shoulder width (shoulder_m, assumed the same for everyone) and s the
+shoulder width in px. After calibration, the depth at calibration (facing the
+camera) is the reference, and it is scaled by the torso length instead:
+depth = depth_cal * torso_cal / torso. The torso does not shrink when the
+player turns, the shoulder width does. x is the shoulder midpoint's offset
+from the image centre, x_px * depth / f. Smoothed with an EMA (pos_tau_s).
 
 backend "zones" is the phase-1 stub: Player 1 = best detection in the left
 half of the screen, Player 2 = best in the right half; no model needed (tests).
@@ -54,13 +64,16 @@ half of the screen, Player 2 = best in the right half; no model needed (tests).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 
 import numpy as np
 
 from ipcvgame.core import skeleton as sk
+from ipcvgame.core.filters import EMA
 from ipcvgame.core.geometry import bbox_center, bbox_iou, crop
 from ipcvgame.core.types import Frame, FrameState, Player, PoseDetection
+from ipcvgame.pose.measure import shoulder_px, torso_px
 from ipcvgame.scene.draw import draw_bbox, draw_text, player_color
 
 # A track is identified only when one of these is visible (min_face_conf).
@@ -121,6 +134,8 @@ class IdentityTracker:
         self._renumbered: set[int] = set()                  # reentered on the next update
         self._vector_wanted: set[int] = set()               # refresh_vector() still to do
         self.calibrated: set[int] = set()                   # vector from the neutral pose
+        self.body_ref: dict[int, tuple[float, float]] = {}  # (shoulder px, torso px) at calibration
+        self._pos_ema: dict[int, EMA] = {}
 
     # ------------------------------------------------------------------ reid
 
@@ -159,10 +174,10 @@ class IdentityTracker:
             prev = self.players.get(pid)
             if pid in seen:
                 det = seen[pid]
+                reentered = prev is not None and (prev.status == "lost" or pid in relinked)
                 self.players[pid] = Player(
                     pid=pid, status="active", det=det, bbox=det.bbox.copy(),
-                    pos=np.zeros(2),  # (x, depth) in metres not estimated yet
-                    reentered=prev is not None and (prev.status == "lost" or pid in relinked),
+                    pos=self._position(pid, det, frame, prev, reentered), reentered=reentered,
                 )
             else:
                 status = "occluded" if pid in occluded else "lost"
@@ -348,6 +363,8 @@ class IdentityTracker:
         self.track_to_player = {t: renumber(p) for t, p in self.track_to_player.items()}
         self.players = {renumber(p): replace(pl, pid=renumber(p)) for p, pl in self.players.items()}
         self.calibrated = {renumber(p) for p in self.calibrated}
+        self.body_ref = {renumber(p): v for p, v in self.body_ref.items()}
+        self._pos_ema = {}
         self._vector_wanted = {renumber(p) for p in self._vector_wanted}
         self._sim = {}
         self._renumbered |= set(changed.values())
@@ -363,6 +380,36 @@ class IdentityTracker:
         p = self.players.get(pid)
         if p is not None and p.status == "active":
             self._take_vector(frame, pid, p.det)
+
+    def set_body_reference(self, pid: int, shoulder: float, torso: float) -> None:
+        """pid's shoulder width and torso length (px) measured in the
+        neutral pose: from now on the depth follows the torso length."""
+        self.body_ref[pid] = (shoulder, torso)
+
+    def _position(self, pid: int, det: PoseDetection, frame: Frame, prev: Player | None,
+                  reentered: bool) -> np.ndarray:
+        """Player.pos, (x, depth) in metres (see the module docstring). Keeps
+        the last value when neither the torso nor the shoulders are usable."""
+        if reentered:
+            self._pos_ema.pop(pid, None)
+        held = prev.pos.copy() if prev is not None else np.zeros(2)
+        cfg, w = self.cfg, frame.image.shape[1]
+        f = (w / 2) / math.tan(math.radians(cfg["camera_hfov_deg"]) / 2)
+        good = det.conf >= cfg["pos_kpt_conf"]
+        sw, torso = shoulder_px(det.kpts, good), torso_px(det.kpts, good)
+        ref = self.body_ref.get(pid)
+        if ref is not None and torso:
+            depth = f * cfg["shoulder_m"] / ref[0] * ref[1] / torso
+        elif sw:
+            depth = f * cfg["shoulder_m"] / sw
+        else:
+            return held
+        if sw is not None:
+            x_px = (det.kpts[sk.L_SHOULDER][0] + det.kpts[sk.R_SHOULDER][0]) / 2.0
+        else:
+            x_px = bbox_center(det.bbox)[0]
+        pos = np.array([(x_px - w / 2) * depth / f, depth])
+        return self._pos_ema.setdefault(pid, EMA(cfg["pos_tau_s"]))(pos, frame.t)
 
     def _take_vector(self, frame: Frame, pid: int, det: PoseDetection) -> None:
         person = self._clear_crop(frame, det)
@@ -389,10 +436,10 @@ class IdentityTracker:
             prev = self.players.get(pid)
             det = best.get(pid)
             if det is not None:
+                reentered = prev is not None and prev.status == "lost"
                 self.players[pid] = Player(
                     pid=pid, status="active", det=det, bbox=det.bbox.copy(),
-                    pos=np.zeros(2),  # stub: (x, depth) in metres not estimated yet
-                    reentered=prev is not None and prev.status == "lost",
+                    pos=self._position(pid, det, frame, prev, reentered), reentered=reentered,
                 )
             elif prev is not None:
                 self.players[pid] = Player(
@@ -417,6 +464,8 @@ class IdentityTracker:
         self.last_update_t.pop(pid, None)
         self.calibrated.discard(pid)
         self._vector_wanted.discard(pid)
+        self.body_ref.pop(pid, None)
+        self._pos_ema.pop(pid, None)
         self.track_to_player = {tid: p for tid, p in self.track_to_player.items() if p != pid}
 
     def _track_of(self) -> dict[int, int]:
@@ -438,6 +487,8 @@ class IdentityTracker:
                 label += f" t{track_of[p.pid]}"
             if p.pid in self._sim:
                 label += f" sim {self._sim[p.pid]:.2f}"
+            if p.pos[1] > 0:
+                label += f" {p.pos[1]:.1f} m"
             if p.pid in self.calibrated:
                 label += " cal"
             if p.reentered:

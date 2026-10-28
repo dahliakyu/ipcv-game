@@ -101,7 +101,8 @@ def scene(t, people) -> Frame:
 
 CFG = {"backend": "reid", "max_players": 2, "reid_threshold": 0.6, "new_player_s": 0.13, "min_face_conf": 0.5,
        "min_crop_h": 40, "min_crop_w": 20, "retry_s": 0.5, "update_every_s": 0.5,
-       "update_weight": 0.1, "update_min_sim": 0.5, "update_max_iou": 0.0}
+       "update_weight": 0.1, "update_min_sim": 0.5, "update_max_iou": 0.0,
+       "camera_hfov_deg": 90.0, "shoulder_m": 0.4, "pos_kpt_conf": 0.35, "pos_tau_s": 0.0}
 
 
 def make(**over):
@@ -396,7 +397,7 @@ def test_check_does_not_swap_on_one_doubtful_crop():
     assert not players[1].reentered and not players[2].reentered
 
 
-# --- Game start (feature 1, step 5): P1 on the left, vector from the neutral pose
+# --- Game start (step 5): P1 on the left, vector from the neutral pose
 
 def two_players(ident, tr):
     """BLUE is seen first on the right (P1), GREEN on the left (P2)."""
@@ -474,7 +475,49 @@ def test_reset_forgets_calibration():
 
 
 def test_zones_backend_ignores_game_start():
-    ident = IdentityTracker({"backend": "zones", "max_players": 2})
+    ident = IdentityTracker({**CFG, "backend": "zones"})
     assert ident.order_left_to_right({1: 300.0, 2: 20.0}) == set()
     ident.refresh_vector(1, scene(0, []))
     assert ident.calibrated == set()
+
+
+# --- Player.pos (game start, step 6): pinhole model
+
+def body(cx, sw, torso, conf=1.0) -> PoseDetection:
+    """Shoulders sw px apart at y=50, hips torso px below them."""
+    k = np.zeros((sk.K, 2))
+    k[sk.L_SHOULDER], k[sk.R_SHOULDER] = (cx - sw / 2, 50), (cx + sw / 2, 50)
+    k[sk.L_HIP], k[sk.R_HIP] = (cx - sw / 4, 50 + torso), (cx + sw / 4, 50 + torso)
+    return PoseDetection(np.array([cx - 30, 20, cx + 30, 180.0]), k, np.full(sk.K, conf), 0.9)
+
+
+def test_position_from_shoulder_width():
+    """90 degree field of view on a 400 px frame: f = 200 px. Shoulders
+    0.4 m wide and 40 px in the image: 2 m away; 100 px right of the image
+    centre at 2 m: 1 m."""
+    ident, tr = make(update_every_s=100.0)
+    a = body(300, 40, 60)
+    for t in (0.0, 0.15):
+        players = step(ident, tr, t, [(a, BLUE)], [1])
+    np.testing.assert_allclose(players[1].pos, [1.0, 2.0])
+
+
+def test_position_follows_the_torso_after_calibration():
+    """Calibrated facing the camera (shoulders 40 px, torso 60 px: 2 m). A
+    turn halves the shoulder width but not the torso: still 2 m."""
+    ident, tr = make(update_every_s=100.0)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(body(200, 40, 60), BLUE)], [1])
+    ident.set_body_reference(1, 40.0, 60.0)
+    turned = step(ident, tr, 0.2, [(body(200, 20, 60), BLUE)], [1])[1]
+    assert turned.pos[1] == pytest.approx(2.0)
+    closer = step(ident, tr, 0.25, [(body(200, 60, 90), BLUE)], [1])[1]
+    assert closer.pos[1] == pytest.approx(2.0 * 60 / 90)
+
+
+def test_position_kept_without_usable_keypoints():
+    ident, tr = make(update_every_s=100.0)
+    for t in (0.0, 0.15):
+        step(ident, tr, t, [(body(200, 40, 60), BLUE)], [1])
+    p = step(ident, tr, 0.2, [(body(200, 40, 60, conf=0.1), BLUE)], [1])[1]
+    np.testing.assert_allclose(p.pos, [0.0, 2.0])

@@ -1,11 +1,12 @@
 """Task 2 — body measurements from the smoothed keypoints, for the pose
-calibration (feature 1, docs/extra_features.md).
+calibration (game start, docs/merge_log.md).
 
 While a player stands in the neutral pose, the game (interaction/game.py)
 collects one sample per frame and keeps the median, which ignores the odd
-frame where a keypoint jumps. Both are in pixels at the player's distance
+frame where a keypoint jumps. All are in pixels at the player's distance
 from the camera; their ratio (arm length in shoulder widths) does not depend
-on that distance, like the gesture rules (interaction/gestures.py).
+on that distance, like the gesture rules (interaction/gestures.py). Identity
+uses the shoulder width and torso length as its depth reference.
 """
 
 from __future__ import annotations
@@ -32,3 +33,15 @@ def arm_px(kpts: np.ndarray, valid: np.ndarray) -> float | None:
     lengths = [float(np.linalg.norm(kpts[e] - kpts[s]) + np.linalg.norm(kpts[w] - kpts[e]))
                for s, e, w in ARMS if valid[s] and valid[e] and valid[w]]
     return float(np.mean(lengths)) if lengths else None
+
+
+def torso_px(kpts: np.ndarray, valid: np.ndarray) -> float | None:
+    """Torso length (px): shoulder midpoint to hip midpoint. Unlike the
+    shoulder width, it does not shrink when the player turns away from the
+    camera, so identity uses it for the depth after calibration
+    (identity/tracker.py). None unless both shoulders and both hips are valid."""
+    if not all(valid[j] for j in (sk.L_SHOULDER, sk.R_SHOULDER, sk.L_HIP, sk.R_HIP)):
+        return None
+    shoulders = (kpts[sk.L_SHOULDER] + kpts[sk.R_SHOULDER]) / 2.0
+    hips = (kpts[sk.L_HIP] + kpts[sk.R_HIP]) / 2.0
+    return float(np.linalg.norm(shoulders - hips))

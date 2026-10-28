@@ -1,5 +1,5 @@
 """Task 5 — pictures and text for the calibration phase's instructions
-(feature 1, docs/extra_features.md).
+(game start, docs/merge_log.md).
 
 Each move is shown as a stick figure drawn with OpenCV lines, so no image
 assets are needed. A figure is a few fixed joint positions in shoulder widths

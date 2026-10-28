@@ -408,7 +408,7 @@ def test_alone_attacks_fly_towards_the_middle(game):
     assert game.beams[0].direction == -1          # right half, no one else in view
 
 
-# --- Phases (feature 1): waiting -> calibration -> countdown -> playing -> result
+# --- Phases (game start): waiting -> calibration -> countdown -> playing -> result
 
 @pytest.fixture
 def intro() -> Game:
@@ -613,7 +613,7 @@ def test_places_are_taken_by_position_not_by_player_number(intro):
     assert not intro.place_taken(state, 1) and intro.place_taken(state, 2)   # only P1, on the right
 
 
-# --- Pose calibration (feature 1, step 4) ----------------------------------
+# --- Pose calibration (game start, step 4) ----------------------------------
 
 def test_neutral_pose_measures_the_medians(intro):
     t = to_calibration(intro)

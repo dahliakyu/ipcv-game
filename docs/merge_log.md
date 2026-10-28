@@ -1627,3 +1627,130 @@ The bar below each body (Task 4 modifications) moved with the player and changed
 **Changed:** `configs/default.yaml`, `render:` section: `bar_w` (0.3 of the frame width, leaving the middle for the key line) replaces `bar_face_widths`, `bar_shoulder_widths` and `bar_length_tau_s`.
 
 **Changed:** `tests/test_renderer.py`: the three bar-geometry and smoothing tests are replaced by one: P1's bar bottom left and P2's bottom right wherever they stand, P2 filling from the right edge, and the bar still shown for a player out of view.
+
+## Game start: instructions and pose calibration
+
+The first feature built from the backlog in `docs/extra_features.md` (feature 12 there, the "Feature 12:" and "Feature 1:" commits), by the Task 5 owner on 2026-10-28. It touches Task 2 (`pose/measure.py`), Task 3 (`identity/tracker.py`), Task 4 (`interaction/game.py`) and Task 5 (`scene/`, `app/`); each step names the files it touched.
+
+### Plan
+
+**What.** A game UI around the round. Before, the game started the moment the players were seen. Now there is a start screen, a short phase in which each player learns the moves while the game measures them, a countdown, and a result screen.
+
+**Decisions (Task 5 owner, 2026-10-28).**
+
+- **Phases:** `waiting` → `calibration` → `countdown` → `playing` → `result`. Damage, bolts and beams only count in `playing`.
+- **Play again:** from `result`, both players with hands up for ~2 s (or key `r`) go straight to `countdown`. The same players keep their calibration, so they do not see the instructions again. Key `R` (full reset) goes back to `waiting`, and identity forgets the players too.
+- **Start places by position:** a start place is ticked in its team colour once someone stands in that half of the frame with a visible face, whoever it is. Identity numbers players in the order it first sees them, so ticking by player number would show the wrong colour.
+- **One move at a time per player,** on a panel on the player's own half: the neutral pose, then punch, hands up and arms crossed. Each move shows a stick figure and its effect, and is ticked off when its gesture event arrives. A move not done within ~8 s flashes as a reminder. Nothing fires, so the phase doubles as a practice round.
+- **Pose calibration** in the neutral pose (arms down, facing the camera, ~2 s): shoulder width, arm length and torso length per player, as medians over the frames. They let the game check gesture thresholds per player (a short arm), and they are the depth reference for `Player.pos`.
+- **Identity at calibration:** P1 becomes the player in the left place, and the OSNet vector from the neutral pose replaces the first-sight vector.
+- **Depth in metres** by the pinhole model, with the webcam's field of view and an average shoulder width as assumed values in config.
+- **Testing without the intro:** `--no-intro` plays from the first frame, for clips recorded without the intro. `--solo` runs the intro with one player.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved.
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Game phases (Task 4).
+2. Waiting, countdown and result screens (Task 5).
+3. Instruction panels (Task 5).
+4. Pose calibration (Task 2 measurements, Task 4 rules).
+5. Identity at calibration (Task 3).
+6. Depth reference (Task 3, `Player.pos`).
+7. Docs; webcam check by the Task 5 owner.
+
+### Changes
+
+#### Step 1 · Game phases
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `Game.phase` with the five phases (`PHASES`), the time the phase started, `phase_elapsed()` and `countdown_left()`. `_next_phase()` moves on:
+  - `waiting` → `calibration`: every start place taken for `ready_s` (`place_taken()`: someone active with a face, by shoulder midpoint, in that half of the frame);
+  - `calibration` → `countdown`: every round player has done every move;
+  - `countdown` → `playing`: after `countdown_s`;
+  - `playing` → `result`: a winner;
+  - `result` → `countdown`: every round player holds hands up for `replay_hold_s`.
+- Holds (`_Hold`) survive dropouts shorter than `hold_gap_s`. Hands up for the replay uses the gesture rule `detect_hands_up()` per frame, because an event only marks its start.
+- In `calibration`, gesture events tick off the player's current move (`_tick()`, logged as the action `learned_<move>`) instead of firing; `advance()` runs only in `playing`. `GamePlayer.move` / `move_t` hold each player's progress; `current_move(pid)` gives the next move.
+- `new_round()` (key `r`) starts from the countdown with the same players; `reset()` (key `R`) clears the moves too and goes back to `waiting`. With `game.intro: false` both go straight to `playing`, as before.
+- `game.round_players`: the players the intro waits for (2, or 1 for `--solo`).
+- The phase is shown in `--until game` and logged as `game_phase`, the next move as `game_p<pid>_move`.
+
+**Changed:** `src/ipcvgame/app/main.py`: `--no-intro` (`game.intro=false`) and `--solo` (`game.round_players=1`); the docstring's key list. `src/ipcvgame/app/pipeline.py`: `new_round()` calls `Game.new_round()`.
+
+**Changed:** `configs/default.yaml`, `game:` section: `intro`, `round_players`, `ready_s`, `countdown_s`, `replay_hold_s`, `hold_gap_s`, `head_above_shoulders`.
+
+**Changed:** `tests/test_game.py`: the existing tests run with `intro: false`; new tests for every transition, hold gaps, new round and reset, the solo intro, logging and the debug view.
+
+#### Step 2 · Waiting, countdown and result screens
+
+**Changed:** `src/ipcvgame/scene/renderer.py`
+- **Waiting:** the start places (`start_place()`, `_draw_start_place()`), dashed with "STAND HERE" until taken, then solid with a tick and "READY". With one player, a single place in the middle.
+- **Countdown:** 3-2-1 in the middle, each number settling over its second (`_draw_big_text()`); "FIGHT!" for `fight_s` once the round starts.
+- **Result:** `_draw_game_over()` shows each player's final health in their colour, and "HANDS UP TO PLAY AGAIN" with a bar that fills during the hold (`Game.hold_fraction()`).
+- The top bar says what the phase expects (`status_text()`); health bars are shown from the countdown on.
+
+**Changed:** `configs/default.yaml`, `render:` section: `start_place_w`, `start_place_y`, `start_text_scale`, `countdown_h`, `fight_s`.
+
+**Changed:** `tests/test_renderer.py`: status texts, start places and their tick, the countdown and "FIGHT!", the result's hold bar; the game-over test sets the `result` phase.
+
+#### Step 3 · Instruction panels
+
+**Added:** `src/ipcvgame/scene/instructions.py`: a stick figure per move as fixed joint positions in shoulder widths (`ARMS`, `figure_points()`), drawn with OpenCV lines (`draw_figure()`) and mirrored for P2 so the punch points at the opponent; the move texts (`MOVE_TEXT`: name, how to do it, effect); `draw_tick()`.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`, `_draw_instructions()`: per player at the bottom of their half (`instruction_box()`), over the legs so the face, arms and hat stay visible; one panel in the middle with `--solo`. The move's name in the team colour, the figure, how to do it and its effect, and one dot per move (done, now, to do). "NICE!" with a tick for `nice_s` after a move, "DONE!" when all are done; after `remind_s` without the move, the frame flashes and "TRY IT NOW!" appears.
+
+**Changed:** `configs/default.yaml`, `render:` section: `instruction_w`, `instruction_y`, `instruction_alpha`, `instruction_title_scale`, `instruction_text_scale`, `remind_s`, `remind_hz`, `nice_s`.
+
+**Changed:** `tests/test_renderer.py`: each figure, as keypoints, passes the gesture rule of its own move and no other; every move has a figure and texts; the panels and the reminder flash.
+
+#### Step 4 · Pose calibration
+
+**Added:** `src/ipcvgame/pose/measure.py` (Task 2): `shoulder_px()` and `arm_px()` (shoulder to elbow plus elbow to wrist, so a bent arm measures the same as a straight one) from the smoothed keypoints.
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- The neutral pose is the first calibration move (`CALIBRATION_MOVES`), checked by the game every frame (`_neutral_pose()`): the player in view with the head turned at most `neutral_max_yaw_deg`; shoulders, elbows, wrists and hips seen; both wrists at least `neutral_wrist_below_sw` below the shoulder line and slower than `neutral_max_speed_sw`.
+- Held for `neutral_s` (gaps up to `hold_gap_s`), `_measure()` stores the medians of one sample per frame in `GamePlayer.shoulder_px` / `arm_px`. A hold that starts over drops its samples. Kept on a new round, cleared by `reset()`.
+- `arm_sw()` gives the arm in shoulder widths; `short_arm()` is true under `min_arm_sw`. `neutral_fraction()` for the panel's bar.
+- Logged as `game_p<pid>_shoulder_px`, `_arm_px` and `_arm_sw`, and shown in `--until game`.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the neutral panel fills a bar while the pose is held, then shows "NICE! MEASURED"; the punch panel adds "STRETCH YOUR ARM ALL THE WAY" for a short arm.
+
+**Changed:** `src/ipcvgame/scene/instructions.py`: the cross-arms panel teaches wrists crossed just past the middle of the chest ("CROSS WRISTS IN FRONT OF CHEST"). With the hands on the opposite shoulders, the pose model puts each wrist back on its own side and the rule misses the cross; details in `docs/limitations.md`.
+
+**Changed:** `configs/default.yaml`, `game:` section: `neutral_s`, `neutral_wrist_below_sw`, `neutral_max_speed_sw`, `neutral_max_yaw_deg`, `min_arm_sw`.
+
+**Changed:** `tests/test_game.py`: the calibration helpers stand in a real neutral pose; medians with noisy frames, each reason a pose is not neutral, a hold that restarts, a short arm.
+
+**Added:** `docs/limitations.md`: known limits and improvements for the report, starting with the missed high arm cross.
+
+#### Step 5 · Identity at calibration
+
+**Changed:** `src/ipcvgame/identity/tracker.py` (Task 3)
+- `order_left_to_right(xs)`: renumbers the given players by x, lowest number leftmost. Stored vectors, track links and pending refreshes move with them, and both come out as `reentered` on the next update, so motion, face and gestures drop their per-player state. The zones backend ignores it: its P1 is always the left half.
+- `refresh_vector(pid, frame)`: replaces the stored vector with one from this frame's crop. If another person overlaps the crop, it is taken on the first update where the crop is clear.
+- `calibrated`: the players whose vector is from the neutral pose; logged as `identity_p<pid>_calibrated`, and "cal" on the box in `--until identity`.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`, `_calibrate_identity()`: when the phase goes from `waiting` to `calibration`, it passes each round player's position to `order_left_to_right()`; on a `learned_neutral` action it calls `refresh_vector()`.
+
+**Changed:** `src/ipcvgame/interaction/game.py`: `player_x()` (shoulder midpoint, or the box centre), shared by `place_taken()` and the ordering.
+
+**Changed:** `tests/test_identity.py`: renumbering, players already in order, a refreshed vector, a refresh that waits for a clear crop, reset, the zones backend. `tests/test_pipeline.py`: the pipeline calls identity at the right moments.
+
+#### Step 6 · Depth reference
+
+**Changed:** `src/ipcvgame/identity/tracker.py`, `_position()`: `Player.pos` is now (x, depth) in metres instead of zeros, by the pinhole model, depth = f · S / s:
+- f, the focal length in px, from the horizontal field of view: f = (width / 2) / tan(hfov / 2);
+- S, the real shoulder width, assumed the same for everyone; s, the shoulder width in px, from the pose keypoints;
+- after calibration (`set_body_reference()`), the depth at calibration is the reference and is scaled by the torso length: depth = depth_cal · torso_cal / torso. The torso does not shrink when the player turns; the shoulder width does. Shoulder width remains the fallback when the hips are not seen;
+- x = the shoulder midpoint's offset from the image centre · depth / f;
+- smoothed with the shared `EMA` filter, restarted on a re-entry; kept when no keypoints are usable.
+
+**Changed:** `src/ipcvgame/pose/measure.py`: `torso_px()`, shoulder midpoint to hip midpoint. `src/ipcvgame/interaction/game.py`: the calibration also stores the median torso length (`GamePlayer.torso_px`, logged as `game_p<pid>_torso_px`). `src/ipcvgame/app/pipeline.py`: on `learned_neutral` it also passes the shoulder width and torso length to `set_body_reference()`.
+
+**Changed:** `configs/default.yaml`, `identity:` section: `camera_hfov_deg` (70°, typical for a 720p/1080p webcam), `shoulder_m` (0.39 m, between the adult averages for women and men), `pos_kpt_conf`, `pos_tau_s`.
+
+**Changed:** `tests/test_identity.py`: position from the shoulder width, the torso after calibration (a turn does not change the depth), kept without usable keypoints.
+
+#### Step 7 · Docs
+
+**Changed:** `README.md`: the intro, `--no-intro`, `--solo` and the keys. `docs/extra_features.md`: the code map rows for the game phases, intro screens, identity and keys; the feature moved here; follow-up rows for the webcam checks. Code comments that said "feature 12" now name this section.

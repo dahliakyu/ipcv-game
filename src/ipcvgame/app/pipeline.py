@@ -106,14 +106,15 @@ class Pipeline:
         return state, canvas
 
     def _calibrate_identity(self, state: FrameState, phase_before: str) -> None:
-        """Game start (feature 1, step 5): the game tells identity who is who.
+        """Game start (docs/merge_log.md, steps 5-6): the game tells identity who is who.
 
         - Calibration has just started: P1 becomes the player in the left
           start place, P2 the one in the right, so the place colours and the
           player colours match (identity numbers players in the order it
           first sees them). With one round player there is nothing to order.
         - A player's neutral pose was just measured: their stored OSNet
-          vector is replaced with one from this frame.
+          vector is replaced with one from this frame, and their shoulder
+          width and torso length become the depth reference (Player.pos).
         """
         game = self.game
         if phase_before == "waiting" and game.phase == "calibration":
@@ -123,6 +124,8 @@ class Pipeline:
         for pid, action in game.actions:
             if action == "learned_neutral":
                 self.identity.refresh_vector(pid, state.frame)
+                player = game.players[pid]
+                self.identity.set_body_reference(pid, player.shoulder_px, player.torso_px)
 
     def log_fields(self, state: FrameState) -> dict:
         """Extra CSV columns from modules that define log_fields(state)."""
