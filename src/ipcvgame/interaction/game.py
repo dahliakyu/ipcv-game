@@ -60,14 +60,11 @@ from ipcvgame.core import skeleton as sk
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
 from ipcvgame.pose.measure import arm_px, shoulder_px, torso_px
-from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color, pt
+from ipcvgame.scene.draw import DRINK_COLORS, draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
 PHASES = ("waiting", "calibration", "countdown", "playing", "result")
 # Buff categories of the drinks; their values are drink_<kind> in the config.
 DRINK_KINDS = ("hp", "attack", "defense")
-# Category colours (BGR) for --until game: green, orange, purple, away from
-# the team colours (red, blue).
-DRINK_DEBUG_COLORS = {"hp": (80, 200, 60), "attack": (30, 140, 255), "defense": (200, 60, 160)}
 # The moves taught in the calibration phase, in this order: the neutral pose
 # (measured by the game), then the gesture event names.
 CALIBRATION_MOVES = ("neutral", "punch", "hands_up", "arms_crossed")
@@ -274,6 +271,7 @@ class Game:
         # (drink_seed; null = a different game every time) and the time to
         # the next one (s), counted down while playing.
         self.drinks: list[Drink] = []
+        self.drink_buff_s = float(cfg["drink_buff_s"])   # for drawing the time left
         self._rng = random.Random(cfg["drink_seed"])
         self._drink_wait = self._rng.uniform(*cfg["drink_every_s"])
 
@@ -1060,7 +1058,7 @@ class Game:
         for d in self.drinks:
             r = int(self.drink_height(d) / 2)
             width = 2 if d.held_by is None else 4                # thick while held at a mouth
-            cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_DEBUG_COLORS[d.kind], width, cv2.LINE_AA)
+            cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_COLORS[d.kind], width, cv2.LINE_AA)
             draw_lines(canvas, [f"{d.kind[0].upper()} {d.value:.2f}"], (int(d.x) - r, int(d.y) + 5))
         for pid, f in state.faces.items():           # mouths: the catch circle, filled while open
             if f.valid and "mouth" in f.anchors:

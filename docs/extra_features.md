@@ -187,10 +187,21 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
      - `_refresh()` clears the buffs (new round, reset).
      - Logged as `game_p<pid>_attack`, `_attack_left`, `_defense`, `_defense_left`; `--until game` adds "atk x1.42 7s" and "def 35% 7s" to the player's label.
    - On `session.mp4` (`--no-intro`, nobody drinks): the round is the same as before the buffs (7 and 10 hits, P1 wins with 28 HP). The buffs are covered by tests, also for one player through the log.
-4. **Look** (Task 5, `scene/renderer.py`).
+4. **Look** (Task 5, `scene/renderer.py`). *Done.*
    - Drink sprites (loaded on first use, like the other sprites) with the category badge.
    - The held drink at the mouth, the pick-up text, and the buff icons by the health bars.
    - The README credit for the sprites.
+   - As built:
+     - `DRINK_COLORS` in `scene/draw.py` is the one table of buff colours (green, orange, purple), used by the badges, icons, text and `--until game`.
+     - `drink_sprites(kind)` loads the config's sprites on first use, cropped to their visible part.
+     - `_draw_drinks()`: each drink as one of its kind's sprites (`Drink.variant` picks it), scaled to its height with the nearest pixel. Without sprites (`drink_sprites: null`) it is a circle. `draw_badge()` puts the buff's icon (`ICONS`: a plus, a lightning bolt, a shield) on a light disc at the drink's upper right.
+     - Drinks are drawn after the face effects, so a drink held at the mouth is in front of the mustache. They are not drawn on the result screen.
+     - `_draw_popups()`: "+18 HP", "ATTACK x1.4" or "DEFENSE 35%" in the buff's colour, starting at the mouth and offset `popup_side_fw` face widths towards the middle of the frame, so it does not cover the face. It rises `popup_rise_h` over `popup_s`, fades over the last third and stays under the top bar.
+     - `_draw_buffs()`: above each health bar (P1 from the left, P2 from the right), each running attack or defense buff as its badge, its value and a time bar, fading over the last `buff_fade_s`. `Game.drink_buff_s` gives the full time.
+     - `faded()` blends a box drawn in a `with` block at an opacity.
+     - README: a credit row for the drinks in "Third-party licences".
+   - New `render:` keys: `drink_sprites` (three drinks per kind), `drink_badge`, `drink_badge_min_px`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
+   - On `session.mp4` (a drink every 2–3 s; an attack drink put at P1's mouth, drunk on the next frame because the mouth was closed): falling drinks with their badges, the drink at P1's lips in front of the mustache, then "ATTACK x1.5" beside the head and the x1.5 icon with its time bar above P1's health bar. Render time 4.98 → 5.24 ms per frame with drinks in the air.
 5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's, also alone (`--solo`). Then the feature moves to `merge_log.md`.
 
 Every step is checked with one player too (a test, and `data/clips/shield.mp4`, a solo clip, where it applies).

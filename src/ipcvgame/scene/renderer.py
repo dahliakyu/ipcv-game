@@ -12,6 +12,12 @@ with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
+Drinks (consumables, extra_features.md feature 2): each falling drink as its
+sprite with a badge for its buff (green "+" HP, orange lightning attack,
+purple shield defense), a drink held at a mouth in front of the face, a
+pick-up text rising beside the drinker's head, and the running attack and
+defense buffs as icons with a time bar above each health bar.
+
 Around the round (game start, docs/merge_log.md), the game's phase
 decides what else is drawn: the players' start places while waiting, an
 instruction panel per player during calibration, 3-2-1 during the countdown,
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import cv2
@@ -36,9 +43,18 @@ import numpy as np
 
 from ipcvgame.core.filters import OneEuro
 from ipcvgame.core.types import Face, FrameState
-from ipcvgame.face.effects import FaceEffects
+from ipcvgame.face.effects import FaceEffects, load_sprite
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
-from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, hue_of, player_color, pt
+from ipcvgame.scene.draw import (
+    DRINK_COLORS,
+    blend_rgba,
+    draw_bbox,
+    draw_lines,
+    draw_skeleton,
+    hue_of,
+    player_color,
+    pt,
+)
 from ipcvgame.scene.fire_bolt import FireBolt
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
@@ -83,6 +99,9 @@ class Renderer:
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
         self._tags: dict[int, _Tag] = {}         # name tag per player (_draw_tag())
+        self._drink_sprites: dict[str, list[np.ndarray]] = {}   # per buff kind, on first use
+        # Pick-up texts: (pid, text, kind, Frame.t it started).
+        self._popups: list[tuple[int, str, str, float]] = []
 
     def reset(self, pid: int | None = None) -> None:
         """Forget the name tags' smoothing (one player on re-entry, or all)."""
@@ -118,10 +137,14 @@ class Renderer:
         for d in game.drunk:
             self.face_effects.bulge(d.pid, state.frame.t)
         self.face_effects.draw(canvas, state.faces, state.frame.t)
+        if phase != "result":
+            self._draw_drinks(canvas, game)             # after the face: a held drink is at the lips
         self._draw_status(canvas, state, game)
+        self._draw_popups(canvas, state, game)
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)
+                self._draw_buffs(canvas, pid, game)
         top = self._draw_hud(canvas, status_text(phase, has_player=bool(visible)),
                              game_over=phase == "result")
         if phase == "waiting":
@@ -514,6 +537,117 @@ class Renderer:
             cv2.fillPoly(canvas, poly, STAR, cv2.LINE_AA)
             cv2.polylines(canvas, poly, True, DARK, thick, cv2.LINE_AA)
 
+    # ------------------------------------------------------------- drinks
+
+    def drink_sprites(self, kind: str) -> list[np.ndarray]:
+        """The drink sprites of one buff kind (drink_sprites), cropped to
+        their visible part, loaded on first use; [] when set to null."""
+        if kind not in self._drink_sprites:
+            paths = (self.cfg.get("drink_sprites") or {}).get(kind) or []
+            sprites = []
+            for path in paths:
+                img = load_sprite(path)
+                ys, xs = np.nonzero(img[:, :, 3])
+                sprites.append(img[ys.min():ys.max() + 1, xs.min():xs.max() + 1])
+            self._drink_sprites[kind] = sprites
+        return self._drink_sprites[kind]
+
+    def _draw_drinks(self, canvas: np.ndarray, game: Game) -> None:
+        """Each drink as one of its kind's sprites (Drink.variant picks it),
+        scaled to the drink's height with the nearest pixel (pixel art), or
+        a circle without sprites; a badge with the buff's icon at its upper
+        right."""
+        for d in game.drinks:
+            h = game.drink_height(d)
+            sprites = self.drink_sprites(d.kind)
+            if sprites:
+                sprite = sprites[int(d.variant * len(sprites)) % len(sprites)]
+                s = h / sprite.shape[0]
+                img = cv2.resize(sprite, (max(1, round(sprite.shape[1] * s)), max(1, round(h))),
+                                 interpolation=cv2.INTER_NEAREST)
+                w = img.shape[1]
+                blend_rgba(canvas, img, d.x - w / 2, d.y - h / 2)
+            else:
+                w = 0.6 * h
+                cv2.circle(canvas, pt((d.x, d.y)), int(h / 2), DRINK_COLORS[d.kind], -1, cv2.LINE_AA)
+            r = max(self.cfg["drink_badge"] * h, self.cfg["drink_badge_min_px"])
+            draw_badge(canvas, d.kind, (d.x + w / 2, d.y - h / 2 + r), r)
+
+    def _draw_popups(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """For popup_s after a drink: "+18 HP", "ATTACK x1.4" or "DEFENSE
+        35%" in the buff's colour, beside the drinker's head on the side
+        towards the middle of the frame, rising by popup_rise_h of the frame
+        height and fading over the last third. It starts at the mouth and
+        follows the player; without a face, at the top of the body box."""
+        cfg, t = self.cfg, state.frame.t
+        for d in game.drunk:
+            text = {"hp": f"+{round(d.value)} HP", "attack": f"ATTACK x{d.value:.1f}",
+                    "defense": f"DEFENSE {d.value:.0%}"}[d.kind]
+            self._popups.append((d.pid, text, d.kind, t))
+        self._popups = [p for p in self._popups if 0 <= t - p[3] < cfg["popup_s"]]
+        h, w = canvas.shape[:2]
+        scale = self._scale(canvas, "popup_text_scale")
+        thick = max(1, int(round(scale)))
+        for pid, text, kind, t0 in self._popups:
+            f, p = state.faces.get(pid), state.players.get(pid)
+            if f is not None and f.valid and "mouth" in f.anchors:
+                (cx, cy), side_px = f.anchors["mouth"], cfg["popup_side_fw"] * f.scale
+            elif p is not None:
+                cx, cy, side_px = (p.bbox[0] + p.bbox[2]) / 2, p.bbox[1], 0.0
+            else:
+                continue
+            k = (t - t0) / cfg["popup_s"]
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            side = 1 if cx < w / 2 else -1
+            x = cx + side * side_px - (0 if side > 0 else tw)
+            y = cy - k * cfg["popup_rise_h"] * h
+            x = int(np.clip(x, 4, w - tw - 4))
+            y = int(np.clip(y, cfg["hud_h"] * h + th + 4, h - 4))
+            alpha = min(1.0, 3.0 * (1.0 - k))
+            box = (x - 4, y - th - 4, x + tw + 4, y + 8)
+            with faded(canvas, box, alpha):
+                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DRINK_COLORS[kind], thick,
+                            cv2.LINE_AA)
+
+    def _draw_buffs(self, canvas: np.ndarray, pid: int, game: Game) -> None:
+        """The running attack and defense buffs above the player's health
+        bar (P1 from the left, P2 from the right): the buff's badge, its
+        value ("x1.4", "35%") and a bar for the time left, fading over the
+        last buff_fade_s."""
+        if pid not in (1, 2) or pid not in game.players:
+            return
+        cfg, player = self.cfg, game.players[pid]
+        h, w = canvas.shape[:2]
+        size = cfg["buff_icon_h"] * h
+        bar_h = max(4, int(cfg["bar_h"] * h))
+        label_h = int(12 * cfg["bar_font_h"] * h / 10.0)
+        bottom = h - 12 - bar_h - label_h - 8                 # just above the health bar's label
+        scale = size / 14.0                         # text a bit smaller than the icon
+        thick = max(1, int(round(scale)))
+        x = 12.0 if pid == 1 else w - 12.0
+        for kind, value, left in (("attack", f"x{player.attack:.1f}", player.attack_left),
+                                  ("defense", f"{player.defense:.0%}", player.defense_left)):
+            if left <= 0:
+                continue
+            (tw, th), _ = cv2.getTextSize(value, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            slot = size + 4 + tw
+            x0 = x if pid == 1 else x - slot
+            cy = bottom - 6 - size / 2
+            alpha = min(1.0, left / cfg["buff_fade_s"])
+            box = (x0 - 2, bottom - 6 - size - 2, x0 + slot + 2, bottom + 2)
+            with faded(canvas, box, alpha):
+                draw_badge(canvas, kind, (x0 + size / 2, cy), size / 2)
+                org = (int(x0 + size + 4), int(cy + th / 2))
+                cv2.putText(canvas, value, org, cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+                cv2.putText(canvas, value, org, cv2.FONT_HERSHEY_PLAIN, scale, DRINK_COLORS[kind], thick,
+                            cv2.LINE_AA)
+                frac = max(0.0, min(1.0, left / game.drink_buff_s))
+                cv2.rectangle(canvas, (int(x0), int(bottom - 4)), (int(x0 + slot), int(bottom)), DARK, -1)
+                cv2.rectangle(canvas, (int(x0), int(bottom - 4)), (int(x0 + slot * frac), int(bottom)),
+                              DRINK_COLORS[kind], -1)
+            x = x0 + slot + 10 if pid == 1 else x0 - 10
+
     def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
         """Text in the middle of the frame, `size` x countdown_h of its height
         tall, off-white with a dark outline so it reads on any background."""
@@ -701,6 +835,43 @@ def status_text(phase: str, has_player: bool) -> str:
     if phase == "playing":
         return CONTROLS if has_player else "STEP INTO VIEW"
     return PHASE_TEXT[phase]
+
+
+# Buff icons in a unit square (-1..1, y down): HP a plus, attack a
+# lightning bolt, defense a shield.
+ICONS = {
+    "hp": np.array([[-0.3, -0.85], [0.3, -0.85], [0.3, -0.3], [0.85, -0.3], [0.85, 0.3], [0.3, 0.3],
+                    [0.3, 0.85], [-0.3, 0.85], [-0.3, 0.3], [-0.85, 0.3], [-0.85, -0.3], [-0.3, -0.3]]),
+    "attack": np.array([[0.2, -0.95], [-0.6, 0.15], [-0.05, 0.15], [-0.25, 0.95], [0.6, -0.2],
+                        [0.05, -0.2]]),
+    "defense": np.array([[-0.75, -0.85], [0.75, -0.85], [0.75, 0.1], [0.4, 0.6], [0.0, 0.9],
+                         [-0.4, 0.6], [-0.75, 0.1]]),
+}
+
+
+def draw_badge(canvas: np.ndarray, kind: str, centre, radius: float) -> None:
+    """A buff's badge: a light disc with a dark rim and the kind's icon in
+    its colour (ICONS, DRINK_COLORS)."""
+    c = pt(centre)
+    r = max(3, int(round(radius)))
+    cv2.circle(canvas, c, r, WHITE, -1, cv2.LINE_AA)
+    cv2.circle(canvas, c, r, DARK, max(1, r // 6), cv2.LINE_AA)
+    poly = np.round(np.asarray(centre, float) + ICONS[kind] * 0.65 * r).astype(np.int32)
+    cv2.fillPoly(canvas, [poly], DRINK_COLORS[kind], cv2.LINE_AA)
+
+
+@contextmanager
+def faded(canvas: np.ndarray, box, alpha: float):
+    """Draw inside the with-block at opacity `alpha`: the box (x1, y1, x2,
+    y2, clipped to the frame) is blended back towards how it was before."""
+    h, w = canvas.shape[:2]
+    x1, y1 = max(int(box[0]), 0), max(int(box[1]), 0)
+    x2, y2 = min(int(box[2]), w), min(int(box[3]), h)
+    before = canvas[y1:y2, x1:x2].copy() if alpha < 1 and x2 > x1 and y2 > y1 else None
+    yield
+    if before is not None:
+        roi = canvas[y1:y2, x1:x2]
+        roi[:] = (roi * alpha + before * (1.0 - alpha)).astype(np.uint8)
 
 
 def star(centre, radius: float, angle: float) -> np.ndarray:

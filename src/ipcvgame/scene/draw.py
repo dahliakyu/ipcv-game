@@ -13,6 +13,12 @@ from ipcvgame.core import skeleton as sk
 PLAYER_COLORS = [(200, 200, 200), (55, 55, 235), (235, 110, 40), (0, 200, 0), (200, 0, 200)]
 
 
+# BGR colours of the drinks' buff categories (consumables): green, orange
+# and purple, away from the team colours (red, blue). The one table for the
+# drinks' badges, buff icons, pick-up text and --until game.
+DRINK_COLORS = {"hp": (80, 200, 60), "attack": (30, 140, 255), "defense": (200, 60, 160)}
+
+
 def player_color(pid: int | None) -> tuple[int, int, int]:
     return PLAYER_COLORS[(pid or 0) % len(PLAYER_COLORS)]
 

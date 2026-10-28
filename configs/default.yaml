@@ -788,6 +788,33 @@ render:
   stars_orbit: 0.75
   stars_flat: 0.3
   star_size: 0.2
+  # --- Drinks (consumables, extra_features.md feature 2).
+  # Sprites per buff kind, from "Fancy Drinks || Pixel Asset Pack" by Pop
+  # Shop Packs (README, third-party licences). Each kind has drinks of its
+  # own colour, away from the team colours (red, blue): green for HP,
+  # orange for attack, purple for defense. A drink picks one at random.
+  # null = plain circles in the kind's colour.
+  drink_sprites:
+    hp: ["assets/Fancy Drinks/Sprites/individual_sprites/Lime Lemonade.png", "assets/Fancy Drinks/Sprites/individual_sprites/Cucumber Water.png", "assets/Fancy Drinks/Sprites/individual_sprites/Power Up.png"]
+    attack: ["assets/Fancy Drinks/Sprites/individual_sprites/Orange Juice.png", "assets/Fancy Drinks/Sprites/individual_sprites/Tropic Cider.png", "assets/Fancy Drinks/Sprites/individual_sprites/Poolside.png"]
+    defense: ["assets/Fancy Drinks/Sprites/individual_sprites/Midnight.png", "assets/Fancy Drinks/Sprites/individual_sprites/Pomegranate.png", "assets/Fancy Drinks/Sprites/individual_sprites/Neon Night.png"]
+  # The buff badge on a drink: radius as a fraction of the drink's height,
+  # at least this many px so far drinks still show their kind.
+  drink_badge: 0.22
+  drink_badge_min_px: 7
+  # Pick-up text ("+18 HP"): shown this long, rising this fraction of the
+  # frame height, beside the head (popup_side_fw face widths from the
+  # mouth, towards the middle of the frame, so it does not cover the face),
+  # at this text scale (at 480 px, like the other scales).
+  popup_s: 1.2
+  popup_rise_h: 0.1
+  popup_side_fw: 0.9
+  popup_text_scale: 1.4
+  # Running attack and defense buffs above each health bar: icon height as
+  # a fraction of the frame height (~32 px at 720p), fading over the last
+  # buff_fade_s, so the player sees it is about to end.
+  buff_icon_h: 0.045
+  buff_fade_s: 2.0
   # Bolt look (normal attack), from the assets/beam frames: a fire blast.
   # Split by phase: the first bolt_sprite_launch frames are the launch flash,
   # the next bolt_sprite_flight frames loop while the bolt flies, and the rest

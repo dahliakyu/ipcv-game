@@ -498,3 +498,99 @@ def test_drinking_puffs_the_cheeks(game):
     r.draw(faces_state(1.0), game)
     assert r.face_effects._anim[1].bulge_t == 1.0
     assert 2 not in r.face_effects._anim or r.face_effects._anim[2].bulge_t is None
+
+
+# ---------- Drinks (consumables, extra_features.md feature 2, step 4) ----------
+def drink_game():
+    from ipcvgame.interaction.game import Game as G
+    g = G({**CFG["game"], "intro": False, "act_facing_camera": False, "drink_every_s": [1e6, 1e6]})
+    g.update(dark())
+    return g
+
+
+def color_mask(img: np.ndarray, color) -> np.ndarray:
+    return (img == np.array(color, np.uint8)).all(axis=2)
+
+
+def test_drink_sprites_per_kind_cropped_and_optional():
+    r = plain()
+    for kind in ("hp", "attack", "defense"):
+        sprites = r.drink_sprites(kind)
+        assert len(sprites) == 3
+        for s in sprites:                                         # cropped: visible on every edge
+            a = s[:, :, 3] > 0
+            assert a[0].any() and a[-1].any() and a[:, 0].any() and a[:, -1].any()
+    assert renderer(drink_sprites=None).drink_sprites("hp") == []
+
+
+@pytest.mark.parametrize("sprites", [True, False])
+def test_falling_drink_drawn_with_its_badge(sprites):
+    from ipcvgame.interaction.game import Drink
+    r = plain() if sprites else renderer(pixel_size=1, show_timings=False, drink_sprites=None)
+    g = drink_game()
+    d = Drink(500.0, 500.0, "defense", 1.0, 0.3, 0.0)
+    g.drinks.append(d)
+    canvas = r.draw(dark(), g)
+    h = g.drink_height(d)
+    assert canvas[int(500 - h / 2):int(500 + h / 2), int(500 - h / 2):int(500 + h)].any()
+    assert color_mask(canvas, renderer_mod.DRINK_COLORS["defense"]).any()       # the badge's shield
+
+
+def test_pick_up_text_rises_and_ends(monkeypatch):
+    from ipcvgame.interaction.game import Drunk
+    r = plain()
+    g = drink_game()
+    texts = []
+    monkeypatch.setattr(cv2, "putText", lambda img, text, org, *a, **k: texts.append((text, org)))
+    g.drunk = [Drunk(1, "attack", 1.42)]
+    r.draw(faces_state(1.0), g)
+    g.drunk = []
+    r.draw(faces_state(1.0 + r.cfg["popup_s"] / 2), g)
+    ys = [org[1] for text, org in texts if text == "ATTACK x1.4"]
+    assert len(ys) >= 4 and ys[-1] < ys[0]                        # drawn twice (outline + text), rising
+    texts.clear()
+    r.draw(faces_state(1.0 + r.cfg["popup_s"]), g)
+    assert not any(text == "ATTACK x1.4" for text, _ in texts)
+    g.drunk = [Drunk(2, "hp", 17.6), Drunk(1, "defense", 0.35)]
+    r.draw(faces_state(5.0), g)
+    assert {"+18 HP", "DEFENSE 35%"} <= {text for text, _ in texts}
+
+
+def test_buff_icons_above_the_health_bars_while_running():
+    r = plain()
+    g = drink_game()
+    color = renderer_mod.DRINK_COLORS["attack"]
+    assert not color_mask(r.draw(dark(), g), color).any()
+    g.players[1].attack, g.players[1].attack_left = 1.4, 8.0
+    canvas = r.draw(dark(), g)
+    ys, xs = np.nonzero(color_mask(canvas, color))
+    assert xs.max() < canvas.shape[1] / 2 and ys.min() > canvas.shape[0] * 0.8   # bottom left: P1
+    g.players[1].attack_left = 0.0
+    g.players[2].defense, g.players[2].defense_left = 0.3, 8.0
+    ys, xs = np.nonzero(color_mask(r.draw(dark(), g), renderer_mod.DRINK_COLORS["defense"]))
+    assert xs.min() > canvas.shape[1] / 2                          # bottom right: P2
+
+
+def test_buff_icon_fades_at_the_end():
+    r = plain()
+    g = drink_game()
+    color = renderer_mod.DRINK_COLORS["attack"]
+    g.players[1].attack, g.players[1].attack_left = 1.4, 8.0
+    full = color_mask(r.draw(dark(), g), color).sum()
+    g.players[1].attack_left = r.cfg["buff_fade_s"] / 2
+    assert color_mask(r.draw(dark(), g), color).sum() < full     # blended: not the pure colour
+
+
+def test_one_player_sees_the_buff_icon():
+    from ipcvgame.interaction.game import Game as G
+    solo = G({**CFG["game"], "intro": False, "round_players": 1, "act_facing_camera": False})
+    solo.update(dark(xs=(200.0,)))
+    solo.players[1].defense, solo.players[1].defense_left = 0.4, 5.0
+    assert color_mask(plain().draw(dark(xs=(200.0,)), solo), renderer_mod.DRINK_COLORS["defense"]).any()
+
+
+def test_faded_blends_the_box():
+    img = np.zeros((10, 10, 3), np.uint8)
+    with renderer_mod.faded(img, (0, 0, 5, 5), 0.5):
+        img[:] = 200
+    assert img[2, 2, 0] == 100 and img[8, 8, 0] == 200
