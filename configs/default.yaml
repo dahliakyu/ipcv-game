@@ -373,6 +373,33 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # Opacity of the paint (times Face.alpha): a little skin shading shows
   # through, so it reads as paint on the face, not a sticker.
   warpaint_opacity: 0.85
+  # Hit reaction (feature 1). The hat flies off for hat_fly_s, fully
+  # visible for the first half and fading out in the second, then pops back
+  # onto the head over hat_pop_s (the design's 0.6 s and 0.2 s): long enough
+  # to see, short enough to be back before the next bolt at a fast pace.
+  # Hits while it is away do not throw another hat.
+  hat_fly_s: 0.6
+  hat_pop_s: 0.2
+  # Throw speed in face widths per second: [sideways, the way the attack
+  # went; up]. Sizes follow the face, so a far player's hat flies as far
+  # relative to their head. With hat_gravity (face widths/s^2) the hat
+  # rises ~0.3 face widths, then falls to ~0.7 below the brim after 0.6 s
+  # (3 x 0.6 - 14 x 0.6^2 / 2 = -0.72) while moving 1.8 face widths
+  # sideways. The design's 1.5 face widths/s looked like a wobble on the
+  # session clip (the hat moved ~0.3 face widths before it faded).
+  hat_fly_v: [3.0, 3.0]
+  hat_gravity: 14.0
+  # Spin while flying (the design's 360 deg/s), turning the way it flies.
+  hat_spin_deg: 360
+  # Face flash on a hit: white for the first half of flash_s, then the
+  # attacker's colour, fading out (the design's 150 ms: a few frames at
+  # 20-30 FPS, so it reads as a flash and not a colour change).
+  flash_s: 0.15
+  # Half-axes of the flash ellipse in face widths (across, down the face):
+  # the face is ~1 face width wide and ~1.3 tall from forehead to chin.
+  flash_axes: [0.55, 0.7]
+  # Peak opacity of the flash (times Face.alpha); the face stays visible.
+  flash_opacity: 0.7
 
   # Stub backend only: above_head sits this many shoulder-widths above the
   # nose. ~0.9 clears the top of the head for an average adult.

@@ -90,7 +90,9 @@ class Renderer:
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
             self.draw_game(canvas, state, game)
-        self.face_effects.draw(canvas, state.faces)
+        # The game's hits start the face effects' hit reaction (feature 1).
+        self.face_effects.update(game.hits, state.faces, state.frame.t)
+        self.face_effects.draw(canvas, state.faces, state.frame.t)
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)

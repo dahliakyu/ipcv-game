@@ -7,10 +7,18 @@ and faded by Face.alpha. The renderer calls draw(canvas, faces).
 Team colour (feature 1): each player's hat band is turned to their team
 colour (scene/draw.py), and two stripes of war paint in that colour sit on
 each cheek anchor.
+
+Hit reaction (feature 1): the renderer passes the game's hits each frame
+(update()). A hit knocks the hat off: it flies away the way the attack
+went, spinning and falling, fades, then pops back onto the head. The face
+flashes white, then in the attacker's colour. The only state kept between
+frames: one _Anim record per player, timed with Frame.t.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -124,6 +132,27 @@ def war_paint(f: Face, length: float, thick: float, gap: float) -> list[np.ndarr
     return polys
 
 
+def ellipse(center, axes, angle: float, n: int = 36) -> np.ndarray:
+    """Polygon (n points, px) of an ellipse with half-axes `axes` (along,
+    across), its first axis turned by `angle` (rad, clockwise on screen)."""
+    u = np.array([np.cos(angle), np.sin(angle)])
+    v = np.array([-u[1], u[0]])
+    a = np.linspace(0, 2 * np.pi, n, endpoint=False)[:, None]
+    return np.asarray(center, float) + axes[0] * np.cos(a) * u + axes[1] * np.sin(a) * v
+
+
+@dataclass
+class _Anim:
+    """One player's hit reaction. Times are Frame.t; None = not running."""
+    knock_t: float | None = None     # the hat was knocked off
+    knock_at: np.ndarray | None = None   # hat anchor (px) at that moment
+    knock_scale: float = 0.0         # face width (px) then, sizes the flight
+    knock_roll: float = 0.0          # head roll then (rad)
+    knock_dir: int = 1               # the way the attack went: +1 right, -1 left
+    flash_t: float | None = None     # the face flash started
+    flash_owner: int = 0             # the attacker, for the flash colour
+
+
 class FaceEffects:
     def __init__(self, cfg: dict):
         self.cfg = cfg
@@ -137,6 +166,8 @@ class FaceEffects:
         self.band = band_mask(self.hat, int(cfg["hat_band_hue"]), int(cfg["hat_band_hue_tol"]),
                               int(cfg["hat_band_min_sat"]), int(cfg["hat_band_min_val"]))
         self._hats: dict[int, np.ndarray] = {}      # hat with the band in each pid's colour
+        self._anim: dict[int, _Anim] = {}            # hit reaction per player
+        self.knock_s = float(cfg["hat_fly_s"]) + float(cfg["hat_pop_s"])   # whole hat reaction
 
     def team_hat(self, pid: int) -> np.ndarray:
         """The hat with its band in the player's team colour, made on first use."""
@@ -145,22 +176,98 @@ class FaceEffects:
                                       player_color(pid))
         return self._hats[pid]
 
-    def draw(self, canvas: np.ndarray, faces: dict[int, Face]) -> None:
+    def update(self, hits: Iterable, faces: dict[int, Face], t: float) -> None:
+        """Start the hit reaction for this frame's hits (Game.hits: target_id,
+        owner_id, direction). Every hit restarts the flash; the hat is
+        knocked off only while it is on the head, so hits in a row never
+        throw two hats. A player without a visible face gets neither."""
+        for h in hits:
+            f = faces.get(h.target_id)
+            if f is None or not f.valid or f.alpha <= 0:
+                continue
+            a = self._anim.setdefault(h.target_id, _Anim())
+            a.flash_t, a.flash_owner = t, h.owner_id
+            if "hat" in f.anchors and not self._knocked(a, t):
+                a.knock_t, a.knock_at = t, np.array(f.anchors["hat"], float)
+                a.knock_scale, a.knock_roll, a.knock_dir = f.scale, f.roll, h.direction
+
+    def _knocked(self, a: _Anim, t: float) -> bool:
+        """The hat is flying or popping back."""
+        return a.knock_t is not None and t - a.knock_t < self.knock_s
+
+    def flying_hat(self, a: _Anim, t: float) -> tuple[np.ndarray, float, float] | None:
+        """The knocked-off hat's brim point (px), angle (rad) and opacity at
+        time t, or None once it has faded. Thrown with hat_fly_v (face
+        widths/s: sideways, the way the attack went, and up), it falls with
+        hat_gravity and spins hat_spin_deg per second the same way; fully
+        visible for the first half of hat_fly_s, then fading out."""
+        cfg = self.cfg
+        if a.knock_t is None or not 0 <= t - a.knock_t < cfg["hat_fly_s"]:
+            return None
+        dt = t - a.knock_t
+        vx, vy = cfg["hat_fly_v"]
+        fall = -vy * dt + 0.5 * cfg["hat_gravity"] * dt ** 2           # screen y is down
+        pos = a.knock_at + a.knock_scale * np.array([a.knock_dir * vx * dt, fall])
+        angle = a.knock_roll + a.knock_dir * np.radians(cfg["hat_spin_deg"]) * dt
+        return pos, angle, min(1.0, 2.0 * (1.0 - dt / cfg["hat_fly_s"]))
+
+    def hat_size(self, a: _Anim | None, t: float) -> float:
+        """Size of the hat on the head (1 = normal): 0 while it is away, then
+        growing back over hat_pop_s (ease-out, so it pops on quickly)."""
+        if a is None or not self._knocked(a, t):
+            return 1.0
+        k = (t - a.knock_t - self.cfg["hat_fly_s"]) / self.cfg["hat_pop_s"]
+        return 0.0 if k < 0 else 1.0 - (1.0 - k) ** 2
+
+    def flash(self, a: _Anim | None, t: float) -> tuple[tuple[int, int, int], float] | None:
+        """Flash colour and opacity at time t, or None: white for the first
+        half of flash_s, then the attacker's colour, fading out linearly."""
+        if a is None or a.flash_t is None:
+            return None
+        k = (t - a.flash_t) / self.cfg["flash_s"]
+        if not 0 <= k < 1:
+            return None
+        color = (255, 255, 255) if k < 0.5 else player_color(a.flash_owner)
+        return color, self.cfg["flash_opacity"] * (1.0 - k)
+
+    def draw(self, canvas: np.ndarray, faces: dict[int, Face], t: float | None = None) -> None:
+        """Draw every effect. t (Frame.t) runs the hit reaction; None draws
+        the faces only (debug views, which have no game)."""
         hw = self.hat.shape[1]
         mh, mw = self.mustache.shape[:2]
         cfg = self.cfg
         for f in faces.values():
             if not f.valid or f.alpha <= 0:
                 continue
+            a = self._anim.get(f.pid) if t is not None else None
             polys = war_paint(f, cfg["warpaint_len"], cfg["warpaint_thick"], cfg["warpaint_gap"])
             if polys:
                 fill_polys(canvas, polys, player_color(f.pid), cfg["warpaint_opacity"] * f.alpha)
-            if "hat" in f.anchors:       # pivot: middle of the brim
-                paste(canvas, self.team_hat(f.pid), f.anchors["hat"], (hw / 2, self.hat_brim), f.roll,
-                      self.hat_width * f.scale, f.alpha)
             if "mouth" in f.anchors:     # pivot: centre of the mustache
                 paste(canvas, self.mustache, f.anchors["mouth"], (mw / 2, mh / 2), f.roll,
                       self.mustache_width * f.scale, f.alpha)
+            fl = self.flash(a, t)
+            if fl is not None:           # over the face, under the hat
+                axes = np.array(cfg["flash_axes"], float) * f.scale
+                fill_polys(canvas, [ellipse(f.center, axes, f.roll)], fl[0], fl[1] * f.alpha)
+            size = self.hat_size(a, t)
+            if "hat" in f.anchors and size > 0:   # pivot: middle of the brim
+                paste(canvas, self.team_hat(f.pid), f.anchors["hat"], (hw / 2, self.hat_brim), f.roll,
+                      size * self.hat_width * f.scale, f.alpha)
+        if t is None:
+            return
+        # Flying hats, also for a player whose face is gone meanwhile
+        for pid, a in self._anim.items():
+            fly = self.flying_hat(a, t)
+            if fly is not None:
+                pos, angle, alpha = fly
+                paste(canvas, self.team_hat(pid), pos, (hw / 2, self.hat_brim), angle,
+                      self.hat_width * a.knock_scale, alpha)
 
     def reset(self, pid: int | None = None) -> None:
-        pass  # stateless: the fade lives in FaceTracker (Face.alpha)
+        """Forget the hit reaction of one player, or of all (the face fade
+        itself lives in FaceTracker, Face.alpha)."""
+        if pid is None:
+            self._anim.clear()
+        else:
+            self._anim.pop(pid, None)

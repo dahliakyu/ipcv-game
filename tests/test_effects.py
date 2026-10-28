@@ -7,6 +7,7 @@ import pytest
 from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Face
 from ipcvgame.face.effects import FaceEffects, band_mask, load_sprite, paste, war_paint
+from ipcvgame.interaction.game import Hit
 from ipcvgame.scene.draw import hue_of, player_color
 
 RED = (0, 0, 255)
@@ -170,3 +171,88 @@ def test_war_paint_drawn_in_the_team_colour(pid):
     px = img[50 - 1, 30]                                 # upper stripe of the left cheek
     assert px.sum() > 0
     assert abs(hue_of(tuple(int(v) for v in px)) - hue_of(player_color(pid))) <= 2
+
+
+# ---------- Hit reaction (feature 1, step 3) ----------
+def hit_face(pid=2) -> Face:
+    f = face(pid=pid)
+    f.anchors = {"hat": np.array([50.0, 40.0])}
+    return f
+
+
+def knocked(t0=10.0, direction=1) -> FaceEffects:
+    fx = FaceEffects(load_config()["face"])
+    fx.update([Hit(2, 1, direction, 10)], {2: hit_face()}, t0)
+    return fx
+
+
+def test_hit_knocks_the_hat_off_the_way_the_attack_went():
+    fx = knocked(direction=1)
+    a = fx._anim[2]
+    pos0, _, alpha0 = fx.flying_hat(a, 10.0)
+    np.testing.assert_allclose(pos0, (50, 40))
+    pos, angle, alpha = fx.flying_hat(a, 10.2)
+    assert pos[0] > 50 and pos[1] < 40                   # to the right and up at first
+    assert angle > 0 and alpha == alpha0 == 1.0          # spinning the same way, still visible
+    assert fx.flying_hat(a, 10.45)[2] < 0.6              # fading in the second half
+    pos_l, angle_l, _ = fx.flying_hat(knocked(direction=-1)._anim[2], 10.2)
+    assert pos_l[0] < 50 and angle_l < 0
+    assert fx.flying_hat(a, 10.01 + fx.cfg["hat_fly_s"]) is None
+
+
+def test_hat_away_then_pops_back():
+    fx = knocked()
+    a, fly, pop = fx._anim[2], fx.cfg["hat_fly_s"], fx.cfg["hat_pop_s"]
+    assert fx.hat_size(a, 10.1) == 0.0
+    assert 0.0 < fx.hat_size(a, 10.0 + fly + pop / 2) < 1.0
+    assert fx.hat_size(a, 10.0 + fly + pop) == 1.0
+    assert fx.hat_size(None, 10.0) == 1.0
+
+
+def test_second_hit_restarts_the_flash_but_throws_no_second_hat():
+    fx = knocked()
+    fx.update([Hit(2, 1, -1, 10)], {2: hit_face()}, 10.3)
+    a = fx._anim[2]
+    assert a.knock_t == 10.0 and a.knock_dir == 1        # the first hat keeps flying
+    assert a.flash_t == 10.3
+    fx.update([Hit(2, 1, -1, 10)], {2: hit_face()}, 10.0 + fx.knock_s)
+    assert a.knock_t == 10.0 + fx.knock_s                # back on the head: knocked off again
+
+
+def test_flash_white_then_attacker_colour():
+    fx = knocked()
+    a, s = fx._anim[2], fx.cfg["flash_s"]
+    color, alpha = fx.flash(a, 10.0)
+    assert color == (255, 255, 255) and alpha == pytest.approx(fx.cfg["flash_opacity"])
+    color, alpha = fx.flash(a, 10.0 + 0.75 * s)
+    assert color == player_color(1) and alpha < fx.cfg["flash_opacity"] / 2
+    assert fx.flash(a, 10.0 + s) is None
+
+
+def test_no_reaction_without_a_visible_face():
+    fx = FaceEffects(load_config()["face"])
+    fx.update([Hit(2, 1, 1, 10)], {2: face(pid=2, alpha=0.0)}, 10.0)
+    fx.update([Hit(3, 1, 1, 10)], {}, 10.0)
+    assert fx._anim == {}
+
+
+def test_draw_shows_the_flying_hat_not_the_head_hat():
+    fx = knocked()
+    img = canvas()
+    fx.draw(img, {2: hit_face()}, 10.0 + fx.cfg["flash_s"] + 0.01)
+    assert img[30:40, 45:55].sum() == 0                  # no hat above the anchor
+    assert img[:, 60:].sum() > 0                         # the hat flew to the right
+    still = canvas()
+    fx.draw(still, {2: hit_face()})                      # no t (debug views): plain hat
+    assert still[30:40, 45:55].sum() > 0
+
+
+def test_reset_forgets_the_reaction():
+    fx = knocked()
+    fx.reset(1)
+    assert 2 in fx._anim
+    fx.reset(2)
+    assert fx._anim == {}
+    fx = knocked()
+    fx.reset()
+    assert fx._anim == {}
