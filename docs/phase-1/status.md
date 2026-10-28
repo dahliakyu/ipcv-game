@@ -211,7 +211,7 @@ Hands up and crossed must hold for 0.03 s to turn on, and stay on until their ru
 - [x] Hold times per player; one event per gesture. Cooldowns belong to the game (`game.py`'s bolt had 1.8 s; now 0).
 - [x] `log_fields`: `gest_p<pid>_hands_up`, `_arms_crossed`, `_punch`, `_events`.
 - [ ] `tools/eval_gestures.py`: needs clips with real, labelled gestures (the two test clips have none).
-- [ ] Later: a trained punch classifier, see `docs/extra_features.md`, feature 8.
+- No trained punch classifier (decided 2026-10-28); the punch rule's limits are in `docs/limitations.md`.
 
 **Game (merged 2026-10-26 from `game.py` and `main.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic), design changes in "Task 4: Modifications"):** `Game.update(state)` turns each gesture event into an action:
 
@@ -225,7 +225,7 @@ A hit lowers health (100) and adds paint splats; at 0 the attacker wins and the 
 - [x] Events to actions from `main.py`; bolts from the punching hand; one action at a time.
 - [x] `log_fields`: `game_p<pid>_health`, `_shield`, `_actions`, `game_bolts`, `game_beams`, `game_winner`.
 - [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 14); further features 9–16 there.
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 7); the other features are there too.
 
 ### Task 5: Integration — owner: @el
 

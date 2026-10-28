@@ -1,10 +1,6 @@
-Oct 25, 2026 · @el created with help of Claude Opus 5.5
+# Merge log
 
-# Merge log: the teammates' Colour Clash code into the shared codebase
-
-This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline` and goes to `main` in a single PR when it is complete.
-
-Each entry names the files it touched, so owners can check what changed in their own code.
+This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline`o owners can check what changed in their own code.
 
 ## Pre-merging Inits
 
@@ -1203,7 +1199,7 @@ The webcam test sometimes fired the major attack and a normal attack together. R
 
 **Changed:** `src/ipcvgame/interaction/game.py`, `attack()`: no bolt while the player's own beam is still alive (1.15 s), so the two attacks never overlap even after a quick reset. The other player is not affected.
 
-**Known limit:** when the arms go up one after the other, the punch pose usually comes first. The punch then fires and the beam is blocked: never both, but the punch wins. Telling a raise from a punch needs a better punch detector (the classifier in `docs/extra_features.md`, feature 8).
+**Known limit:** when the arms go up one after the other, the punch pose usually comes first. The punch then fires and the beam is blocked: never both, but the punch wins. Telling a raise from a punch needs a better punch detector (`docs/limitations.md`, "Punch").
 
 **Changed:** `docs/phase-1/status.md`: the gesture description mentions the reset rule.
 
