@@ -81,7 +81,8 @@ with one player, to test it alone; a solo round never ends, so use `r` or `R`.
 Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players, from the
 countdown), `R` (shift) reset all module state (players are identified again
 and the game goes back to waiting), `b` throw a test blob at P1 while playing
-(to try hits and paint alone).
+(to try hits and paint alone), `n` fill P1's orb for the final smash while
+playing (to try it without collecting the parts).
 `--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
 module and shows only its `draw_debug` overlay. `--headless --max-frames N`
 runs without a window.

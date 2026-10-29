@@ -147,6 +147,10 @@ class Pipeline:
         """Throw a test blob at P1 (key b), to try hits and paint alone."""
         return self.game.test_hit(1)
 
+    def test_orb(self) -> bool:
+        """Fill P1's orb (key n), to try the final smash alone."""
+        return self.game.test_orb(1)
+
     def reset(self) -> None:
         """Clear every module's state; identity finds the players again."""
         for m in (self.pose, self.identity, self.motion, self.face, self.gestures, self.game,

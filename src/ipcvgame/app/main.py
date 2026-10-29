@@ -14,7 +14,8 @@ to skip). For recording test clips without the pipeline, use tools/record_clip.p
 Keys: q / Esc quit, p pause, r new round (same players, from the countdown),
 R (shift) reset all module state (players are identified again and the game
 goes back to waiting), b throw a test blob at P1 while playing (to try hits
-and paint alone).
+and paint alone), n fill P1's orb for the final smash while playing (to try
+it without collecting the parts).
 
     python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
         # no waiting, calibration or countdown: play from the first frame
@@ -138,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
                     pipeline.reset()
                 if key == ord("b"):
                     pipeline.test_hit()
+                if key == ord("n"):
+                    pipeline.test_orb()
             if args.max_frames is not None and n >= args.max_frames:
                 break
 

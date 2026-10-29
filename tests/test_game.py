@@ -1237,3 +1237,143 @@ def test_mouth_closing_as_time_runs_out_still_drinks():
     g.update(mouths(0.1, {1: 0.9}))
     g.update(mouths(0.1 + g.cfg["drink_hold_s"] + 0.004, {1: 0.0}))
     assert d not in g.drinks and [x.pid for x in g.drunk] == [1]
+
+
+# --- Orb parts (final smash, extra_features.md §1) ---------------------------
+
+NO_ORB = {"orb_every_s": [1e9, 1e9]}
+
+
+def orb_game(**over) -> Game:
+    g = Game({**load_config()["game"], "intro": False, "orb_seed": 1, **NO_FACING, **over})
+    g.frame_w, g.frame_h = W, H
+    return g
+
+
+def part_at(g: Game, x: float, y: float):
+    """Put a still orb part at (x, y) px."""
+    from ipcvgame.interaction.game import OrbPart
+    g.orb_part = OrbPart(x, y, 0.0, 0.0)
+    return g.orb_part
+
+
+def punch_at(t: float, hand: tuple[float, float], xs=(200.0,)) -> FrameState:
+    """P1 punches with the screen-right wrist at hand (px)."""
+    s = frame_state(t, events=[(1, "punch")], xs=xs)
+    s.motion[1].kpts[sk.L_WRIST] = hand
+    return s
+
+
+def test_one_orb_part_at_a_time_enters_from_the_top():
+    g = orb_game(orb_every_s=[1.0, 1.0])
+    g.advance(0.9)
+    assert g.orb_part is None
+    g.advance(0.2)
+    part = g.orb_part
+    lo, hi = g.cfg["orb_margin_w"], 1 - g.cfg["orb_margin_w"]
+    assert lo * W <= part.x <= hi * W
+    assert part.y == pytest.approx(-g.orb_radius())          # just above the frame
+    assert part.vy > 0                                     # moving down into the frame
+    speed = np.hypot(part.vx, part.vy)
+    assert speed == pytest.approx(g.cfg["orb_speed_w"] * W)
+    for _ in range(100):
+        g.advance(0.1)
+    assert g.orb_part is part                              # no second part while it is there
+
+
+def test_orb_part_bounces_inside_its_band():
+    g = orb_game(orb_every_s=[0.0, 0.0])
+    g.advance(0.0)
+    part = g.orb_part
+    top, bottom = g.orb_band()
+    margin = g.cfg["orb_margin_w"] * W
+    step = g.cfg["orb_speed_w"] * W * 0.05                 # one frame's movement
+    ys = []
+    while part.y < top:                                    # entering from above
+        g.advance(0.05)
+    for _ in range(2000):                                  # 100 s
+        g.advance(0.05)
+        assert top - step <= part.y <= bottom + step
+        assert margin - step <= part.x <= W - margin + step
+        ys.append(part.y)
+    assert min(ys) < top + 0.1 * (bottom - top) and max(ys) > bottom - 0.1 * (bottom - top)
+
+
+def test_one_player_punch_touching_the_part_collects_it():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    sw = 100.0                                             # body(): shoulders 100 px apart
+    reach = g.orb_radius() + g.cfg["orb_reach_sw"] * sw
+    part_at(g, 350.0 + reach - 1, 300.0)
+    g.update(punch_at(0.1, (350.0, 300.0)))
+    assert g.get_player(1).orb == 1 and g.orb_part is None
+    assert (1, "orb") in g.actions and (1, "bolt") in g.actions   # the punch fires as usual
+    assert g.log_fields(frame_state(0.1, xs=(200.0,)))["game_p1_orb"] == 1
+
+
+def test_punch_that_misses_the_part_does_not_collect_it():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    reach = g.orb_radius() + g.cfg["orb_reach_sw"] * 100.0
+    part = part_at(g, 350.0 + reach + 1, 300.0)
+    g.update(punch_at(0.1, (350.0, 300.0)))
+    assert g.get_player(1).orb == 0 and g.orb_part is part
+    g.update(frame_state(0.2, xs=(200.0,)))                # touching it without a punch: nothing
+    part.x, part.y = 350.0, 300.0
+    s = frame_state(0.3, xs=(200.0,))
+    s.motion[1].kpts[sk.L_WRIST] = (350.0, 300.0)
+    g.update(s)
+    assert g.get_player(1).orb == 0
+
+
+def test_next_part_comes_orb_every_s_after_a_collection():
+    g = orb_game(orb_every_s=[2.0, 2.0])
+    g.update(frame_state(0.0, xs=(200.0,)))
+    part_at(g, 350.0, 300.0)
+    g.update(punch_at(0.1, (350.0, 300.0)))
+    for i in range(2, 20):                                 # up to 1.9 s (the collecting frame counts)
+        g.update(frame_state(0.1 * i, xs=(200.0,)))
+        assert g.orb_part is None
+    g.update(frame_state(2.15, xs=(200.0,)))
+    assert g.orb_part is not None
+
+
+def test_full_orb_collects_no_more_but_the_other_player_can():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0))
+    g.get_player(1).orb = g.orb_parts
+    part = part_at(g, 350.0, 300.0)
+    g.update(punch_at(0.1, (350.0, 300.0), xs=(200.0, 800.0)))
+    assert g.get_player(1).orb == g.orb_parts and g.orb_part is part
+    s = frame_state(0.2, events=[(2, "punch")])
+    s.motion[2].kpts[sk.R_WRIST] = (360.0, 300.0)          # P2 reaches over to it
+    g.update(s)
+    assert g.get_player(2).orb == 1 and g.orb_part is None
+
+
+def test_test_orb_fills_p1_only_while_playing():
+    g = orb_game()
+    g.update(frame_state(0.0, xs=(200.0,)))
+    assert g.test_orb(1) and g.get_player(1).orb == g.orb_parts
+    assert (1, "test_orb") in g.actions
+    waiting = Game({**load_config()["game"], **NO_FACING})
+    waiting.update(frame_state(0.0, xs=(200.0,)))
+    assert not waiting.test_orb(1) and waiting.get_player(1).orb == 0
+
+
+def test_new_round_clears_the_orbs_and_the_part():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0))
+    g.get_player(1).orb, g.get_player(2).orb = 3, 1
+    part_at(g, 500.0, 300.0)
+    g.new_round()
+    assert (g.get_player(1).orb, g.get_player(2).orb, g.orb_part) == (0, 0, None)
+
+
+def test_orb_parts_only_while_playing():
+    g = Game({**load_config()["game"], "orb_every_s": [0.0, 0.0], **NO_FACING})   # intro: waiting
+    for i in range(5):
+        g.update(frame_state(i * 0.1))
+    assert g.phase == "waiting" and g.orb_part is None
+    row = g.log_fields(frame_state(0.5))
+    assert (row["game_orb_x"], row["game_orb_y"]) == ("", "")

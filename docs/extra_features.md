@@ -58,15 +58,16 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 
 ### 1. Final smash: a paint orb in four parts, raining until the caster blinks
 
-**What.** The major attack becomes a final smash, like the Smash Ball in Smash Bros. Players collect a paint orb in four parts. With all four, hands up starts the attack: the orb flies up, bursts, and paint rains down on the opponent. **The rain lasts only while the caster does not blink:** the first blink ends it, and the orb is used up, so the player has to collect four new parts. Attacking becomes a staring contest that the other player can try to break. The opponent has two defences: getting out from under the direct paint drop, which is possible but very hard, or the shield. It replaces the magic beam.
+**What.** The major attack becomes a final smash, like the Smash Ball in Smash Bros. Players collect a paint orb in four parts: one small orb at a time bounces around the frame, and a punch that touches it collects it. With all four, the full orb appears above the player's head, and hands up starts the attack: the orb flies up, bursts, and paint rains down on the opponent. **The rain lasts only while the caster does not blink:** the first blink ends it, and both players' parts are used up, so both have to collect four new ones. Attacking becomes a staring contest that the other player can try to break. The opponent has two defences: getting out from under the direct paint drop, which is possible but very hard, or the shield. It replaces the magic beam.
 
-**Builds on** (state on 2026-10-28):
+**Builds on** (state on 2026-10-29):
 
 - **Attack now:** `hands_up` fires the magic beam: `Game.beam_attack()`, `PaintBeam`, the `beam_*` keys in `game:`, drawn by `scene/magic_beam.py` with the `beam_ball` / `beam_band` keys in `render:`. Texts that name it: `CONTROLS` in `scene/renderer.py` ("HANDS UP: MAGIC BEAM") and `MOVE_TEXT["hands_up"]` in `scene/instructions.py`.
 - **Normal attack:** the paint blob (`Projectile`, drawn by `draw_blob()` in `scene/paint.py`); every damaging hit adds a splash on the body (`Game._splash()`, `PaintSplat`; [merge_log.md, "Normal attack"](merge_log.md#normal-attack-paint-blob-and-splashes-on-the-body)).
 - **Rules a hands-up gesture already goes through:** one action at a time (`gestures.py`: back to a normal position between actions), and facing the camera, checked in `Game.update()` before the action (`Game.facing_camera()`, head and body; merge_log "Game start: Modifications").
 - **Shield:** `activate_shield()`, `shield_s` (1 s) in `game:`, `Game.shielded(pid)`.
-- **Face data:** `state.faces[pid]`: `blendshapes` (`eyeBlinkLeft`, `eyeBlinkRight`), `alpha`, `valid`, `anchors["above_head"]`; the face stage logs `face_p<pid>_blink` and `face_p<pid>_pitch_deg`. The face tracker is Task 1's code.
+- **Face data:** `state.faces[pid]`: `blendshapes` (`eyeBlinkLeft`, `eyeBlinkRight`), `alpha`, `valid`, `anchors["above_head"]`; the face stage logs `face_p<pid>_blink` and `face_p<pid>_pitch_deg`. The head pitch is only inside the face tracker (`_FaceState.pitch`), not in `Face`. The face tracker is Task 1's code.
+- **Punch:** the event carries no hand position; `punching_hand()` in `game.py` picks the wrist reaching furthest to the side, as the blob's start does.
 - **Test on clips:** combat with `--no-intro`; `session.mp4` never reaches the countdown with the intro.
 
 **Owners.**
@@ -77,18 +78,20 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 
 **Design.**
 
-- **Orb parts.**
-  - **Spawning:** one part at a time at a random free spot in the upper half of the frame (reachable with a raised hand), every ~5–8 s while fewer than four parts are in play; it slowly bobs.
-  - **Collecting:** a wrist (smoothed keypoint, `state.motion`) within ~0.5 shoulder widths of the part, held for ~0.2 s, picks it up.
-  - **Holding:** each player's parts show as a 4-slot orb icon by their health bar, in their team colour; the quarters fill in as they are collected. A player cannot hold more than four.
-  - **Dropping:** 3 blob hits in a row knock one part out of the player; it flies off and lands as a part to collect again, so the other player can steal it.
-- **Start.** Without all four parts, `hands_up` does nothing: the orb icon flashes "not ready", and the one-action-at-a-time reset still applies. With all four, the complete orb glows above the player's head, and `hands_up` starts the attack. The slots empty at the start: the orb is used up whether the rain lasts a second or much longer.
+- **Orb parts** (decided 2026-10-29: one part at a time, collected by a punch, no knock-out).
+  - **A part** is a small version of the orb, not a quarter of it. Only one is on the field at a time.
+  - **Spawning:** the next part comes ~5–8 s after the last one was collected (or after the round or the last final smash started). It enters from the top edge at a random x and then bounces around like a consumable: a constant speed, reflected at the edges of a band at punching height (about head to chest of players at ~2.3 m), so it drifts past both players. No part spawns while a final smash runs.
+  - **Collecting:** a `punch` event whose punching hand (`punching_hand()`) is within ~0.5 shoulder widths of the part's edge collects it. The punch also fires its blob as usual.
+  - **Holding:** each player's parts show as four small orb slots by their health bar, filled in their team colour. A player with four collects no more; the other player still can.
+  - **No knock-out:** parts are lost only when a final smash starts.
+- **Start.** With four parts, the full orb appears above the player's head with "RAISE YOUR ARMS", and `hands_up` starts the attack. Without four, `hands_up` does nothing (the slots flash), and the one-action-at-a-time reset still applies. At the start, both players' parts go back to 0, whether the rain lasts a second or much longer, and parts start bouncing in again after the smash.
+- **One player** (`--solo`, `--no-intro` alone): parts spawn and are collected the same way. With no opponent in view, the rain falls on the far half of the frame (the half away from the caster), so the caster can test the start and their own blink ending it. Test keys: `n` fills P1's orb (skips collecting); `v` lets a test rain fall on P1 in P2's colour for a fixed time (no blink ends it), to see drops hitting, the paint and the shield blocking.
 - **Duration: until the caster blinks.** Blinks count only during the attack. The rain stops at the first blink after the start, and also when the caster's face is not measured (empty `Face.blendshapes`, or `alpha` < 1), so turning away cannot hide a blink. A cap (~6 s, in config) keeps one attack from deciding the round alone. Damage per drop is fixed, so a longer stare means more damage.
 - **Blink detection.** The raw score is not enough: on the test clips, `blink` = mean of `eyeBlinkLeft`/`Right` went over 0.5 in up to 26% of frames just because people looked down. Use:
   - a per-player baseline: the running median of the score over the last ~3 s, which follows lighting, glasses and eye shape;
   - a blink that starts at score > baseline + 0.35 (and > 0.5), and ends at score < baseline + 0.15 (hysteresis);
   - a duration of 60–500 ms (longer = eyes closed, not a blink; closed eyes also end the rain);
-  - looking down (pitch < −20°, see `log_fields` `pitch_deg`) does not count as a blink.
+  - looking down (pitch < −20°, see `log_fields` `pitch_deg`) does not count as a blink. The game gets the pitch from a new field `Face.pitch` (rad, > 0 = chin up) in `core/types.py`, filled from the tracker's smoothed pitch (decided 2026-10-29; heads-up in the merge PR, with `Face.alpha` and `Face.blendshapes`).
 - **Measurement rate.** MediaPipe measures each player at ~15 Hz (`face.landmarker_per_frame: 1`). Between two runs, `Face.blendshapes` repeats the last result for up to `face.landmarker_max_age_s` (0.25 s) and is `{}` after that; it has no flag for a fresh result, so time a blink with `Frame.t`. A 100 ms blink can fall between two measurements, and a missed blink makes the rain last longer. During an attack, measure the caster every frame (as `landmarker_per_frame: 2` does, +~8 ms); that needs a way for the game to ask the face stage for it (e.g. through the pipeline, like the game start's `_calibrate_identity()`).
 - **The attack, in phases:**
   1. **Burst:** the orb flies up out of the top of the frame (~0.3 s). The frame dims for a moment with a flash in the caster's colour, as Smash Bros does for a final smash.
@@ -104,9 +107,21 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 
 **Check.**
 
-- Orb: parts only disappear when collected or used; a player cannot hold more than four; a dropped part can be picked up by either player; `hands_up` does nothing without four parts.
+- Orb: only one part on the field at a time; it bounces inside its band; a punch that touches it collects it, a punch that misses does not; a player cannot hold more than four; `hands_up` does nothing without four parts; a final smash resets both players to 0.
 - Blink: on the webcam, a deliberate blink always ends the rain; looking down at the floor for 2 s does not; turning away ends it. Log blinks and the rain's length per attack, and count false blinks on the clips.
 - Attack: the rain follows the opponent at the set speed; standing still takes every drop, a quick long step out avoids some; the rain never lasts past the cap; the shield blocks the drops while it is up.
+- One player: every step has a unit test with one player and a check with key `n` / `v` on `shield.mp4`.
+
+**Implementation steps.** One step at a time, each checked before the next.
+
+1. **Orb parts (game logic, Task 4).** `OrbPart` in `interaction/game.py`: spawning after `orb_every_s`, entering from the top and bouncing in the band `orb_band_h`; a punch collects it (`_collect_orb()`, hand within `orb_reach_sw` of its edge); `GamePlayer.orb` (0–4). Key `n` (`Game.test_orb()`). `draw_debug()` shows the part, its band and the counts; CSV columns. Tests: spawning, bouncing, collecting with one player, a missing punch, a full orb collects no more. Check: `shield.mp4` with `--no-intro`.
+   - *As built (2026-10-29):* as planned; the CSV columns are `game_p<pid>_orb` and `game_orb_x` / `game_orb_y` (the part's centre, empty without one). The part bounces in `orb_band_h` 0.25–0.5 of the frame height, from the punching hands on `session.mp4` (0.36–0.49, 5th–95th percentile of 16 punches). New config keys in `game:`: `orb_every_s`, `orb_parts`, `orb_r_h`, `orb_band_h`, `orb_margin_w`, `orb_speed_w`, `orb_angle_deg`, `orb_reach_sw`, `orb_seed`. Key `n` in `app/main.py` → `Pipeline.test_orb()`; README lists it. `hands_up` still fires the beam until step 4.
+   - *Clips* (`--no-intro`, `orb_seed: 1`): the first part comes at ~5.5 s and stays in its band (y −25 to 360 px of 720, x 129–1151 px). On `session.mp4` a punch by the right-hand player collected one at 19.4 s, the hand ~60 px from the part's centre; on `shield.mp4` (no punches) the part only bounces. Game stage ~0.1 ms per frame.
+2. **Orb look (renderer, Task 5).** The bouncing part (a small glowing paint orb, team-neutral), a pick-up burst and text, the four slots by each health bar, and the full orb above the head with "RAISE YOUR ARMS". Check rendered frames and `ms_render` on `shield.mp4` with key `n`.
+3. **Head pitch and blinks (Tasks 1 and 4).** `Face.pitch` (`core/types.py`, filled in `face/tracker.py`); `BlinkDetector` in `interaction/gestures.py` (baseline, hysteresis, 60–500 ms, pitch filter; `gestures: blink_*`), a `blink` event and CSV `gest_p<pid>_blink`. Count false blinks on `session.mp4`, `shield.mp4` and the test clips.
+4. **The final smash (game logic, Task 4).** `FinalSmash` replaces `PaintBeam` and `beam_attack()`: hands up with four parts starts it and resets both orbs; phases burst, warning, rain; the drop zone follows the opponent at `smash_follow_w` (no opponent: the far half); drops fall with gravity and hit the target's box (path since the last frame); the shield blocks them; damage and a small splash per hit; the rain ends at the caster's first blink, when the caster's face is not measured, or at the cap. The pipeline asks the face stage to measure the caster every frame during the rain. Key `v` (`Game.test_smash()`). CSV: smash phase, its length and why it ended. The `beam_*` keys go.
+5. **The final smash look (Tasks 5 and 1).** The burst (orb flying up, the frame dimmed with a flash in the caster's colour), the target mark, the drops and floor splashes, small body splashes within the paint budget (`render_p<pid>_paint_ms`), the eye glow and its shatter with "BLINK!" (`face/effects.py`). `scene/magic_beam.py`, its tests and `beam_*` render keys go; `CONTROLS` and `MOVE_TEXT["hands_up"]` name the final smash.
+6. **Wrap-up.** `merge_log.md` section, this section removed and the backlog renumbered, `status.md`, and the limits found (e.g. blinks missed between measurements) in `limitations.md`.
 
 ### 2. Both players attacking at the same time: the stronger attack gets the shot
 
