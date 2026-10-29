@@ -881,6 +881,14 @@ def test_gesture_counts_only_facing_the_camera():
     assert facing_game(act_facing_camera=False).facing_camera(frame_state(0.0), 1)
 
 
+def test_blink_events_are_not_moves():
+    """Blinks come from the gesture stage too, but are not actions: no
+    facing check, no FACE THE CAMERA hint."""
+    g = facing_game()
+    g.update(frame_state(0.0, events=[(1, "blink"), (2, "eyes_closed")]))
+    assert g.actions == [] and g.not_facing_t == {}
+
+
 def test_body_turn_from_shoulders_against_torso_with_arms_down():
     """Calibrated: shoulders 100 px, torso 300 px. Arms down with shoulders
     50 px: turned 60 degrees, so a gesture does not count; with the arms up

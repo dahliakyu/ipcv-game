@@ -437,6 +437,7 @@ def test_landmarker_takes_turns_and_drives_pose(tmp_path, monkeypatch):
         assert f.blendshapes["jawOpen"] == pytest.approx(0.8)
         assert tr._state[f.pid].pose_src == "mediapipe"
         assert np.degrees(tr._state[f.pid].pitch) > 10                          # smoothed towards 30
+        assert f.pitch == tr._state[f.pid].pitch      # Face.pitch: blink filter
 
 
 @pytest.mark.parametrize("bad", ["nan", "collapsed"])

@@ -482,6 +482,32 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   # modifications). 0.3 s is ~9 frames at 30 FPS; lowering and raising the
   # arms on purpose takes longer.
   release_s: 0.3
+  # --- Blinks (BlinkDetector; final smash, docs/extra_features.md §1): the
+  # caster's first blink ends the paint rain. Score = mean of MediaPipe's
+  # eyeBlinkLeft / Right (Face.blendshapes). Values from the design, NOT
+  # YET TUNED on deliberate blinks: no clip has them. On session.mp4
+  # (players ~2.3 m away, a fresh score only every ~105 ms per player), the
+  # baseline was 0.23 for one player and 0.38 for the other, and the score
+  # rose at most 0.38 above it (one player) and 0.23 (the other) in 110 s;
+  # only close faces (two_people_fitness_challenge.webm) rose 0.4-0.6.
+  # Baseline: the median score over this long (s), which follows lighting,
+  # glasses and eye shape; none before this many scores are in it.
+  blink_baseline_s: 3.0
+  blink_min_samples: 5
+  # Closed: score over baseline + blink_on and over blink_min_score; open
+  # again under baseline + blink_off (hysteresis).
+  blink_on: 0.35
+  blink_min_score: 0.5
+  blink_off: 0.15
+  # A closure this long (s) is a blink: under 60 ms is a single-frame
+  # glitch; over 500 ms the eyes are kept closed (eyes_closed event).
+  # Real blinks take 100-300 ms.
+  blink_min_s: 0.06
+  blink_max_s: 0.5
+  # Looking down: head pitch under this (degrees, Face.pitch) starts no
+  # closure and cancels one. On the fitness test clip, scores over 0.5
+  # came with pitch -22 to -28 deg while a player looked down.
+  blink_down_deg: -20.0
 
 game:                     # Task 4 — Colour Clash game logic (game.py)
   # Positions are pixels. Speeds and sizes are fractions of the frame width

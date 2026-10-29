@@ -67,7 +67,7 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.geometry import bilinear
 from ipcvgame.core.types import FrameState, Motion
-from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
+from ipcvgame.interaction.gestures import GESTURES, detect_hands_up, lower_body_y, shoulder_width
 from ipcvgame.pose.measure import arm_px, shoulder_px, torso_px
 from ipcvgame.scene.draw import DRINK_COLORS, draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
@@ -752,8 +752,10 @@ class Game:
         for pid in state.players:
             self._track_mouth(state, pid)
         if self.phase == "playing":
+            # Only the moves; blink events are not actions (final smash, step 4).
             for e in state.events:
-                if e.pid in positions and self._facing_or_blocked(state, e.pid, e.name, t):
+                if (e.name in GESTURES and e.pid in positions
+                        and self._facing_or_blocked(state, e.pid, e.name, t)):
                     self._act(e.pid, e.name, state.motion[e.pid], positions)
             if self.winner_id is None:
                 self._drink_with_mouths(state, t)

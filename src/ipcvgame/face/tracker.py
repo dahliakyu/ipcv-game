@@ -281,7 +281,7 @@ class FaceTracker:
             faces[pid] = Face(pid=pid, valid=alpha > 0, landmarks=st.landmarks, center=g["center"],
                               scale=g["width"], roll=g["roll"], yaw=st.yaw,
                               anchors=g["anchors"], alpha=alpha,
-                              blendshapes=dict(st.blendshapes) if recent else {})
+                              blendshapes=dict(st.blendshapes) if recent else {}, pitch=st.pitch)
         return faces
 
     def _landmark(self, image: np.ndarray, st: _FaceState, t: float) -> None:

@@ -340,3 +340,115 @@ def test_log_fields():
     row = g.log_fields(state)
     assert row["gest_p1_punch"] == 1 and row["gest_p1_hands_up"] == 0
     assert row["gest_p1_events"] == "punch"
+
+
+# --- Blinks (final smash, extra_features.md §1) ------------------------------
+
+def eyes(score: float | None, pitch_deg: float = 0.0, valid: bool = True):
+    """A face with both eye scores at `score` (None: no current MediaPipe result)."""
+    from ipcvgame.core.types import Face
+    b = {} if score is None else {"eyeBlinkLeft": score, "eyeBlinkRight": score}
+    return Face(pid=1, valid=valid, landmarks=None, center=np.zeros(2), scale=60.0, roll=0.0,
+                yaw=0.0, anchors={}, blendshapes=b, pitch=np.radians(pitch_deg))
+
+
+def run(det, scores, dt=1 / 15, t0=0.0, pitch_deg=0.0):
+    """Feed scores at dt apart; returns (t, event) for every event."""
+    out = []
+    for i, s in enumerate(scores):
+        t = t0 + i * dt
+        ev = det.update(eyes(s, pitch_deg), t)
+        if ev:
+            out.append((round(t, 3), ev))
+    return out
+
+
+def blink_detector(cfg, **over):
+    from ipcvgame.interaction.gestures import BlinkDetector
+    return BlinkDetector({**cfg, **over})
+
+
+def test_blink_is_sent_when_the_eyes_open(cfg):
+    det = blink_detector(cfg)
+    events = run(det, [0.2] * 30 + [0.8, 0.8, 0.8, 0.2, 0.2])
+    assert events == [(round(33 / 15, 3), "blink")]       # 3 frames closed = 200 ms
+
+
+def test_baseline_follows_the_player(cfg):
+    """A player whose eyes score 0.4 when open: 0.6 is not a blink (under
+    baseline + blink_on), 0.8 is."""
+    assert run(blink_detector(cfg), [0.4] * 30 + [0.6, 0.6, 0.4]) == []
+    assert [e for _, e in run(blink_detector(cfg), [0.4] * 30 + [0.8, 0.8, 0.4])] == ["blink"]
+
+
+def test_low_scores_never_blink(cfg):
+    """A far face: a rise from 0.05 to 0.45 is over baseline + blink_on but
+    under blink_min_score."""
+    assert run(blink_detector(cfg), [0.05] * 30 + [0.45, 0.45, 0.05]) == []
+
+
+def test_hysteresis_keeps_the_eyes_closed_between_the_thresholds(cfg):
+    # 0.4 is under the start (0.2 + 0.35) but over the end (0.2 + 0.15): still closed.
+    events = run(blink_detector(cfg), [0.2] * 30 + [0.8, 0.4, 0.4, 0.2])
+    assert events == [(round(33 / 15, 3), "blink")]
+
+
+def test_eyes_kept_closed_send_eyes_closed_once(cfg):
+    events = run(blink_detector(cfg), [0.2] * 30 + [0.8] * 15 + [0.2] * 3)
+    assert [e for _, e in events] == ["eyes_closed"]
+    t_closed = events[0][0] - 30 / 15
+    assert cfg["blink_max_s"] < t_closed <= cfg["blink_max_s"] + 1 / 15
+
+
+def test_long_gap_while_closed_is_not_a_blink(cfg):
+    det = blink_detector(cfg)
+    run(det, [0.2] * 30)
+    det.update(eyes(0.8), 2.0)
+    assert det.update(eyes(0.2), 2.0 + cfg["blink_max_s"] + 0.1) == "eyes_closed"
+
+
+def test_single_frame_glitch_is_not_a_blink(cfg):
+    det = blink_detector(cfg)
+    run(det, [0.2] * 30)
+    det.update(eyes(0.8), 2.0)
+    assert det.update(eyes(0.2), 2.0 + cfg["blink_min_s"] / 2) is None
+
+
+def test_looking_down_is_not_a_blink(cfg):
+    down = cfg["blink_down_deg"] - 5
+    assert run(blink_detector(cfg), [0.2] * 30 + [0.8] * 20 + [0.2], pitch_deg=down) == []
+    # Looking down during a closure cancels it.
+    det = blink_detector(cfg)
+    run(det, [0.2] * 30 + [0.8])
+    assert det.update(eyes(0.8, down), 2.1) is None and det.closed_since is None
+    assert det.update(eyes(0.2), 2.2) is None
+
+
+def test_no_score_drops_the_closure(cfg):
+    det = blink_detector(cfg)
+    run(det, [0.2] * 30 + [0.8])
+    assert det.update(eyes(None), 2.1) is None and det.closed_since is None
+    assert det.update(eyes(0.2), 2.2) is None
+
+
+def test_no_blink_before_the_baseline(cfg):
+    assert run(blink_detector(cfg), [0.2] * (cfg["blink_min_samples"] - 1) + [0.9, 0.2]) == []
+
+
+def test_recognizer_sends_blinks_per_face_outside_one_action_at_a_time(cfg):
+    g = GestureRecognizer(cfg)
+    t = 0.0
+    for i in range(30):
+        t = i / 15
+        g.update({}, t, {1: eyes(0.2), 2: eyes(0.2)})
+    g.update(motion(*hands_up()), t + 0.05, {1: eyes(0.8), 2: eyes(0.2)})
+    ev = g.update(motion(*hands_up()), t + 0.1, {1: eyes(0.8), 2: eyes(0.2)})
+    assert names(ev) == ["hands_up"]                      # gestures still work alongside
+    ev = g.update(motion(*hands_up()), t + 0.2, {1: eyes(0.2), 2: eyes(0.2)})
+    assert [(e.pid, e.name) for e in ev] == [(1, "blink")]
+    s = FrameState(frame=None, players={}, motion={}, faces={}, events=ev, timings={})
+    row = g.log_fields(s)
+    assert row["gest_p1_events"] == "blink" and row["gest_p2_blink_base"] == 0.2
+    assert row["gest_p1_eyes_closed"] == 0
+    g.reset(1)
+    assert 1 not in g._blinks

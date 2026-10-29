@@ -18,15 +18,24 @@ position, with none of the three gestures on, before any gesture can send an
 event again. A gesture that turns on before that sends nothing, so raising
 the arms through the punch pose cannot fire a punch and a beam. If several
 gestures turn on in the same frame, only the first in ``GESTURES`` sends one.
+
+Blinks (final smash, docs/extra_features.md §1): ``BlinkDetector`` reads each
+player's eye scores from the face stage (``Face.blendshapes``) and sends a
+``blink`` event when the eyes open again after a short closure, or
+``eyes_closed`` once they stay closed too long for a blink. These events
+are outside the one-action-at-a-time rule: blinking is not a move.
 """
 
 from __future__ import annotations
+
+import math
+from collections import deque
 
 import numpy as np
 
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.geometry import angle_at
-from ipcvgame.core.types import FrameState, GestureEvent, Motion
+from ipcvgame.core.types import Face, FrameState, GestureEvent, Motion
 from ipcvgame.scene.draw import draw_lines, draw_skeleton, draw_text, player_color
 
 # Also the priority when several turn on in the same frame: the major attack
@@ -152,6 +161,88 @@ def detect_all(kpts: np.ndarray, valid: np.ndarray, cfg: dict) -> dict[str, bool
     }
 
 
+def blink_score(face: Face | None) -> float | None:
+    """Mean of MediaPipe's eyeBlinkLeft and eyeBlinkRight (0 open, 1 closed);
+    None without a valid face or when the face stage has no current result
+    (empty blendshapes)."""
+    if face is None or not face.valid or not face.blendshapes:
+        return None
+    b = face.blendshapes
+    if "eyeBlinkLeft" not in b or "eyeBlinkRight" not in b:
+        return None
+    return (b["eyeBlinkLeft"] + b["eyeBlinkRight"]) / 2.0
+
+
+class BlinkDetector:
+    """One player's blinks from the blink score (blink_score()).
+
+    The raw score is not enough: looking down, glasses or the light raise it
+    for some people, and it is lower for faces far from the camera
+    (extra_features.md §1). So:
+
+    - Baseline: the median score over the last blink_baseline_s (the
+      scores before this frame), so a closure does not lift its own
+      baseline. No blink before blink_min_samples scores are in it.
+    - Closed: the score rises over baseline + blink_on and over
+      blink_min_score; open again when it drops under baseline + blink_off
+      (hysteresis, so a score near one threshold does not flicker).
+    - Looking down (head pitch under blink_down_deg) starts no closure and
+      cancels a running one: the eyelids drop when looking at the floor.
+    - A closure that ends within blink_min_s - blink_max_s (by Frame.t) is
+      a ``blink``; once a closure passes blink_max_s, ``eyes_closed`` is
+      sent instead, at that moment.
+    - No score (face lost, or no current MediaPipe result): a running
+      closure is dropped, nothing is sent. The game decides what an
+      unmeasured face means.
+
+    The score repeats between MediaPipe results (Face.blendshapes is kept
+    for face.landmarker_max_age_s), so durations are measured in steps of
+    the measurement rate.
+    """
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg
+        self._scores: deque[tuple[float, float]] = deque()   # (t, score) within the baseline window
+        self.score: float | None = None    # this frame's score, None without one
+        self.baseline: float | None = None
+        self.closed_since: float | None = None
+        self._long = False                 # eyes_closed already sent for this closure
+
+    def update(self, face: Face | None, t: float) -> str | None:
+        """This frame's event: "blink", "eyes_closed" or None."""
+        cfg = self.cfg
+        score = self.score = blink_score(face)
+        if score is None:
+            self.closed_since, self._long = None, False
+            return None
+        while self._scores and t - self._scores[0][0] > cfg["blink_baseline_s"]:
+            self._scores.popleft()
+        enough = len(self._scores) >= cfg["blink_min_samples"]
+        self.baseline = float(np.median([s for _, s in self._scores])) if enough else None
+        self._scores.append((t, score))
+        if self.baseline is None:
+            return None
+        down = math.degrees(face.pitch) < cfg["blink_down_deg"]
+        if self.closed_since is None:
+            if not down and score > self.baseline + cfg["blink_on"] and score > cfg["blink_min_score"]:
+                self.closed_since, self._long = t, False
+            return None
+        if down:
+            self.closed_since, self._long = None, False
+            return None
+        if score < self.baseline + cfg["blink_off"]:
+            length, was_long = t - self.closed_since, self._long
+            self.closed_since, self._long = None, False
+            if was_long or length < cfg["blink_min_s"]:
+                return None
+            # No frame in between (a stall): a closure past blink_max_s is long.
+            return "blink" if length <= cfg["blink_max_s"] else "eyes_closed"
+        if not self._long and t - self.closed_since > cfg["blink_max_s"]:
+            self._long = True
+            return "eyes_closed"
+        return None
+
+
 class _PlayerState:
     """One player's timers (``Debounce`` and ``punch_until`` in bodypose.py)."""
 
@@ -174,8 +265,13 @@ class GestureRecognizer:
         self.release_s = float(cfg["release_s"])
         self.punch_hold_s = float(cfg["punch_hold_s"])
         self._state: dict[int, _PlayerState] = {}
+        self._blinks: dict[int, BlinkDetector] = {}
 
-    def update(self, motion: dict[int, Motion], t: float) -> list[GestureEvent]:
+    def update(self, motion: dict[int, Motion], t: float,
+               faces: dict[int, Face] | None = None) -> list[GestureEvent]:
+        """This frame's gesture events, then the blink events of every
+        player with a face entry (faces: the face stage's output; None = no
+        blinks)."""
         # As in bodypose.py: a player without keypoints starts over.
         for pid in [pid for pid in self._state if pid not in motion]:
             del self._state[pid]
@@ -210,17 +306,24 @@ class GestureRecognizer:
             st.active = on
             if not any(on.values()):
                 st.ready = True
+        for pid, face in sorted((faces or {}).items()):
+            name = self._blinks.setdefault(pid, BlinkDetector(self.cfg)).update(face, t)
+            if name is not None:
+                events.append(GestureEvent(pid=pid, name=name, t=t, conf=1.0))
         return events
 
     def reset(self, pid: int | None = None) -> None:
         if pid is None:
             self._state.clear()
+            self._blinks.clear()
         else:
             self._state.pop(pid, None)
+            self._blinks.pop(pid, None)
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
         """Skeleton per player, the H/C/P line from bodypose.py under the body box
-        (1 = gesture on), and this frame's events."""
+        (1 = gesture on), each face's blink score against its baseline (and
+        CLOSED during a closure), and this frame's events."""
         for pid, m in state.motion.items():
             draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
             st, p = self._state.get(pid), state.players.get(pid)
@@ -232,13 +335,20 @@ class GestureRecognizer:
                 text += " reset first"
             x1, y2 = int(p.bbox[0]), int(p.bbox[3])
             draw_text(canvas, text, (x1, min(y2 + 25, canvas.shape[0] - 5)), (255, 255, 0))
-        lines = [f"EVENT P{e.pid} {e.name}" for e in state.events]
+        lines = []
+        for pid, b in sorted(self._blinks.items()):
+            if b.score is not None:
+                base = "-" if b.baseline is None else f"{b.baseline:.2f}"
+                lines.append(f"P{pid} eyes {b.score:.2f} base {base}" + (" CLOSED" if b.closed_since else ""))
+        lines += [f"EVENT P{e.pid} {e.name}" for e in state.events]
         draw_lines(canvas, lines, (10, canvas.shape[0] - 20 * len(lines) - 10))
 
     def log_fields(self, state: FrameState) -> dict:
         """Per-player CSV columns gest_p<pid>_<gesture> (1 while on),
-        gest_p<pid>_ready (1 when a new gesture can send an event) and
-        gest_p<pid>_events (names of this frame's events, joined by '+')."""
+        gest_p<pid>_ready (1 when a new gesture can send an event),
+        gest_p<pid>_events (names of this frame's events, joined by '+'),
+        gest_p<pid>_blink_base (the blink baseline; empty before there is
+        one) and gest_p<pid>_eyes_closed (1 during a closure)."""
         row: dict = {}
         for pid, st in sorted(self._state.items()):
             pre = f"gest_p{pid}_"
@@ -246,4 +356,9 @@ class GestureRecognizer:
                 row[pre + name] = int(st.active[name])
             row[pre + "ready"] = int(st.ready)
             row[pre + "events"] = "+".join(e.name for e in state.events if e.pid == pid)
+        for pid, b in sorted(self._blinks.items()):
+            pre = f"gest_p{pid}_"
+            row.setdefault(pre + "events", "+".join(e.name for e in state.events if e.pid == pid))
+            row[pre + "blink_base"] = "" if b.baseline is None else round(b.baseline, 3)
+            row[pre + "eyes_closed"] = int(b.closed_since is not None)
         return row
