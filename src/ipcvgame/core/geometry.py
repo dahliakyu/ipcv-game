@@ -44,3 +44,17 @@ def angle_at(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
         return 0.0
     cos = np.clip(np.dot(ba, bc) / denom, -1.0, 1.0)
     return float(np.degrees(np.arccos(cos)))
+
+
+def bilinear(quad: np.ndarray, u, v) -> np.ndarray:
+    """Point(s) at (u, v) in a four-corner quad (4, 2): corners in the order
+    (u, v) = (0, 0), (1, 0), (1, 1), (0, 1). Between the corners, u and v
+    blend linearly, so a point keeps its place on a quad that moves, turns
+    or changes shape (e.g. paint on the torso). u, v: numbers or arrays of
+    one shape; returns (..., 2)."""
+    u = np.asarray(u, dtype=np.float64)[..., None]
+    v = np.asarray(v, dtype=np.float64)[..., None]
+    q = np.asarray(quad, dtype=np.float64)
+    top = (1 - u) * q[0] + u * q[1]
+    bottom = (1 - u) * q[3] + u * q[2]
+    return (1 - v) * top + v * bottom

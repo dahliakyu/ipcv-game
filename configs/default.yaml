@@ -511,13 +511,26 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # SHIELD_DURATION), then fades out without blocking (SHIELD_FADE_DURATION).
   shield_s: 1.0
   shield_fade_s: 0.24
-  # Paint splats per hit: one at the impact point plus this many nearby,
-  # spread up to this fraction of the body box, and kept within this middle
-  # band of the box (fractions of its width and height) so they land on the
-  # torso, not on the background in the box corners. Values from game.py.
-  splat_extra: 3
-  splat_spread: 0.08
-  splat_band: [0.38, 0.62]
+  # Paint: one splash per hit, on the torso in torso coordinates (u from the
+  # screen-left shoulder 0 to the right one 1, v from the shoulder line 0
+  # to the hips 1; extra_features.md feature 3), so it moves with the body.
+  # Attacks fly sideways and enter the body box at its near edge, often at
+  # an outstretched arm, so a splash starts at the torso's side facing the
+  # attacker and steps inward by a random 0 to splat_inward_u: hits build up
+  # paint from the near side across the shirt. 0.35 keeps a splash on the
+  # near half (0.1-0.45). The band keeps its centre on the shirt: 0.1 in
+  # from the shoulder joints (the keypoints sit inside the shoulder's
+  # outline), and from just under the shoulder line to just above the hips;
+  # a hit at head height lands at the top of the chest. game.py kept its
+  # splats in the middle 0.38-0.62 of the body box, which the renderer
+  # stretched over the torso.
+  splat_band_u: [0.1, 0.9]
+  splat_band_v: [0.05, 0.9]
+  splat_inward_u: 0.35
+  # Key b throws a test blob at P1 (Game.test_hit()), so one player can try
+  # hits and paint alone: at this height on the torso (0.35: the chest, where
+  # a punch from a player of the same height arrives).
+  test_hit_v: 0.35
   # Longest time step the game advances in one frame (main.py: dt capped
   # at 0.1 s). After a stall or a pause, objects do not jump far ahead.
   max_dt_s: 0.1

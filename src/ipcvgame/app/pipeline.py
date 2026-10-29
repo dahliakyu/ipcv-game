@@ -143,6 +143,10 @@ class Pipeline:
         keeping their calibration."""
         self.game.new_round()
 
+    def test_hit(self) -> bool:
+        """Throw a test blob at P1 (key b), to try hits and paint alone."""
+        return self.game.test_hit(1)
+
     def reset(self) -> None:
         """Clear every module's state; identity finds the players again."""
         for m in (self.pose, self.identity, self.motion, self.face, self.gestures, self.game,

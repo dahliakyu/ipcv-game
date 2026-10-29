@@ -23,7 +23,7 @@ The features build on the Colour Clash game, merged from the teammates' code (or
 | How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
 | Face effects and face data | `face/effects.py`: `FaceEffects.update()` (game hits, players holding a drink) and `draw()` (war paint, cheek bulge, mustache, flash, team hat, flying hats), per-player `_Anim`, `bulge(pid, t)` on drinking; `face/tracker.py` (`Face`, anchors), `face/head_pose.py` (3D anchor points), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
 | Players and identity | `identity/tracker.py`; `Player.status`, `reentered`, `pos` (`_position()`); P1 on the left at calibration (`order_left_to_right()`) | `identity:` | `tests/test_identity.py` |
-| Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting; `--no-intro`, `--solo`), `app/pipeline.py` | | `tests/test_pipeline.py` |
+| Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting, `b` test blob at P1; `--no-intro`, `--solo`), `app/pipeline.py` | | `tests/test_pipeline.py` |
 
 Each module reads only its own config section; the renderer reads game timings from `Game` (`beam_charge_s`, `shield_opacity()`, `torso()`, …), not from `game:`. Try a change with `python -m ipcvgame.app.main --source data/clips/session.mp4` (a full recorded round), `--until game` for the logic as plain shapes, and `--record-view <clip>` to save what the window shows. New CSV columns go in a module's `log_fields()`.
 
@@ -158,6 +158,45 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
   - hide splashes on a side of the body turned away from the camera.
 - **Cost.** The shapes are generated once per hit. Each frame only maps a small paint layer per player onto the body and blends it. Target: under ~2 ms per player, measured in the run log.
 - **Config.** Blob size and wobble, spike and droplet counts, and drip speed in `render:`; the hit band in `game:`.
+
+**Decisions (Task 5 owner, 2026-10-29).**
+
+- **Where the splash lands:** at the hit height, on the torso's side facing the attacker, with a random step inward. The blob flies sideways, so it always enters the body box at the near edge, often at an outstretched arm. The spikes fly on in the blob's direction, so paint builds up from the near side across the shirt.
+- **Shading: partial.** The paint keeps its team colour and darkens only partly in the clothes' shadows, so it stays visible on a black shirt.
+- **A blocked blob** bursts into falling drops on the shield (this replaces the fire bolt's break-up). At the frame edge it just leaves.
+- **Beam hits splash too,** with the same generator, until the final smash replaces the beam: every damaging hit adds a splash.
+- **Hits stay as they are:** the blob still flies sideways (aiming is feature 2) and hits the body box; only where the paint goes and how it looks change.
+- **One player.** A blob that hits someone needs an opponent, so key `b` throws a test blob at P1 from the far side of the frame, in P2's colour. With `--solo` or `--no-intro` alone, punches fire blobs, and `b` shows the hit, the splash on the body, its drips and the body filling with paint. Each step also has a test with one player.
+
+**Implementation steps.** One step at a time, each checked by the Task 5 owner before the next. Every new number goes in the module's config section with a reason.
+
+1. **Splashes in torso coordinates** (Task 4, `interaction/game.py`; Task 5, `app/main.py`). *Done.*
+   - `GamePlayer.torso`: the four corners (both shoulders, both hips) from the smoothed keypoints, each frame, like `bounds`.
+   - `PaintSplat` becomes one splash per hit: (`u`, `v`) on the torso, the flight direction, a seed, the attacker and the hit time. `u` is the near side plus a random step inward, `v` the hit height between the shoulder line and the hips, both kept in the torso band `splat_band_u` / `splat_band_v`. These replace `splat_extra`, `splat_spread` and `splat_band`.
+   - `Game.test_hit()` and key `b`: a test blob at P1 from the far side.
+   - Drawn for now as the old pixel crosses, placed by the bilinear map over the four corners, so they follow the body. In `--until game`, the torso corners and the splashes as dots.
+   - As built:
+     - `core/geometry.py`, `bilinear(quad, u, v)`: the point at (u, v) in a four-corner quad.
+     - `Game.torso_corners(m)`: `R_SHOULDER`, `L_SHOULDER`, `L_HIP`, `R_HIP`, so u = 0 is the screen-left side for a player facing the camera (the model's `L_*` is on the screen's right, `core/skeleton.py`). With the hips not both seen, the shoulders are moved down to `torso()`'s estimated hip level. `update()` stores it in `GamePlayer.torso`; None without a usable shoulder width.
+     - `PaintSplat(u, v, owner_id, direction, seed, t)`. `_splash()` makes one per damaging hit (bolt or beam): u at the near band edge plus a random 0–`splat_inward_u` inward, v from the hit height between the shoulder line and the hips. The near side comes from the corners' x and the flight direction. Without a torso: v = 0.5. Seeded per target and splash count, as before.
+     - `Game.test_hit(pid)`: a normal bolt from the far frame edge at `test_hit_v` down P1's torso, owned by the other team (P2's blue), action `test_blob`. Only while playing with the player in view. `Pipeline.test_hit()` and key `b` in `app/main.py`; README and the `main.py` docstring list the key.
+     - Renderer: `_draw_player_paint(canvas, torso, splats, coverage)` puts each cross at `bilinear(torso, u, v)`, sized by the torso's width and height; `paint_area()` is gone. Paint is drawn only for players with a torso this frame.
+   - New `game:` keys: `splat_band_u`, `splat_band_v`, `splat_inward_u`, `test_hit_v`; gone: `splat_extra`, `splat_spread`, `splat_band`.
+   - On `session.mp4` (`--no-intro`): the same round as before (7 and 10 hits, P1 wins with 28 HP). Every splash is on the side facing the attacker (P1's at u 0.22–0.38, P2's at 0.59–0.86). 10 of 17 hits arrive at or above the shoulder line (all 7 on P1), so v is 0.05, the top of the band: punches arrive at shoulder height.
+   - One player: on `shield.mp4` with a test blob every 2 s, 5 of the blobs hit (the rest met the shield in this clip of shield attempts); the paint sits on the near side of the coat and moves with it.
+2. **Paint layer and body mask** (Task 5, `scene/renderer.py`).
+   - Each player's splashes are drawn once, when a hit lands, into a small paint layer in torso coordinates. The layer reaches past the torso, so paint can run onto the arms.
+   - Each frame, the layer is warped onto the body from the four corners and clipped to a body mask: the torso quad plus a capsule along each upper and lower arm and leg, with widths in shoulder widths.
+   - Partial shading from the camera's brightness; render time per player in the log.
+   - Plain discs as splashes until step 3.
+3. **Splash shapes** (Task 5).
+   - The generator, seeded per hit: a wobbly central blob, 5–10 tapering spikes mostly in the flight direction, power-law droplets, and 1–3 drips that run down over ~1 s.
+   - Splashes grow as health drops, so a player near 0 HP is mostly paint.
+4. **The blob in flight and the burst** (Task 5; Task 4 for the texts).
+   - The wobbling blob with trailing droplets and a highlight replaces `FireBolt` for the normal attack; on a shield it bursts into falling drops.
+   - Texts: "PUNCH: PAINT BLOB" in `CONTROLS` and `MOVE_TEXT["punch"]`.
+   - `scene/fire_bolt.py` and its `bolt_sprite*` keys go, if nothing else uses them.
+5. **Check and docs.** Clips (`session.mp4` with `--no-intro` has real hits; `shield.mp4` alone with test blobs), the render time, then the feature moves to `merge_log.md`.
 
 **Check.** A punch that hits at shoulder height leaves paint near the shoulder, and the paint stays there while the player moves their arms and leans; no paint outside the body mask; no two splashes look the same; the render cost per frame is logged.
 

@@ -5,8 +5,10 @@ Task 4). Positions are pixels in the mirrored frame; every number comes from
 the ``game:`` config.
 
 Combat (``advance()``): bolts and beams fly across the frame and damage the
-first other player whose body box they reach, adding paint splats; a raised
-shield blocks them. At 0 health the attacker wins and the game freezes.
+first other player whose body box they reach, adding a paint splash on the
+torso (``PaintSplat``, in torso coordinates, so the paint moves with the
+body; feature 3 in docs/extra_features.md); a raised shield blocks them.
+At 0 health the attacker wins and the game freezes.
 Every hit that does damage is also kept in ``Game.hits`` for that frame,
 for the face effects' hit reaction (docs/merge_log.md, "Face effects").
 
@@ -57,6 +59,7 @@ import cv2
 import numpy as np
 
 from ipcvgame.core import skeleton as sk
+from ipcvgame.core.geometry import bilinear
 from ipcvgame.core.types import FrameState, Motion
 from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
 from ipcvgame.pose.measure import arm_px, shoulder_px, torso_px
@@ -92,9 +95,18 @@ class _Hold:
 
 @dataclass
 class PaintSplat:
-    x: float          # inside the target's body box, fraction of its width
-    y: float          # fraction of its height
-    owner_id: int     # the attacker; the colour comes from scene/draw.py
+    """One splash of paint from one hit. (u, v) is a point on the torso
+    (GamePlayer.torso): u from the screen-left shoulder (0) to the
+    screen-right one (1) when facing the camera, v from the shoulder line (0)
+    to the hips (1). The renderer maps it back onto the body every frame
+    (core.geometry.bilinear()), so the paint moves, leans and scales with
+    the player."""
+    u: float
+    v: float
+    owner_id: int       # the attacker; the colour comes from scene/draw.py
+    direction: int = 1  # the way the attack flew: +1 to the right, -1 to the left
+    seed: int = 0       # the splash's shape (renderer): the same in every frame
+    t: float = 0.0      # Frame.t of the hit
 
 
 @dataclass
@@ -106,6 +118,8 @@ class GamePlayer:
     x: float = 0.0                       # px, shoulder midpoint
     y: float = 0.0                       # px, hip level
     bounds: np.ndarray | None = None     # body box x1, y1, x2, y2 in px
+    # The torso this frame (torso_corners()), (4, 2) px; None when unknown.
+    torso: np.ndarray | None = None
     paint_splats: list[PaintSplat] = field(default_factory=list)
     # Calibration: index of the current move in CALIBRATION_MOVES (all done
     # at len), and the Frame.t it was shown at (for a reminder).
@@ -266,7 +280,6 @@ class Game:
         self.beam_life_s = self.beam_charge_s + float(cfg["beam_duration_s"])
         self.shield_fade_s = float(cfg["shield_fade_s"])
         self.bolt_end_s = float(cfg["bolt_end_s"])
-        self.splat_band = (float(cfg["splat_band"][0]), float(cfg["splat_band"][1]))
         # Drinks (consumables): in the air now, a seedable random generator
         # (drink_seed; null = a different game every time) and the time to
         # the next one (s), counted down while playing.
@@ -545,28 +558,58 @@ class Game:
         target.health = max(0, target.health - damage)
         self.hits.append(Hit(target_id, owner_id, direction, damage))
         self.actions.append((target_id, "hit"))
-        if target.bounds is not None:
-            lo, hi = self.cfg["splat_band"]
-            spread = self.cfg["splat_spread"]
-            left, top, right, bottom = target.bounds
-            width = max(right - left, 1.0)
-            height = max(bottom - top, 1.0)
-            # Impact point as a fraction of the box, kept on the torso band.
-            center_x = min(hi, max(lo, (impact_x - left) / width))
-            center_y = min(hi, max(lo, (impact_y - top) / height))
-            splats = target.paint_splats
-            splats.append(PaintSplat(center_x, center_y, owner_id))
-            # Seeded, so the same hit always gives the same splats.
-            rng = random.Random(target_id * 1000 + len(splats))
-            for _ in range(self.cfg["splat_extra"]):
-                splats.append(PaintSplat(
-                    min(hi, max(lo, center_x + rng.uniform(-spread, spread))),
-                    min(hi, max(lo, center_y + rng.uniform(-spread, spread))),
-                    owner_id,
-                ))
+        target.paint_splats.append(self._splash(target_id, owner_id, impact_y, direction))
 
         if target.health == 0:
             self.winner_id = owner_id
+
+    def _splash(self, target_id: int, owner_id: int, impact_y: float,
+                direction: int) -> PaintSplat:
+        """The splash a hit leaves on the target's torso. Attacks fly
+        sideways, so they enter the body box at its near edge, often at an
+        outstretched arm: u starts at the torso's side facing the attacker
+        (splat_band_u) and steps inward by a random 0-splat_inward_u. v is
+        the hit height between the shoulder line and the hips, kept in
+        splat_band_v. Without a torso this frame: halfway down, and the
+        screen-left shoulder taken as u = 0. Seeded, so the same hit always
+        gives the same splash."""
+        cfg, target = self.cfg, self.get_player(target_id)
+        rng = random.Random(target_id * 1000 + len(target.paint_splats))
+        (u_lo, u_hi), (v_lo, v_hi) = cfg["splat_band_u"], cfg["splat_band_v"]
+        corners = target.torso
+        if corners is None:
+            v, u0_on_left = 0.5, True
+        else:
+            shoulder_y = (corners[0][1] + corners[1][1]) / 2.0
+            hip_y = (corners[2][1] + corners[3][1]) / 2.0
+            v = (impact_y - shoulder_y) / max(hip_y - shoulder_y, 1.0)
+            u0_on_left = corners[0][0] <= corners[1][0]
+        step = rng.uniform(0.0, cfg["splat_inward_u"])
+        # Flying right, the attack comes in from the screen's left side.
+        u = u_lo + step if (direction > 0) == u0_on_left else u_hi - step
+        return PaintSplat(u, min(max(v, v_lo), v_hi), owner_id, 1 if direction >= 0 else -1,
+                          rng.randrange(2**31), self._t or 0.0)
+
+    def test_hit(self, pid: int = 1) -> bool:
+        """Throw a test blob at pid from the far side of the frame (key b),
+        in the other team's colour, so one player can see a hit and its paint
+        alone. It is a normal bolt: it does damage and a shield blocks it.
+        Only while playing, with pid in view; returns if it was thrown."""
+        player = self.players.get(pid)
+        if (self.phase != "playing" or self.winner_id is not None
+                or player is None or player.bounds is None):
+            return False
+        left, top, right, bottom = player.bounds
+        if player.torso is not None:
+            y = float(bilinear(player.torso, 0.5, self.cfg["test_hit_v"])[1])
+        else:
+            y = (top + bottom) / 2.0
+        # From the far side: a player on the left gets it from the right edge.
+        direction = -1 if (left + right) / 2.0 < self.frame_w / 2.0 else 1
+        x = float(self.frame_w) if direction < 0 else 0.0
+        self.projectiles.append(Projectile(x, y, direction, 2 if pid == 1 else 1))
+        self.actions.append((pid, "test_blob"))
+        return True
 
     def update(self, state: FrameState) -> None:
         """One frame (the game part of the ``main.py`` loop)."""
@@ -583,6 +626,7 @@ class Game:
         for pid in visible:
             player = self.get_player(pid)
             player.bounds = state.players[pid].bbox.astype(float)
+            player.torso = self.torso_corners(state.motion[pid]) if pid in state.motion else None
             if pid in state.motion:
                 pos = self.body_position(state.motion[pid])
                 if pos is not None:
@@ -898,6 +942,25 @@ class Game:
         hip_y = lower_body_y(k, v, shoulder_y, sw, self.cfg)
         return float(center_x), float(shoulder_y), float(hip_y), float(sw)
 
+    def torso_corners(self, m: Motion) -> np.ndarray | None:
+        """The torso as four corners (4, 2) px, for paint in torso
+        coordinates (PaintSplat): R_SHOULDER, L_SHOULDER, L_HIP, R_HIP, so
+        u = 0 is the screen-left side for a player facing the camera (the
+        model's L_* is on the screen's right, core/skeleton.py). None
+        without a usable shoulder width (torso()). Hips not both visible:
+        the shoulders moved down to torso()'s estimated hip level."""
+        torso = self.torso(m)
+        if torso is None:
+            return None
+        k, v = m.kpts.astype(np.float64), m.valid
+        rs, ls = k[sk.R_SHOULDER], k[sk.L_SHOULDER]
+        if v[sk.L_HIP] and v[sk.R_HIP]:
+            lh, rh = k[sk.L_HIP], k[sk.R_HIP]
+        else:
+            drop = np.array([0.0, torso[2] - torso[1]])
+            lh, rh = ls + drop, rs + drop
+        return np.array([rs, ls, lh, rh])
+
     def facing(self, pid: int, positions: dict[int, tuple[float, float]]) -> int:
         """Sideways direction of pid's attacks: +1 = right, -1 = left.
 
@@ -1004,7 +1067,7 @@ class Game:
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
         """The game state as plain shapes, for checking the logic (the game's
         look is drawn by the renderer): thin skeletons; body boxes with health
-        and shield; splats as dots; bolts as dots with a tail and an x where
+        and shield; the torso (thin) with its splashes as dots; bolts as dots with a tail and an x where
         they ended; beams as a line with their hit band (a growing circle while
         charging); shields as an ellipse beside the player (thin while
         fading); drinks as a circle of their size with the category's
@@ -1016,17 +1079,18 @@ class Game:
         for pid, player in sorted(self.players.items()):
             if player.bounds is None:
                 continue
-            left, top, right, bottom = player.bounds
-            w, h = right - left, bottom - top
             label = f"P{pid} {player.health}" + (" shield" if self.shielded(pid) else "")
             if player.attack_left > 0:
                 label += f" atk x{player.attack:.2f} {player.attack_left:.0f}s"
             if player.defense_left > 0:
                 label += f" def {player.defense:.0%} {player.defense_left:.0f}s"
             draw_bbox(canvas, player.bounds, player_color(pid), label, dashed=True)
-            for splat in player.paint_splats:
-                c = (left + splat.x * w, top + splat.y * h)
-                cv2.circle(canvas, pt(c), 3, player_color(splat.owner_id), -1, cv2.LINE_AA)
+            if player.torso is not None:
+                cv2.polylines(canvas, [np.round(player.torso).astype(np.int32)], True,
+                              player_color(pid), 1, cv2.LINE_AA)
+                for splat in player.paint_splats:
+                    c = bilinear(player.torso, splat.u, splat.v)
+                    cv2.circle(canvas, pt(c), 4, player_color(splat.owner_id), -1, cv2.LINE_AA)
 
         for end in self.bolt_ends:
             x, y, r = int(end.x), int(end.y), int(unit)

@@ -1,8 +1,8 @@
 """Task 5 — game renderer, from Colour Clash renderer.py.
 
 The game view, in drawing order: the camera frame (pixelated, as in
-renderer.py), each player's paint splats (renderer.py's pixel crosses, on the
-torso), the
+renderer.py), each player's paint splats (renderer.py's pixel crosses, at
+their place on the torso), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
 beam, ring of fire shields), face effects, each player's status above the
 head (name tag, dizzy stars, crown; docs/merge_log.md, "Face effects"),
@@ -42,6 +42,7 @@ import cv2
 import numpy as np
 
 from ipcvgame.core.filters import OneEuro
+from ipcvgame.core.geometry import bilinear
 from ipcvgame.core.types import Face, FrameState
 from ipcvgame.face.effects import FaceEffects, load_sprite
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
@@ -121,11 +122,11 @@ class Renderer:
         # Paint only on players the identity stage sees now (renderer.py drew
         # only detected players).
         visible = [pid for pid, p in sorted(state.players.items())
-                   if p.status == "active" and pid in game.players and game.players[pid].bounds is not None]
+                   if p.status == "active" and pid in game.players and game.players[pid].torso is not None]
         for pid in visible:
             player = game.players[pid]
-            self._draw_player_paint(canvas, self.paint_area(pid, state, game), player.paint_splats,
-                                    1.0 - player.health / game.max_health, game.splat_band)
+            self._draw_player_paint(canvas, player.torso, player.paint_splats,
+                                    1.0 - player.health / game.max_health)
         phase = game.phase
         if phase != "result":
             # After a win the game stops (game.py), so bolts and beams in
@@ -678,47 +679,29 @@ class Renderer:
 
     # ------------------------------------------------------ paint and health
 
-    def paint_area(self, pid: int, state: FrameState, game: Game) -> tuple[float, float, float, float]:
-        """Where the player's paint is drawn (x1, y1, x2, y2 px): the torso,
-        between the shoulders and from the shoulder line to the hips, so the
-        splats stay on the shirt when an arm goes out. renderer.py drew them
-        in the body box, which widens with the arms, so they slid off the
-        body. Without a shoulder width: the box's splat band."""
-        m = state.motion.get(pid)
-        torso = game.torso(m) if m is not None else None
-        if torso is not None:
-            x, shoulder_y, hip_y, sw = torso
-            return x - sw / 2, shoulder_y, x + sw / 2, hip_y
-        left, top, right, bottom = game.players[pid].bounds
-        lo, hi = game.splat_band
-        w, h = right - left, bottom - top
-        return left + lo * w, top + lo * h, left + hi * w, top + hi * h
-
-    def _draw_player_paint(self, canvas: np.ndarray, area: tuple, splats: list, coverage: float,
-                           band: tuple[float, float]) -> None:
+    def _draw_player_paint(self, canvas: np.ndarray, torso: np.ndarray, splats: list,
+                           coverage: float) -> None:
         """renderer.py: each splat is a pixel cross (5 cells) in the
         attacker's colour. The cells grow as the player's health drops
         (coverage = 1 - health / max_health), so a beaten player looks more
         painted.
 
-        Changed: the game keeps splats inside a band of the body box
-        (game.splat_band); that band is stretched over `area` (the torso), and
-        the cells are fractions of the area, not of the box."""
+        Changed: each splash sits at its (u, v) on the torso (the game's
+        GamePlayer.torso corners, mapped with bilinear()), so it moves, leans
+        and scales with the body; cells are fractions of the torso's width
+        (shoulder to shoulder) and height (shoulder line to hips)."""
         h, w = canvas.shape[:2]
-        left, top, right, bottom = (int(v) for v in area)
-        area_w, area_h = max(1, right - left), max(1, bottom - top)
-        lo, hi = band
+        torso_w = float(np.linalg.norm(torso[1] - torso[0]))
+        torso_h = float(np.linalg.norm((torso[2] + torso[3]) / 2 - (torso[0] + torso[1]) / 2))
         (cw0, cw1), (ch0, ch1) = self.cfg["splat_cell_w"], self.cfg["splat_cell_h"]
-        cell_w = max(2, int(area_w * (cw0 + cw1 * coverage)))
-        cell_h = max(2, int(area_h * (ch0 + ch1 * coverage)))
+        cell_w = max(2, int(torso_w * (cw0 + cw1 * coverage)))
+        cell_h = max(2, int(torso_h * (ch0 + ch1 * coverage)))
         for splat in splats:
-            u = min(max((splat.x - lo) / (hi - lo), 0.0), 1.0)
-            v = min(max((splat.y - lo) / (hi - lo), 0.0), 1.0)
-            cx, cy = left + int(u * area_w), top + int(v * area_h)
+            cx, cy = (int(c) for c in bilinear(torso, splat.u, splat.v))
             for ox, oy in ((-1, 0), (0, -1), (0, 0), (0, 1), (1, 0)):
-                x, y = cx + ox * cell_w, cy + oy * cell_h
-                x0, y0 = max(left, 0, x), max(top, 0, y)
-                x1, y1 = min(right, w, x + cell_w - 1), min(bottom, h, y + cell_h - 1)
+                x, y = cx + ox * cell_w - cell_w // 2, cy + oy * cell_h - cell_h // 2
+                x0, y0 = max(0, x), max(0, y)
+                x1, y1 = min(w, x + cell_w - 1), min(h, y + cell_h - 1)
                 if x0 < x1 and y0 < y1:
                     cv2.rectangle(canvas, (x0, y0), (x1, y1), player_color(splat.owner_id), -1, cv2.LINE_8)
 

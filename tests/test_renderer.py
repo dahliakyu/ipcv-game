@@ -75,14 +75,14 @@ def test_pixelate_makes_blocks():
 
 
 def test_paint_crosses_in_attacker_colour_grow_with_damage(game):
-    """box: here the area the paint is drawn in."""
+    """torso: the four corners the paint is drawn on."""
     from ipcvgame.interaction.game import PaintSplat
     r = renderer()
-    box = np.array([100.0, 100, 300, 500])
+    torso = np.array([[100.0, 100], [300, 100], [300, 500], [100, 500]])
 
     def painted(coverage):
         canvas = np.zeros((600, 400, 3), np.uint8)
-        r._draw_player_paint(canvas, box, [PaintSplat(0.5, 0.5, owner_id=2)], coverage, game.splat_band)
+        r._draw_player_paint(canvas, torso, [PaintSplat(0.5, 0.5, owner_id=2)], coverage)
         return canvas
     fresh, beaten = painted(0.0), painted(1.0)
     blue = np.all(fresh == player_color(2), axis=2)
@@ -121,18 +121,34 @@ def test_new_round_keeps_players(monkeypatch):
     assert p.identity.players == {}
 
 
-def test_paint_stays_on_the_torso_when_an_arm_goes_out(game):
+def test_paint_follows_the_torso_not_the_box(game):
+    from ipcvgame.interaction.game import PaintSplat
+    r = renderer(pixel_size=1)
+
+    def blue_on_p1(canvas):
+        # Around P1 only: P2's health bar and P2 are blue too.
+        return np.all(canvas[100:900, :500] == player_color(2), axis=2)
+
+    def paint_centre(state):
+        game.update(state)
+        state.frame.image[:] = 0
+        ys, xs = np.nonzero(blue_on_p1(r.draw(state, game)))
+        return xs.mean(), ys.mean() + 100
+
     state = frame_state(0.0)
     game.update(state)
-    r = renderer()
-    area = r.paint_area(1, state, game)
-    assert area == (150.0, 300.0, 250.0, 600.0)          # shoulders 150-250, shoulder line to hips
+    game.get_player(1).paint_splats.append(PaintSplat(0.5, 0.5, owner_id=2))
+    x, y = paint_centre(state)
+    assert x == pytest.approx(200, abs=3) and y == pytest.approx(450, abs=3)   # middle of the torso
+    game.update(state)
     game.get_player(1).bounds = np.array([100.0, 150, 600, 900])   # arm out: the box widens
-    assert r.paint_area(1, state, game) == area
-    state.motion[1].valid[sk.R_SHOULDER] = False         # no shoulders: the box's splat band
-    lo, hi = game.splat_band
-    assert r.paint_area(1, state, game) == (100 + lo * 500, 150 + lo * 750, 100 + hi * 500, 150 + hi * 750)
-
+    assert np.all(blue_on_p1(r.draw(state, game)).nonzero()[1] < 300)
+    x, y = paint_centre(frame_state(0.1, xs=(300.0, 800.0)))     # the player moves
+    assert x == pytest.approx(300, abs=3)
+    state = frame_state(0.2)
+    state.motion[1].valid[sk.R_SHOULDER] = False                 # no torso: no paint, no error
+    game.update(state)
+    assert not blue_on_p1(r.draw(state, game)).any()
 
 def test_text_fits_a_narrow_frame():
     import cv2

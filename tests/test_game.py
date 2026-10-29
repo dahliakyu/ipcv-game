@@ -78,9 +78,10 @@ def test_red_bolt_damages_blue_player_and_splats_red_paint(arena):
 
     blue = arena.get_player(2)
     assert blue.health == 90
-    assert blue.paint_splats
-    assert all(s.owner_id == 1 for s in blue.paint_splats)
-    assert all(0.38 <= s.x <= 0.62 and 0.38 <= s.y <= 0.62 for s in blue.paint_splats)
+    [splat] = blue.paint_splats                      # one splash per hit
+    assert splat.owner_id == 1 and splat.direction == 1
+    # No torso (advance() without update()): halfway down, on the side the bolt came from.
+    assert 0.1 <= splat.u <= 0.45 and splat.v == 0.5
 
 
 def test_blue_bolt_damages_red_player_with_blue_paint(arena):
@@ -239,8 +240,89 @@ def test_same_hit_gives_same_splats():
         g.get_player(2).bounds = np.array([600.0, 200, 800, 800])
         g.attack(300, 500, 1, player_id=1)
         g.advance(0.3, {1, 2})
-        return [(s.x, s.y) for s in g.get_player(2).paint_splats]
+        return [(s.u, s.v, s.seed) for s in g.get_player(2).paint_splats]
     assert splats() == splats()
+
+
+# --- Paint in torso coordinates (extra_features.md feature 3, step 1) -------
+
+from ipcvgame.core.geometry import bilinear  # noqa: E402
+
+
+def hit_until(game, t, pid, steps=20, dt=0.05):
+    """Advance with update() until pid has a new splash; returns the time."""
+    n = len(game.get_player(pid).paint_splats)
+    for _ in range(steps):
+        t += dt
+        game.update(frame_state(t))
+        if len(game.get_player(pid).paint_splats) > n:
+            return t
+    raise AssertionError("no hit")
+
+
+def test_update_keeps_the_torso_corners(game):
+    game.update(frame_state(0.0))
+    # R_SHOULDER (screen left), L_SHOULDER, L_HIP, R_HIP of the player at x = 200.
+    np.testing.assert_allclose(game.get_player(1).torso, [[150, 300], [250, 300], [240, 600], [160, 600]])
+    s = frame_state(0.1)
+    s.motion[1].valid[sk.L_HIP] = False             # hips not both seen: 2 shoulder widths down
+    game.update(s)
+    np.testing.assert_allclose(game.get_player(1).torso, [[150, 300], [250, 300], [250, 500], [150, 500]])
+    s.motion[1].valid[sk.R_SHOULDER] = False         # no shoulder width: no torso
+    game.update(s)
+    assert game.get_player(1).torso is None
+
+
+def test_splash_on_the_near_side_at_the_hit_height(game):
+    game.update(frame_state(0.0))
+    game.attack(300, 450, 1, player_id=1)            # halfway down P2's torso, from the left
+    hit_until(game, 0.0, 2)
+    [s2] = game.get_player(2).paint_splats
+    assert 0.1 <= s2.u <= 0.45 and s2.v == pytest.approx(0.5) and s2.owner_id == 1
+    game.attack(700, 200, -1, player_id=2)           # above P1's shoulders, from the right
+    hit_until(game, 1.0, 1)
+    [s1] = game.get_player(1).paint_splats
+    assert 0.55 <= s1.u <= 0.9 and s1.v == 0.05 and s1.direction == -1
+
+
+def test_splash_moves_with_the_torso(game):
+    game.update(frame_state(0.0))
+    game.attack(300, 450, 1, player_id=1)
+    t = hit_until(game, 0.0, 2)
+    p2 = game.get_player(2)
+    [s] = p2.paint_splats
+    before = bilinear(p2.torso, s.u, s.v)
+    game.update(frame_state(t + 0.1, xs=(200.0, 650.0)))      # P2 steps 150 px to the left
+    np.testing.assert_allclose(bilinear(p2.torso, s.u, s.v), before - [150, 0])
+    lean = frame_state(t + 0.2, xs=(200.0, 650.0))
+    lean.motion[2].kpts[[sk.L_SHOULDER, sk.R_SHOULDER]] += [40, 0]   # leans to the right
+    game.update(lean)
+    moved = bilinear(p2.torso, s.u, s.v)
+    assert moved[0] == pytest.approx(before[0] - 150 + 40 * (1 - s.v))   # follows the lean
+    assert moved[1] == pytest.approx(before[1])
+
+
+def test_test_blob_hits_a_lone_player_from_the_far_side(game):
+    alone = lambda t: frame_state(t, xs=(200.0,))   # noqa: E731
+    game.update(alone(0.0))
+    assert game.test_hit(1)
+    [b] = game.projectiles
+    # P1 on the left: from the right edge, in P2's colour, at the chest.
+    assert (b.x, b.direction, b.owner_id) == (W, -1, 2) and b.y == pytest.approx(300 + 0.35 * 300)
+    assert (1, "test_blob") in game.actions
+    for i in range(1, 30):
+        game.update(alone(0.05 * i))
+    p1 = game.get_player(1)
+    assert p1.health == 90
+    [s] = p1.paint_splats
+    assert s.owner_id == 2 and 0.55 <= s.u <= 0.9
+
+
+def test_no_test_blob_outside_playing():
+    g = Game({**load_config()["game"], **NO_FACING})        # intro: waiting
+    g.update(frame_state(0.0, xs=(200.0,)))
+    assert not g.test_hit(1) and g.projectiles == []
+    assert not Game({**load_config()["game"], "intro": False}).test_hit(1)   # P1 not seen yet
 
 
 # --- update(state): positions, events -> actions, time ---------------------
