@@ -311,6 +311,9 @@ class Game:
         # random generator (orb_seed), and the time to the next one (s).
         self.orb_parts = int(cfg["orb_parts"])
         self.orb_part: OrbPart | None = None
+        # Parts collected this frame (cleared by update()) as (pid, x, y):
+        # who, and where the part was, for the renderer's pop.
+        self.orbs_taken: list[tuple[int, float, float]] = []
         self._orb_rng = random.Random(cfg["orb_seed"])
         self._orb_wait = self._orb_rng.uniform(*cfg["orb_every_s"])
 
@@ -599,6 +602,7 @@ class Game:
         if math.hypot(hand[0] - part.x, hand[1] - part.y) > self.orb_radius() + self.cfg["orb_reach_sw"] * sw:
             return False
         player.orb += 1
+        self.orbs_taken.append((pid, part.x, part.y))
         self.orb_part = None
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
         self.actions.append((pid, "orb"))
@@ -742,6 +746,7 @@ class Game:
         self.actions = []
         self.hits = []
         self.drunk = []
+        self.orbs_taken = []
         for pid in visible:
             self._track_body_yaw(state, pid)
         for pid in state.players:
@@ -1160,6 +1165,7 @@ class Game:
         self.drunk.clear()
         self._drink_wait = self._rng.uniform(*self.cfg["drink_every_s"])
         self.orb_part = None
+        self.orbs_taken.clear()
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
         self.winner_id = None
         self.not_facing_t.clear()

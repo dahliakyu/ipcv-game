@@ -954,6 +954,43 @@ render:
   # buff_fade_s, so the player sees it is about to end.
   buff_icon_h: 0.045
   buff_fade_s: 2.0
+  # --- Orb parts for the final smash (scene/orb.py; docs/extra_features.md
+  # §1). The part (its radius is game.orb_r_h) is split into both team
+  # colours, as it belongs to no one yet, and turns this many times a
+  # second: slow enough to see the two colours, fast enough to look alive.
+  orb_spin_hz: 0.5
+  # A pale halo round the part, this many part radii wide, pulsing at
+  # orb_pulse_hz, so it stands out on a busy background.
+  orb_halo: 1.8
+  orb_pulse_hz: 1.5
+  # Pop where a punch collected a part: a ring growing to orb_pop_ring part
+  # radii and orb_pop_drops drops flying out, in the collector's colour,
+  # over orb_pop_s (as long as a blob's burst, game.bolt_end_s).
+  orb_pop_s: 0.5
+  orb_pop_ring: 3.0
+  orb_pop_drops: 8
+  # A player whose orb is full glows in their team colour, moved
+  # glow_white of the way to white so it reads as light (pure red on the
+  # red shirt in session.mp4 hardly showed) (draw_body_glow()): the body
+  # (the paint mask, mask_* keys) plus a head disc glow_head_fw face widths
+  # round the face centre (0.75: the face width is eye to eye plus a
+  # little, the head is wider), blurred so the halo fades out
+  # ~glow_reach_sw shoulder widths from the body (0.3 was a thin line at
+  # ~2.3 m on session.mp4). Opacity pulses between glow_alpha's two values
+  # at glow_hz, and on the body itself it is glow_inside of that, so the
+  # player stays visible inside a brighter halo. Drawn at glow_scale of the
+  # frame's resolution: the halo is a blur, so a quarter is enough and
+  # keeps the cost down.
+  glow_white: 0.3
+  glow_head_fw: 0.75
+  glow_reach_sw: 0.5
+  glow_alpha: [0.45, 0.8]
+  glow_hz: 1.2
+  glow_inside: 0.3
+  glow_scale: 0.25
+  # "RAISE YOUR ARMS" on the shoulder line of a player with a full orb,
+  # text scale (at 480 px, like the other scales).
+  raise_text_scale: 1.2
   # Paint blob (normal attack, scene/paint.py draw_blob(); it replaced the
   # assets/beam fire blast). Radius in frame widths: 0.02 is ~26 px at
   # 1280 px wide, about a fist at 2.3 m (a 0.1 m fist is ~40 px across

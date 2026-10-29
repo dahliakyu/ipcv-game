@@ -17,6 +17,12 @@ purple shield defense), a drink held at a mouth in front of the face, a
 pick-up text rising beside the drinker's head, and the running attack and
 defense buffs as icons with a time bar above each health bar.
 
+Orb parts for the final smash (docs/extra_features.md §1; drawing in
+scene/orb.py): the bouncing part in both team colours, a pop and "ORB n/4"
+where a punch collected it, the four orb slots on each health bar's label
+row, and a player whose orb is full glowing in their team colour, with
+"RAISE YOUR ARMS" beside the head.
+
 Around the round (game start, docs/merge_log.md), the game's phase
 decides what else is drawn: the players' start places while waiting, an
 instruction panel per player during calibration, 3-2-1 during the countdown,
@@ -58,6 +64,7 @@ from ipcvgame.scene.draw import (
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
 from ipcvgame.scene.magic_beam import MagicBeam
+from ipcvgame.scene.orb import draw_body_glow, draw_part, draw_pop, draw_slots
 from ipcvgame.scene.paint import BodyPaint, draw_blob, draw_burst
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
@@ -99,10 +106,13 @@ class Renderer:
         self._rings: dict[int, FireRing] = {}    # shield look per player
         self._tags: dict[int, _Tag] = {}         # name tag per player (_draw_tag())
         self._drink_sprites: dict[str, list[np.ndarray]] = {}   # per buff kind, on first use
-        # Pick-up texts: (pid, text, kind, Frame.t it started).
-        self._popups: list[tuple[int, str, str, float]] = []
+        # Pick-up texts: (pid, text, colour, Frame.t it started).
+        self._popups: list[tuple[int, str, tuple[int, int, int], float]] = []
+        # Orb pops where a part was collected: (pid, x, y, Frame.t it started).
+        self._pops: list[tuple[int, float, float, float]] = []
         self._paint: dict[int, BodyPaint] = {}    # paint per player
         self.paint_ms: dict[int, float] = {}       # this frame's paint time per player (log)
+        self.glow_ms: dict[int, float] = {}        # this frame's full-orb glow time per player (log)
 
     def reset(self, pid: int | None = None) -> None:
         """Forget the name tags' smoothing and the paint shapes (one player on
@@ -115,8 +125,11 @@ class Renderer:
             self._paint.pop(pid, None)
 
     def log_fields(self, state: FrameState) -> dict:
-        """Paint time per player this frame (ms), for the render cost."""
-        return {f"render_p{pid}_paint_ms": round(ms, 3) for pid, ms in self.paint_ms.items()}
+        """Paint and full-orb glow time per player this frame (ms), for the
+        render cost; the glow only while it is drawn."""
+        row = {f"render_p{pid}_paint_ms": round(ms, 3) for pid, ms in self.paint_ms.items()}
+        row.update({f"render_p{pid}_glow_ms": round(ms, 3) for pid, ms in self.glow_ms.items()})
+        return row
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
         canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
@@ -139,6 +152,13 @@ class Renderer:
                        1.0 - player.health / game.max_health, state.frame.t)
             self.paint_ms[pid] = (time.perf_counter() - t0) * 1000.0
         phase = game.phase
+        self.glow_ms = {}
+        if phase == "playing":
+            for pid in visible:
+                if game.players[pid].orb >= game.orb_parts:
+                    t0 = time.perf_counter()
+                    self._draw_glow(canvas, pid, state, game)
+                    self.glow_ms[pid] = (time.perf_counter() - t0) * 1000.0
         if phase != "result":
             # After a win the game stops (game.py), so bolts and beams in
             # flight would stand still: they are not drawn.
@@ -154,10 +174,13 @@ class Renderer:
         if phase != "result":
             self._draw_drinks(canvas, state, game)      # after the face: a held drink is at the lips
         self._draw_status(canvas, state, game)
+        if phase == "playing":
+            self._draw_raise_arms(canvas, state, game)
         self._draw_popups(canvas, state, game)
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)
+                self._draw_orb_slots(canvas, pid, game, state.frame.t)
                 self._draw_buffs(canvas, pid, game)
         top = self._draw_hud(canvas, status_text(phase, has_player=bool(visible)),
                              game_over=phase == "result")
@@ -602,7 +625,8 @@ class Renderer:
 
     def _draw_popups(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
         """For popup_s after a drink: "+18 HP", "ATTACK x1.4" or "DEFENSE
-        35%" in the buff's colour, beside the drinker's head on the side
+        35%" in the buff's colour; after an orb part: "ORB 2/4" in the team
+        colour ("FULL ORB!" for the last). Beside the player's head on the side
         towards the middle of the frame, rising by popup_rise_h of the frame
         height and fading over the last third. It starts at the mouth and
         follows the player; without a face, at the top of the body box."""
@@ -610,12 +634,16 @@ class Renderer:
         for d in game.drunk:
             text = {"hp": f"+{round(d.value)} HP", "attack": f"ATTACK x{d.value:.1f}",
                     "defense": f"DEFENSE {d.value:.0%}"}[d.kind]
-            self._popups.append((d.pid, text, d.kind, t))
+            self._popups.append((d.pid, text, DRINK_COLORS[d.kind], t))
+        for pid, _, _ in game.orbs_taken:
+            n = game.players[pid].orb
+            text = "FULL ORB!" if n >= game.orb_parts else f"ORB {n}/{game.orb_parts}"
+            self._popups.append((pid, text, player_color(pid), t))
         self._popups = [p for p in self._popups if 0 <= t - p[3] < cfg["popup_s"]]
         h, w = canvas.shape[:2]
         scale = self._scale(canvas, "popup_text_scale")
         thick = max(1, int(round(scale)))
-        for pid, text, kind, t0 in self._popups:
+        for pid, text, color, t0 in self._popups:
             f, p = state.faces.get(pid), state.players.get(pid)
             if f is not None and f.valid and "mouth" in f.anchors:
                 (cx, cy), side_px = f.anchors["mouth"], cfg["popup_side_fw"] * f.scale
@@ -634,8 +662,75 @@ class Renderer:
             box = (x - 4, y - th - 4, x + tw + 4, y + 8)
             with faded(canvas, box, alpha):
                 cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
-                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DRINK_COLORS[kind], thick,
-                            cv2.LINE_AA)
+                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, color, thick, cv2.LINE_AA)
+
+    # ---------------------------------------------------------------- orb
+
+    def _draw_glow(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game) -> None:
+        """pid's orb is full: their body glows in their team colour
+        (scene/orb.py draw_body_glow()), pulsing between glow_alpha's two
+        values at glow_hz. The head is a disc glow_head_fw face widths round
+        the face centre (none without a face)."""
+        cfg, player = self.cfg, game.players[pid]
+        f = state.faces.get(pid)
+        head = (f.center, cfg["glow_head_fw"] * f.scale) if f is not None and f.valid else None
+        lo, hi = cfg["glow_alpha"]
+        pulse = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * state.frame.t)
+        draw_body_glow(canvas, player.torso, state.motion.get(pid), head, player_color(pid),
+                       lo + (hi - lo) * pulse, cfg)
+
+    def _draw_raise_arms(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """"RAISE YOUR ARMS" for each visible player whose orb is full, in
+        their team colour, centred on the shoulder line (beside the head it
+        ran into the name tag, hat and crown), growing and shrinking a
+        little at glow_hz with the glow. Without shoulders: at the top of
+        the body box."""
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        pulse = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * state.frame.t)
+        scale = self._scale(canvas, "raise_text_scale") * (1.0 + 0.08 * pulse)
+        thick = max(1, int(round(scale)))
+        for pid, player in sorted(game.players.items()):
+            p = state.players.get(pid)
+            if player.orb < game.orb_parts or p is None or p.status != "active":
+                continue
+            m = state.motion.get(pid)
+            torso = game.torso(m) if m is not None else None
+            if torso is not None:
+                cx, cy = torso[0], torso[1]
+            else:
+                cx, cy = (p.bbox[0] + p.bbox[2]) / 2, p.bbox[1]
+            text = "RAISE YOUR ARMS"
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = int(np.clip(cx - tw / 2, 4, w - tw - 4))
+            y = int(np.clip(cy + th / 2, cfg["hud_h"] * h + th + 4, h - 4))
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                        cv2.LINE_AA)
+
+    def _draw_orb_slots(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
+        """pid's orb parts as game.orb_parts small balls on their health bar's
+        label row, at the end towards the middle of the frame (the label
+        "PLAYER N" is at the outer end): filled in the team colour per part
+        collected; all pulsing at glow_hz once the orb is full."""
+        if pid not in (1, 2) or pid not in game.players:
+            return
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        bar_h = max(4, int(cfg["bar_h"] * h))
+        label_h = int(12 * cfg["bar_font_h"] * h / 10.0)
+        length = int(cfg["bar_w"] * w)
+        left = 12 if pid == 1 else w - 12 - length
+        right = left + length
+        r = max(3.0, 0.4 * label_h)
+        cy = h - 12 - bar_h - label_h / 2.0 - 1
+        step = 2.6 * r
+        n = game.orb_parts
+        xs = [right - r - 1 - (n - 1 - i) * step for i in range(n)] if pid == 1 else \
+             [left + r + 1 + i * step for i in range(n)]
+        filled = game.players[pid].orb
+        glow = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * t) if filled >= n else 0.0
+        draw_slots(canvas, [(x, cy) for x in xs], r, filled, player_color(pid), glow)
 
     def _draw_buffs(self, canvas: np.ndarray, pid: int, game: Game) -> None:
         """The running attack and defense buffs above the player's health
@@ -721,11 +816,22 @@ class Renderer:
     # ----------------------------------------------------------- game objects
 
     def draw_game(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
-        """Bolts (the paint blob, the normal attack, and its burst into
+        """The orb part and the pops where parts were collected (under
+        everything else: the attacks fly in front), bolts (the paint blob,
+        the normal attack, and its burst into
         drops where a shield stopped it; at a hit the splash on the body
         is the effect, at the frame edge it just leaves), beams (magic ball
         and beam) and shields (ring of fire on the chest)."""
         cfg = self.cfg
+        t = state.frame.t
+        part_r = game.orb_radius()
+        if game.orb_part is not None:
+            o = game.orb_part
+            draw_part(canvas, o.x, o.y, part_r, o.age, (player_color(1), player_color(2)), cfg)
+        self._pops += [(pid, x, y, t) for pid, x, y in game.orbs_taken]
+        self._pops = [p for p in self._pops if 0 <= t - p[3] < cfg["orb_pop_s"]]
+        for pid, x, y, t0 in self._pops:
+            draw_pop(canvas, x, y, part_r, t - t0, cfg["orb_pop_s"], player_color(pid), cfg)
         radius = cfg["blob_r_w"] * canvas.shape[1]
         for b in game.projectiles:
             draw_blob(canvas, b.x, b.y, b.direction, b.age, radius, player_color(b.owner_id), cfg)

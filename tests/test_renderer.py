@@ -654,3 +654,59 @@ def test_blob_drawn_in_flight_and_burst_only_on_a_shield(game):
         game.bolt_ends[:] = [BoltEnd(500.0, 400.0, 1, 1, age=0.1, reason=reason)]
         red = np.all(r.draw(state, game) == player_color(1), axis=2)
         assert red[300:500, 380:620].any() == (reason == "shield")  # drops only off a shield
+
+
+# --- Orb parts (final smash, extra_features.md §1) -------------------------
+
+def test_orb_part_drawn_in_both_colours(game):
+    from ipcvgame.interaction.game import OrbPart
+    r = plain()
+    s = dark(0.0)
+    game.update(s)
+    game.orb_part = OrbPart(500.0, 150.0, 0.0, 0.0)
+    out = r.draw(s, game)[120:180, 470:530]
+    assert has_color(out, player_color(1)) and has_color(out, player_color(2))
+
+
+def test_collected_part_pops_with_its_count(game):
+    from tests.test_game import part_at, punch_at
+    r = plain()
+    game.update(dark(0.0, xs=(200.0,)))
+    part_at(game, 350.0, 300.0)
+    s = punch_at(0.1, (350.0, 300.0))
+    s.frame.image[:] = 0
+    game.update(s)
+    r.draw(s, game)
+    assert [p[1] for p in r._popups] == ["ORB 1/4"] and len(r._pops) == 1
+    game.get_player(1).orb = game.orb_parts - 1
+    part_at(game, 350.0, 300.0)
+    s = punch_at(1.0, (350.0, 300.0))
+    game.update(s)
+    r.draw(s, game)
+    assert r._popups[-1][1] == "FULL ORB!"
+
+
+def test_orb_slots_fill_on_the_health_bar_row(game):
+    r = plain()
+    s = dark(0.0)
+    game.update(s)
+    h, w = s.frame.image.shape[:2]
+    row = slice(h - 60, h - 12 - max(4, int(r.cfg["bar_h"] * h)))   # the label row above the bar
+    inner = slice(int(0.2 * w), int(0.35 * w))                      # P1's slots, at the bar's inner end
+    assert not has_color(r.draw(s, game)[row, inner], player_color(1))
+    game.get_player(1).orb = 2
+    assert has_color(r.draw(dark(0.0), game)[row, inner], player_color(1))
+
+
+def test_full_orb_makes_the_body_glow_and_logs_its_time(game):
+    r = plain()
+    s = dark(0.0, xs=(200.0,))
+    game.update(s)
+    game.get_player(1).orb = game.orb_parts - 1
+    not_full = r.draw(s, game)
+    assert r.glow_ms == {} and "render_p1_glow_ms" not in r.log_fields(s)
+    game.get_player(1).orb = game.orb_parts
+    full = r.draw(dark(0.0, xs=(200.0,)), game)
+    beside = (slice(400, 500), slice(60, 90))          # just outside P1's body box (100-300)
+    assert not not_full[beside].any() and full[beside].any()
+    assert set(r.glow_ms) == {1} and "render_p1_glow_ms" in r.log_fields(s)
