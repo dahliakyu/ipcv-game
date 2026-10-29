@@ -139,7 +139,7 @@ class Renderer:
             t0 = time.perf_counter()
             paint = self._paint.setdefault(pid, BodyPaint(self.cfg))
             paint.draw(canvas, player.torso, state.motion.get(pid), player.paint_splats,
-                       1.0 - player.health / game.max_health)
+                       1.0 - player.health / game.max_health, state.frame.t)
             self.paint_ms[pid] = (time.perf_counter() - t0) * 1000.0
         phase = game.phase
         if phase != "result":

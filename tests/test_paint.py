@@ -8,7 +8,7 @@ from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Motion
 from ipcvgame.interaction.game import PaintSplat
 from ipcvgame.scene.draw import player_color
-from ipcvgame.scene.paint import BodyPaint, body_mask
+from ipcvgame.scene.paint import BodyPaint, body_mask, splash_shapes
 
 # Fully opaque, so painted pixels have the exact team colour.
 CFG = {**load_config()["render"], "paint_opacity": 1.0}
@@ -46,12 +46,54 @@ def blue(canvas):
 
 
 def test_splash_lands_at_its_torso_point_in_the_attackers_colour():
-    canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2)])
+    canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=3)])
+    assert blue(canvas)[385, 200]                                 # the blob covers its point
     ys, xs = np.nonzero(blue(canvas))
-    assert xs.mean() == pytest.approx(200, abs=1.5) and ys.mean() == pytest.approx(385, abs=1.5)
-    # About round on the body: the layer's aspect matches this torso's.
-    assert (xs.max() - xs.min()) == pytest.approx(ys.max() - ys.min(), abs=3)
+    # Spray around it: within ~half a torso width.
+    assert abs(xs.mean() - 200) < 50 and abs(ys.mean() - 385) < 50
 
+
+def test_spray_flies_on_in_the_attacks_direction():
+    shift = {}
+    for direction in (1, -1):
+        dx = []
+        for seed in range(12):
+            canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, direction=direction, seed=seed)])
+            dx.append(np.nonzero(blue(canvas))[1].mean() - 200)
+        shift[direction] = np.mean(dx)
+    # Blob radius 10 px here: the spray leans ~a quarter radius onward.
+    assert shift[1] > 1.5 and shift[-1] < -1.5
+
+
+def test_every_splash_looks_different_but_stays_the_same():
+    a, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=1)])
+    b, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=2)])
+    again, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=1)])
+    assert (blue(a) != blue(b)).sum() > 100
+    np.testing.assert_array_equal(a, again)
+
+
+def test_shape_parts_within_their_ranges():
+    polys, drips = splash_shapes(7, CFG)
+    lo, hi = CFG["splash_spikes"]
+    d_lo, d_hi = CFG["splash_drops"]
+    # The blob, two polygons per spike (wedge, tip drop), one per droplet.
+    assert 1 + 2 * lo + d_lo <= len(polys) <= 1 + 2 * hi + d_hi
+    assert CFG["drips"][0] <= len(drips) <= CFG["drips"][1]
+    sizes = [np.ptp(p[:, 0]) / 2 for p in polys[1 + 2 * lo:]]     # droplets (and some tip drops)
+    assert max(sizes) < 1.5 * CFG["drop_r"][1] + 0.4
+
+
+def test_drips_run_down_then_stop():
+    s = [PaintSplat(0.5, 0.3, owner_id=2, seed=4, t=10.0)]
+    layer = BodyPaint(CFG)
+
+    def lowest(t):
+        canvas = np.full((900, 500, 3), 90, np.uint8)
+        layer.draw(canvas, TORSO, arms_down(), s, 0.0, t)
+        return np.nonzero(blue(canvas[:, 150:250]))[0].max()      # over the torso
+    at_hit, half, done, later = lowest(10.0), lowest(10.0 + CFG["drip_s"] / 2), lowest(11.0), lowest(15.0)
+    assert at_hit < half < done == later
 
 def test_paint_grows_as_health_drops():
     fresh, _ = paint([PaintSplat(0.5, 0.5, owner_id=2)], coverage=0.0)
@@ -60,11 +102,9 @@ def test_paint_grows_as_health_drops():
 
 
 def test_paint_follows_the_torso():
-    moved = TORSO + [120, 40]
-    canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2)], torso=moved)
-    ys, xs = np.nonzero(blue(canvas))
-    assert xs.mean() == pytest.approx(320, abs=1.5) and ys.mean() == pytest.approx(425, abs=1.5)
-
+    still, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=5)])
+    moved, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=5)], torso=TORSO + [120, 40])
+    np.testing.assert_array_equal(np.roll(blue(still), (40, 120), axis=(0, 1)), blue(moved))
 
 def test_paint_runs_onto_the_arm_but_not_the_background():
     beside = [PaintSplat(-0.25, 0.3, owner_id=2)]            # just outside the left shoulder
@@ -89,25 +129,36 @@ def test_body_mask_covers_torso_and_limbs():
 def test_shading_shows_folds_but_keeps_paint_bright_on_dark_cloth():
     stripes = np.full((900, 500, 3), 30, np.uint8)
     stripes[::8] = 60                                          # folds on a dark shirt
-    canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2)], image=stripes)
-    centre = canvas[378:393, 193:208].astype(int)
+    canvas, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=3)], image=stripes)
+    centre = canvas[381:390, 196:205].astype(int)
     lum = centre.sum(axis=2)
     assert lum.max() > lum.min() + 50                          # the folds show through
     assert lum.mean() == pytest.approx(sum(BLUE), rel=0.15)    # but the paint is not darkened
-    flat, _ = paint([PaintSplat(0.5, 0.5, owner_id=2)], image=stripes, paint_shade=0.0)
-    assert blue(flat[378:393, 193:208]).all()
+    flat, _ = paint([PaintSplat(0.5, 0.5, owner_id=2, seed=3)], image=stripes, paint_shade=0.0)
+    assert blue(flat[381:390, 196:205]).all()
 
 
-def test_shapes_made_only_on_change():
+def test_shapes_made_once_per_splash():
     s = [PaintSplat(0.5, 0.5, owner_id=2, seed=1)]
     _, layer = paint(s)
     canvas = np.zeros((900, 500, 3), np.uint8)
-    layer.draw(canvas, TORSO + 30, arms_down(TORSO + 30), s, 0.0)      # moved: same layer
+    layer.draw(canvas, TORSO + 30, arms_down(TORSO + 30), s, 0.5)      # moved, more damage
     assert layer.builds == 1
-    layer.draw(canvas, TORSO, arms_down(), s + [PaintSplat(0.3, 0.2, owner_id=2, seed=2)], 0.0)
-    layer.draw(canvas, TORSO, arms_down(), s + [PaintSplat(0.3, 0.2, owner_id=2, seed=2)], 0.1)
-    assert layer.builds == 3
+    two = s + [PaintSplat(0.3, 0.2, owner_id=2, seed=2)]
+    layer.draw(canvas, TORSO, arms_down(), two, 0.5)
+    layer.draw(canvas, TORSO, arms_down(), two, 0.6)
+    assert layer.builds == 2
+    layer.draw(canvas, TORSO, arms_down(), [], 0.0)                     # nothing to draw
+    layer.draw(canvas, TORSO, arms_down(), two[1:], 0.0)                # a new round: forgotten
+    assert len(layer._splashes) == 1
 
+
+def test_overlapping_parts_leave_no_holes():
+    """fillPoly with several overlapping polygons at once leaves holes."""
+    splats = [PaintSplat(0.5 + 0.05 * s, 0.5, owner_id=2, seed=s) for s in range(4)]
+    together, _ = paint(splats)
+    union = np.any([blue(paint([s])[0]) for s in splats], axis=0)
+    assert not (union & ~blue(together)).any()
 
 def test_no_paint_side_on_or_without_splashes():
     side_on = TORSO.copy()

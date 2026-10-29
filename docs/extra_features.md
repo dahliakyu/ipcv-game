@@ -20,7 +20,7 @@ The features build on the Colour Clash game, merged from the teammates' code (or
 | Gesture rules and events | `interaction/gestures.py`: `detect_*()`, `GestureRecognizer` | `gestures:` | `tests/test_gestures.py` |
 | Game phases: start places, calibration, countdown, result | `interaction/game.py`: `Game.phase`, `_next_phase()`, `place_taken()`, `_measure()` (neutral pose), `_check_line_up()`, `_tick()` (moves); `app/pipeline.py`: `_calibrate_identity()`; measurements in `pose/measure.py` | `game:` (`intro`, `round_players`, `ready_s`, `neutral_*`, …) | `tests/test_game.py` |
 | Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` → `_act()` (events to actions, `facing()`) and `_drink_with_mouths()` (mouths from `_track_mouth()`, buffs by `_apply_drink()`) → `advance()` (movement, drinks falling in `_advance_drinks()`, hits, `_apply_damage()` with the buffs, `_tick_buffs()`); state in `GamePlayer` (also `attack`, `defense`), `Projectile`, `PaintBeam`, `Shield`, `PaintSplat`, `Drink`; this frame's `hits` and `drunk` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
-| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); paint on the bodies in `scene/paint.py` (`BodyPaint`, `body_mask()`, `splash_polygons()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
+| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); paint on the bodies in `scene/paint.py` (`BodyPaint`, `splash_shapes()`, `body_mask()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
 | Face effects and face data | `face/effects.py`: `FaceEffects.update()` (game hits, players holding a drink) and `draw()` (war paint, cheek bulge, mustache, flash, team hat, flying hats), per-player `_Anim`, `bulge(pid, t)` on drinking; `face/tracker.py` (`Face`, anchors), `face/head_pose.py` (3D anchor points), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
 | Players and identity | `identity/tracker.py`; `Player.status`, `reentered`, `pos` (`_position()`); P1 on the left at calibration (`order_left_to_right()`) | `identity:` | `tests/test_identity.py` |
 | Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting, `b` test blob at P1; `--no-intro`, `--solo`), `app/pipeline.py` | | `tests/test_pipeline.py` |
@@ -156,7 +156,7 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 - **Optional:**
   - shade the paint with the camera image's brightness (multiply), so the folds of the clothes show through;
   - hide splashes on a side of the body turned away from the camera.
-- **Cost.** The shapes are generated once per hit. Each frame only maps their points onto the body, fills them and blends them (step 2: a warped paint layer image was tried and dropped). Target: under ~2 ms per player, measured in the run log.
+- **Cost.** The shapes are generated and drawn into a small sprite once per hit. Each frame only places each sprite on the body with one affine warp and blends the paint (step 2: one warped paint layer for the whole torso was tried and dropped; step 3: filling every polygon every frame was too slow). Target: under ~2 ms per player, measured in the run log.
 - **Config.** Blob size and wobble, spike and droplet counts, and drip speed in `render:`; the hit band in `game:`.
 
 **Decisions (Task 5 owner, 2026-10-29).**
@@ -199,9 +199,30 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
    - New `render:` keys: `paint_aspect`, `splash_r`, `mask_torso_u`, `mask_torso_v`, `mask_arm_sw`, `mask_leg_sw`, `paint_min_torso_px`, `paint_shade`, `paint_opacity`; gone: `splat_cell_w`, `splat_cell_h`.
    - Torso height over width measured (median): 1.82 and 1.74 on `session.mp4`, 1.46 on `shield.mp4` (hips often estimated there), so `paint_aspect` is 1.7. Torsos are 102–236 px wide on `session.mp4` and 178–390 px on `shield.mp4` (5th–95th percentile).
    - On `session.mp4` (`--no-intro`): paint time per player median 0.52 and 0.66 ms, 95th percentile 0.82 ms, at most 2.3 ms; the render stage went from 5.07 to 5.68 ms per frame on average. The discs sit on the chests and stop at the body's outline; paint near a raised arm runs onto it. On `shield.mp4` alone with test blobs, the discs stay on the coat as it moves.
-3. **Splash shapes** (Task 5).
+3. **Splash shapes** (Task 5, `scene/paint.py`). *Done.*
    - The generator, seeded per hit: a wobbly central blob, 5–10 tapering spikes mostly in the flight direction, power-law droplets, and 1–3 drips that run down over ~1 s.
    - Splashes grow as health drops, so a player near 0 HP is mostly paint.
+   - As built:
+     - `splash_shapes(seed, cfg)`, in units of the blob's radius with x along the flight and y down:
+       - `blob()`: r(a) = R (1 + Σ aₖ sin(k a + φₖ)) for k = 2…5, with aₖ up to `splash_wobble` / k;
+       - `splash_spikes` wedges, each from inside the blob out to 1 + `spike_len` radii with a drop at the tip. A share `spike_forward` aims within `spike_spread_rad` of the flight, the rest anywhere;
+       - `splash_drops` droplets at `drop_dist`, aimed the same way, with Pareto radii (`drop_r`, exponent `drop_power`): many small, few large;
+       - `drips` from the lower edge, `drip_len` long and `drip_w` wide.
+     - The blob radius is `splash_r` = [base, growth] torso widths, base + growth × (1 − health / max_health). Every splash swells as the player loses, so earlier splashes grow too.
+     - Changed from step 2: each splash is drawn once into a coverage sprite (`paint_sprite_px` per blob radius, cropped to its paint).
+       - Every frame it is placed with one `cv2.warpAffine`, using the local affine map of `bilinear()` at the splash's centre (`BodyPaint._affine()`: the map's value and its slopes along u and v there). The centre lands exactly at its (u, v), and the shape follows the torso's local stretch and lean.
+       - Mapping and filling every polygon every frame (~30 per splash) took 4–9 ms per player with 10 splashes on `session.mp4`.
+       - While a splash's drips run (`drip_s`, eased out), they are filled as polygons with the same map, then baked into its sprite.
+     - Fix of a step 2 bug: `cv2.fillPoly` (and `drawContours`) given several overlapping polygons fills them even-odd and leaves holes where they overlap; two overlapping discs of one colour had a hole. `fill_polygons()` now fills one polygon per call.
+     - The flight's sign along u is fixed when a splash is first drawn, from the torso then.
+     - Paint from several attackers: one coverage image per colour, later colours over earlier ones. With one attacker (the usual case) the colour is applied per channel with `cv2.convertScaleAbs`.
+     - The per-pixel work (mask, shading, blend with `cv2.blendLinear`) runs only over the painted pixels.
+     - `BodyPaint.draw()` takes `Frame.t` for the drips; splashes cleared by a new round are forgotten.
+   - New `render:` keys: `splash_wobble`, `splash_spikes`, `spike_len`, `spike_width`, `spike_forward`, `spike_spread_rad`, `splash_drops`, `drop_dist`, `drop_r`, `drop_power`, `drips`, `drip_len`, `drip_w`, `drip_s`, `paint_sprite_px`, `paint_sprite_extent`; `splash_r` is now the blob's radius ([0.1, 0.15]).
+   - On `session.mp4` (`--no-intro`):
+     - Paint time per player, median by hits taken: 0.4 ms after 1 hit, 0.8 ms after 4 and 1.4–1.6 ms after 7–10; 95th percentile 1.7–1.8 ms. Single frames reach 7 ms when a new splash is generated.
+     - The splashes spray onward from the attack, drip down the shirts and stop at the body's outline; at the end of the round P1's upper chest is mostly blue.
+   - One player: on `shield.mp4` with test blobs, the spray leans the way the blob flew, and a splash at the coat's edge is cut by the mask.
 4. **The blob in flight and the burst** (Task 5; Task 4 for the texts).
    - The wobbling blob with trailing droplets and a highlight replaces `FireBolt` for the normal attack; on a shield it bursts into falling drops.
    - Texts: "PUNCH: PAINT BLOB" in `CONTROLS` and `MOVE_TEXT["punch"]`.

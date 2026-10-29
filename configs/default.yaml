@@ -712,11 +712,49 @@ render:
   # on session.mp4, 1.46 on shield.mp4 (hips often out of frame there,
   # estimated).
   paint_aspect: 1.7
-  # Until the splash shapes (step 3): each splash a disc, radius
-  # base + growth x coverage torso widths (coverage = 1 - health /
-  # max_health), so a beaten player looks more painted, as renderer.py's
-  # crosses grew. 0.12 is a palm-sized spot on a fresh player.
-  splash_r: [0.12, 0.1]
+  # Splash shapes (splash_shapes(), one per hit from its seed). Sizes of
+  # the parts are in radii of the central blob. The blob's radius is
+  # [base, growth] torso widths: base + growth x coverage (coverage = 1 -
+  # health / max_health), so every splash swells as the player loses and a
+  # player near 0 HP is mostly paint (renderer.py's crosses grew the same
+  # way). 0.1 is a palm-sized blob on a fresh player; 0.25 at 0 HP.
+  splash_r: [0.1, 0.15]
+  # Outline wobble: amplitude up to this / k for the k-th sine (k = 2..5),
+  # so the blob bends but stays one blob.
+  splash_wobble: 0.25
+  # Spikes thrown out of the blob: how many (5-10, from the design), how
+  # far past the blob's edge and how wide at the base (blob radii). A share
+  # spike_forward flies on in the attack's direction, within
+  # spike_spread_rad (~40 degrees); the rest anywhere, as paint hitting a
+  # surface sprays all round but mostly onward.
+  splash_spikes: [5, 10]
+  spike_len: [0.5, 1.4]
+  spike_width: [0.25, 0.5]
+  spike_forward: 0.7
+  spike_spread_rad: 0.7
+  # Droplets around the splash: how many, how far from the centre (blob
+  # radii, aimed like the spikes), and their radius [min, max] from a
+  # Pareto power law with this exponent: most are tiny, a few large.
+  splash_drops: [6, 12]
+  drop_dist: [1.3, 2.6]
+  drop_r: [0.06, 0.3]
+  drop_power: 2.5
+  # Drips from the blob's lower edge: how many, full length and width (blob
+  # radii), and how long they take to run down (s), fast at first, then
+  # slowing (from the design: 1-3 drips over ~1 s).
+  drips: [1, 3]
+  drip_len: [0.8, 2.0]
+  drip_w: [0.12, 0.22]
+  drip_s: 1.0
+  # Each splash is drawn once into a coverage sprite and placed every frame
+  # with one affine warp (scene/paint.py). Sprite px per blob radius: a blob
+  # is at most ~0.25 x 390 = ~100 px across on screen (0 HP, close up on
+  # shield.mp4) and ~35 px on session.mp4, so 40 is mostly shrunk and soft
+  # only when enlarged close up. The sprite reaches this many radii from
+  # the centre: the farthest droplets (2.6 + 0.3 x wobble) and the longest
+  # drips (0.8 + 2.0 + their end drop) stay inside. 257 x 257 px each.
+  paint_sprite_px: 40
+  paint_sprite_extent: 3.2
   # Body mask, so paint never lands on the background. The torso quad is
   # widened past the shoulder and hip keypoints (joints sit inside the
   # body's outline: the shoulder's outline is ~0.15 torso widths further
