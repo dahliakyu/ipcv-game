@@ -668,21 +668,19 @@ def test_orb_part_drawn_in_both_colours(game):
     assert has_color(out, player_color(1)) and has_color(out, player_color(2))
 
 
-def test_collected_part_pops_with_its_count(game):
-    from tests.test_game import part_at, punch_at
+def test_grabbed_orb_pops_with_its_text(game):
+    from tests.test_game import grab, part_at
     r = plain()
+    game.cfg["orb_parts"] = game.orb_parts = 2              # two parts: a count first
     game.update(dark(0.0, xs=(200.0,)))
     part_at(game, 350.0, 300.0)
-    s = punch_at(0.1, (350.0, 300.0))
-    s.frame.image[:] = 0
-    game.update(s)
+    grab(game, 0.1)
+    s = dark(0.2, xs=(200.0,))
+    game.orbs_taken = [(1, 350.0, 300.0)]                  # this frame's grab, for drawing
     r.draw(s, game)
-    assert [p[1] for p in r._popups] == ["ORB 1/4"] and len(r._pops) == 1
-    game.get_player(1).orb = game.orb_parts - 1
-    part_at(game, 350.0, 300.0)
-    s = punch_at(1.0, (350.0, 300.0))
-    game.update(s)
-    r.draw(s, game)
+    assert [p[1] for p in r._popups] == ["ORB 1/2"] and len(r._pops) == 1
+    game.get_player(1).orb = 2
+    r.draw(dark(0.3, xs=(200.0,)), game)
     assert r._popups[-1][1] == "FULL ORB!"
 
 
@@ -693,6 +691,7 @@ def test_orb_slots_fill_on_the_health_bar_row(game):
     h, w = s.frame.image.shape[:2]
     row = slice(h - 60, h - 12 - max(4, int(r.cfg["bar_h"] * h)))   # the label row above the bar
     inner = slice(int(0.2 * w), int(0.35 * w))                      # P1's slots, at the bar's inner end
+    game.orb_parts = 4                                   # 2 of 4: filled, not pulsing
     assert not has_color(r.draw(s, game)[row, inner], player_color(1))
     game.get_player(1).orb = 2
     assert has_color(r.draw(dark(0.0), game)[row, inner], player_color(1))

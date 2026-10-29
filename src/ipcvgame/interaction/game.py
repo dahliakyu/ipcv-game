@@ -23,14 +23,15 @@ the player deals and defense cuts the damage they take, each for
 drink_buff_s. A second drink of the same kind replaces the value and
 restarts the time.
 
-Orb parts (final smash, docs/extra_features.md §1): while playing, one
-small orb part at a time enters from the top of the frame and bounces in a
-band at punching height (_advance_orb()). A punch whose hand touches it
-collects it (_collect_orb()); orb_parts of them make a player's full orb.
-The next part comes orb_every_s after the last was collected. For now (a
-playtest, 2026-10-29) the full orb unlocks the magic beam: hands up fires
-it only with a full orb, and firing it empties both players' orbs
-(_use_orb()); the paint rain that ends at a blink comes later.
+Orb (final smash, docs/extra_features.md §1): while playing, an orb part
+enters from the top of the frame and bounces in a band at shoulder and
+head height (_advance_orb()). A hand that touches it grabs it
+(_grab_orb()); orb_parts of them make a player's full orb (1 for now: one
+orb, no parts). The next part comes orb_every_s after the last was
+grabbed, but none while someone holds a full orb. For now (a playtest,
+2026-10-29) the full orb unlocks the magic beam: hands up fires it only
+with a full orb, and firing it empties both players' orbs (_use_orb());
+the paint rain that ends at a blink comes later.
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -315,6 +316,8 @@ class Game:
         # random generator (orb_seed), and the time to the next one (s).
         self.orb_parts = int(cfg["orb_parts"])
         self.orb_part: OrbPart | None = None
+        # Each player's hand on the part: how long it has touched (_grab_orb()).
+        self._grab: dict[int, _Hold] = {}
         # Parts collected this frame (cleared by update()) as (pid, x, y):
         # who, and where the part was, for the renderer's pop.
         self.orbs_taken: list[tuple[int, float, float]] = []
@@ -569,13 +572,16 @@ class Game:
                        side * speed * math.cos(angle), speed * math.sin(angle))
 
     def _advance_orb(self, dt: float) -> None:
-        """Spawn a part when one is due and none is on the field, else move
+        """Spawn a part when one is due, none is on the field and nobody
+        holds a full orb (so one orb is in the game at a time), else move
         it in a straight line, reflected at the band's edges: the sides
         orb_margin_w in from the frame edges, the top and bottom from
         orb_band(). It enters from above moving down, so the band's top
         only reflects it once it is inside."""
         part = self.orb_part
         if part is None:
+            if any(p.orb >= self.orb_parts for p in self.players.values()):
+                return
             self._orb_wait -= dt
             if self._orb_wait <= 0:
                 self.orb_part = self._spawn_orb()
@@ -593,24 +599,50 @@ class Game:
             edge = top if part.vy < 0 else bottom
             part.y, part.vy = 2 * edge - part.y, -part.vy
 
-    def _collect_orb(self, pid: int, hand: tuple[float, float], m: Motion) -> bool:
-        """A punch collects the part when its hand is within orb_reach_sw
-        shoulder widths of the part's edge, unless the player's orb is full
-        already. The next part comes orb_every_s later. Returns if collected."""
-        part, player = self.orb_part, self.get_player(pid)
-        if part is None or player.orb >= self.orb_parts:
-            return False
+    def _hand_on_orb(self, m: Motion) -> float | None:
+        """How far (px) the nearer valid wrist is past touching the part: <= 0
+        when it is within orb_reach_sw shoulder widths of the part's edge.
+        None without a part, a shoulder width or a valid wrist."""
+        part = self.orb_part
         sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
-        if sw is None:
-            return False
-        if math.hypot(hand[0] - part.x, hand[1] - part.y) > self.orb_radius() + self.cfg["orb_reach_sw"] * sw:
-            return False
+        wrists = [w for w in (sk.L_WRIST, sk.R_WRIST) if m.valid[w]]
+        if part is None or sw is None or not wrists:
+            return None
+        d = min(math.hypot(m.kpts[w][0] - part.x, m.kpts[w][1] - part.y) for w in wrists)
+        return d - self.orb_radius() - self.cfg["orb_reach_sw"] * sw
+
+    def _grab_orb(self, state: FrameState, t: float) -> None:
+        """A hand grabs the part: a wrist (smoothed keypoint) touching it
+        (_hand_on_orb()) for orb_grab_s, with gaps up to hold_gap_s allowed,
+        so a keypoint glitch of one frame does not grab it. Players in view
+        whose orb is not full; if two have held long enough in the same
+        frame, the hand nearer the part gets it."""
+        if self.orb_part is None:
+            self._grab.clear()
+            return
+        best, best_d = None, np.inf
+        for pid, m in sorted(state.motion.items()):
+            p, player = state.players.get(pid), self.players.get(pid)
+            if p is None or p.status != "active" or player is None or player.orb >= self.orb_parts:
+                continue
+            d = self._hand_on_orb(m)
+            touching = d is not None and d <= 0
+            held = self._grab.setdefault(pid, _Hold()).update(touching, t, self.cfg["hold_gap_s"])
+            if touching and held >= self.cfg["orb_grab_s"] and d < best_d:
+                best, best_d = pid, d
+        if best is not None:
+            self._take_orb(best)
+
+    def _take_orb(self, pid: int) -> None:
+        """pid gets the part: one more in their orb; the next part comes
+        orb_every_s later."""
+        part, player = self.orb_part, self.get_player(pid)
+        self._grab.clear()
         player.orb += 1
         self.orbs_taken.append((pid, part.x, part.y))
         self.orb_part = None
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
         self.actions.append((pid, "orb"))
-        return True
 
     def _use_orb(self) -> None:
         """A final smash was fired: every player's orb goes back to 0 and the
@@ -771,6 +803,7 @@ class Game:
                         and self._facing_or_blocked(state, e.pid, e.name, t)):
                     self._act(e.pid, e.name, state.motion[e.pid], positions)
             if self.winner_id is None:
+                self._grab_orb(state, t)
                 self._drink_with_mouths(state, t)
             self.advance(dt, visible)
             if self.winner_id is not None:
@@ -1125,7 +1158,6 @@ class Game:
             hand = punching_hand(m)
             if hand is not None:
                 x, y = hand
-                self._collect_orb(pid, hand, m)
             else:
                 left, _, right, _ = player.bounds
                 x, y = (right if direction > 0 else left), player.y
@@ -1162,6 +1194,7 @@ class Game:
             self.shields.pop(pid, None)
             self.body_yaw.pop(pid, None)
             self.mouth_open.pop(pid, None)
+            self._grab.pop(pid, None)
             for d in self.drinks:
                 if d.held_by == pid:
                     d.held_by = None         # falls on
@@ -1185,6 +1218,7 @@ class Game:
         self.drunk.clear()
         self._drink_wait = self._rng.uniform(*self.cfg["drink_every_s"])
         self.orb_part = None
+        self._grab.clear()
         self.orbs_taken.clear()
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
         self.winner_id = None

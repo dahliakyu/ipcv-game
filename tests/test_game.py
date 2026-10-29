@@ -1272,11 +1272,17 @@ def part_at(g: Game, x: float, y: float):
     return g.orb_part
 
 
-def punch_at(t: float, hand: tuple[float, float], xs=(200.0,)) -> FrameState:
-    """P1 punches with the screen-right wrist at hand (px)."""
-    s = frame_state(t, events=[(1, "punch")], xs=xs)
-    s.motion[1].kpts[sk.L_WRIST] = hand
+def touch_at(t: float, hand: tuple[float, float], xs=(200.0,), pid: int = 1) -> FrameState:
+    """pid's screen-right wrist (P2: screen-left) at hand (px), no events."""
+    s = frame_state(t, xs=xs)
+    s.motion[pid].kpts[sk.L_WRIST if pid == 1 else sk.R_WRIST] = hand
     return s
+
+
+def grab(g: Game, t: float, hand=(350.0, 300.0), **kw) -> None:
+    """The hand on the orb for two frames, a little over orb_grab_s apart."""
+    g.update(touch_at(t, hand, **kw))
+    g.update(touch_at(t + g.cfg["orb_grab_s"] + 0.01, hand, **kw))
 
 
 def test_one_orb_part_at_a_time_enters_from_the_top():
@@ -1314,56 +1320,83 @@ def test_orb_part_bounces_inside_its_band():
     assert min(ys) < top + 0.1 * (bottom - top) and max(ys) > bottom - 0.1 * (bottom - top)
 
 
-def test_one_player_punch_touching_the_part_collects_it():
+def test_one_player_grabs_the_orb_by_touching_it():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
     sw = 100.0                                             # body(): shoulders 100 px apart
     reach = g.orb_radius() + g.cfg["orb_reach_sw"] * sw
     part_at(g, 350.0 + reach - 1, 300.0)
-    g.update(punch_at(0.1, (350.0, 300.0)))
-    assert g.get_player(1).orb == 1 and g.orb_part is None
-    assert (1, "orb") in g.actions and (1, "bolt") in g.actions   # the punch fires as usual
-    assert g.log_fields(frame_state(0.1, xs=(200.0,)))["game_p1_orb"] == 1
+    g.update(touch_at(0.1, (350.0, 300.0)))
+    assert g.get_player(1).orb == 0                        # a single frame is not a grab
+    g.update(touch_at(0.1 + g.cfg["orb_grab_s"], (350.0, 300.0)))
+    assert g.get_player(1).orb == 1 and g.orb_part is None and g.actions == [(1, "orb")]
+    assert g.log_fields(frame_state(0.3, xs=(200.0,)))["game_p1_orb"] == 1
 
 
-def test_punch_that_misses_the_part_does_not_collect_it():
+def test_hand_out_of_reach_does_not_grab():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
     reach = g.orb_radius() + g.cfg["orb_reach_sw"] * 100.0
     part = part_at(g, 350.0 + reach + 1, 300.0)
-    g.update(punch_at(0.1, (350.0, 300.0)))
+    for i in range(1, 10):
+        g.update(touch_at(0.1 * i, (350.0, 300.0)))
     assert g.get_player(1).orb == 0 and g.orb_part is part
-    g.update(frame_state(0.2, xs=(200.0,)))                # touching it without a punch: nothing
-    part.x, part.y = 350.0, 300.0
-    s = frame_state(0.3, xs=(200.0,))
-    s.motion[1].kpts[sk.L_WRIST] = (350.0, 300.0)
-    g.update(s)
-    assert g.get_player(1).orb == 0
 
 
-def test_next_part_comes_orb_every_s_after_a_collection():
+def test_either_hand_grabs():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    part_at(g, 60.0, 300.0)                                # left of P1
+    for t in (0.1, 0.1 + g.cfg["orb_grab_s"]):
+        s = frame_state(t, xs=(200.0,))
+        s.motion[1].kpts[sk.R_WRIST] = (60.0, 300.0)
+        g.update(s)
+    assert g.get_player(1).orb == 1
+
+
+def test_one_orb_at_a_time_none_while_someone_holds_it():
     g = orb_game(orb_every_s=[2.0, 2.0])
     g.update(frame_state(0.0, xs=(200.0,)))
     part_at(g, 350.0, 300.0)
-    g.update(punch_at(0.1, (350.0, 300.0)))
-    for i in range(2, 20):                                 # up to 1.9 s (the collecting frame counts)
+    grab(g, 0.1)
+    for i in range(3, 100):                                # 10 s: no new orb while P1 holds it
+        g.update(frame_state(0.1 * i, xs=(200.0,)))
+    assert g.orb_part is None
+
+
+def test_next_part_comes_orb_every_s_after_a_grab_when_parts_need_collecting():
+    g = orb_game(orb_every_s=[2.0, 2.0], orb_parts=4)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    part_at(g, 350.0, 300.0)
+    grab(g, 0.1)
+    assert g.get_player(1).orb == 1
+    for i in range(3, 21):                                 # up to 2.0 s (the grabbing frame counts)
         g.update(frame_state(0.1 * i, xs=(200.0,)))
         assert g.orb_part is None
-    g.update(frame_state(2.15, xs=(200.0,)))
+    for t in (2.1, 2.2, 2.3):                              # steps are capped at max_dt_s
+        g.update(frame_state(t, xs=(200.0,)))
     assert g.orb_part is not None
 
 
-def test_full_orb_collects_no_more_but_the_other_player_can():
+def test_full_orb_grabs_no_more_but_the_other_player_can():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0))
     g.get_player(1).orb = g.orb_parts
     part = part_at(g, 350.0, 300.0)
-    g.update(punch_at(0.1, (350.0, 300.0), xs=(200.0, 800.0)))
+    grab(g, 0.1, xs=(200.0, 800.0))
     assert g.get_player(1).orb == g.orb_parts and g.orb_part is part
-    s = frame_state(0.2, events=[(2, "punch")])
-    s.motion[2].kpts[sk.R_WRIST] = (360.0, 300.0)          # P2 reaches over to it
-    g.update(s)
+    grab(g, 0.5, hand=(360.0, 300.0), xs=(200.0, 800.0), pid=2)   # P2 reaches over to it
     assert g.get_player(2).orb == 1 and g.orb_part is None
+
+
+def test_punch_no_longer_collects():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    part_at(g, 350.0, 300.0)
+    s = frame_state(0.1, events=[(1, "punch")], xs=(200.0,))
+    s.motion[1].kpts[sk.L_WRIST] = (350.0, 300.0)
+    g.update(s)
+    assert g.get_player(1).orb == 0 and (1, "bolt") in g.actions
 
 
 def test_test_orb_fills_p1_only_while_playing():

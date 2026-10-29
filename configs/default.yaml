@@ -701,20 +701,21 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # Seed of the drinks' random generator: a number replays the same drinks
   # every run (tests, clip comparisons); null = different every game.
   drink_seed: null
-  # --- Orb parts for the final smash (docs/extra_features.md §1). Only
-  # while playing, one small orb part at a time: the next comes this long
-  # after the last was collected or the round started (random in the range,
-  # s). A full orb then takes ~25 s at the earliest, so a 1-2 minute round
-  # has room for one or two final smashes.
+  # --- Orb for the final smash (docs/extra_features.md §1). Only while
+  # playing, one orb part at a time: the next comes this long after the
+  # last was grabbed or the round started (random in the range, s), and
+  # none while someone holds a full orb.
   orb_every_s: [5.0, 8.0]
-  # Parts for a full orb.
-  orb_parts: 4
-  # Part radius (frame heights): 0.035 is 25 px at 720p, about a third of a
-  # face width for players at ~2.3 m on session.mp4: small enough to need a
-  # real aim, big enough to see.
-  orb_r_h: 0.035
-  # The band the part's centre bounces in (frame heights, top and bottom),
-  # at punching height, where a sideways punch reaches it. On session.mp4
+  # Parts for a full orb. 1 since 2026-10-29 (Task 5 owner, before a
+  # playtest): one orb, grabbed by hand; four parts collected by punches
+  # took too long and the punch rarely hit the part.
+  orb_parts: 1
+  # Orb radius (frame heights): 0.045 is 32 px at 720p, about half a face
+  # width for players at ~2.3 m on session.mp4 (0.035 was for the smaller
+  # parts): easy to see and to reach.
+  orb_r_h: 0.045
+  # The band the orb's centre bounces in (frame heights, top and bottom),
+  # at shoulder and head height, where a raised hand reaches it. On session.mp4
   # (players ~2.3 m away) the punching hands were at 0.36-0.49 of the frame
   # height (5th-95th percentile, 16 punches), the shoulders at 0.37-0.46,
   # the noses at 0.25-0.32. Players nearer the camera stand taller in the
@@ -726,15 +727,17 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   orb_margin_w: 0.1
   # Speed (frame widths per s) and angle below the horizontal (degrees,
   # random in the range): 0.12 drifts across the play area in ~7 s, slow
-  # enough to line up a punch, and the shallow angle crosses the band's
+  # enough to reach for, and the shallow angle crosses the band's
   # height in ~2-3 s at 1280 x 720, so it passes both players' shoulders.
   orb_speed_w: 0.12
   orb_angle_deg: [15.0, 40.0]
-  # A punch collects the part when the punching hand is within this many
-  # shoulder widths of the part's edge: the hand at the moment of the punch
-  # event, which comes as the arm straightens, so some slack (as the drinks'
-  # catch distance).
+  # A hand grabs the orb when its wrist is within this many shoulder widths
+  # of the orb's edge: the hand reaches ~0.3-0.4 sw past the wrist
+  # keypoint, so 0.5 is a touch with a little slack.
   orb_reach_sw: 0.5
+  # ... for this long (s), so a one-frame keypoint glitch does not grab
+  # it: 2-3 frames at 17-30 FPS.
+  orb_grab_s: 0.1
   # Seed of the parts' random generator (as drink_seed): a number replays
   # the same parts; null = different every game.
   orb_seed: null
