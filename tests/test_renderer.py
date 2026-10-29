@@ -41,12 +41,12 @@ def test_draws_every_object(game):
 
 
 def test_plain_shapes_without_sprites(game):
-    r = renderer(bolt_sprite=None, beam_ball=None, shield_sprite=None)
+    r = renderer(beam_ball=None, shield_sprite=None)
     busy_game(game)
     state = frame_state(0.6)
     game.update(state)
     assert r.draw(state, game).any()
-    assert r.bolt_effect(1, game) is None and r.beam_effect(1) is None and r.shield_effect(1) is None
+    assert r.beam_effect(1) is None and r.shield_effect(1) is None
 
 
 def test_shield_ring_sits_on_the_chest(game):
@@ -87,7 +87,7 @@ def test_paint_time_logged_per_player(game):
     assert 1 not in r._paint
 
 def test_hud_and_game_over_hide_objects_in_flight(game):
-    r = renderer(pixel_size=1, show_timings=False, bolt_sprite=None, beam_ball=None, shield_sprite=None,
+    r = renderer(pixel_size=1, show_timings=False, beam_ball=None, shield_sprite=None,
                  game_over_dim=1.0)
     busy_game(game)                                  # a bolt, a beam and a shield on screen
     state = frame_state(0.1)
@@ -181,7 +181,7 @@ def intro_game(**over) -> Game:
 
 
 def plain() -> Renderer:
-    return renderer(pixel_size=1, show_timings=False, bolt_sprite=None, beam_ball=None, shield_sprite=None)
+    return renderer(pixel_size=1, show_timings=False, beam_ball=None, shield_sprite=None)
 
 
 def dark(t: float = 0.0, **kw):
@@ -636,3 +636,21 @@ def test_held_drink_at_the_lower_lip_face_sized_without_badge():
     assert ys.min() >= top - 1 and ys.max() <= top + r.cfg["drink_held_fw"] * 60 + 1
     assert abs(xs.mean() - 200) < 10                           # centred under the mouth
     assert not color_mask(canvas, renderer_mod.DRINK_COLORS["defense"]).any()   # no badge
+
+
+# ---------- Paint blob (extra_features.md feature 3, step 4) ----------
+
+def test_blob_drawn_in_flight_and_burst_only_on_a_shield(game):
+    from ipcvgame.interaction.game import BoltEnd
+    r = renderer(pixel_size=1, show_timings=False)
+    state = frame_state(0.0, xs=())
+    state.frame.image[:] = 0
+    game.projectiles.clear()
+    game.attack(500, 400, 1, player_id=1)
+    canvas = r.draw(state, game)
+    assert tuple(canvas[400, 500]) == player_color(1)               # the blob, in the team colour
+    game.projectiles.clear()
+    for reason in ("hit", "edge", "shield"):
+        game.bolt_ends[:] = [BoltEnd(500.0, 400.0, 1, 1, age=0.1, reason=reason)]
+        red = np.all(r.draw(state, game) == player_color(1), axis=2)
+        assert red[300:500, 380:620].any() == (reason == "shield")  # drops only off a shield

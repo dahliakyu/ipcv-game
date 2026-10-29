@@ -149,13 +149,14 @@ class Projectile:
 
 @dataclass
 class BoltEnd:
-    """Where a bolt ended (a hit, a shield or the frame edge): drawing only,
-    so its break-up can play there for bolt_end_s."""
+    """Where a bolt (the paint blob) ended: drawing only, kept for
+    bolt_end_s, so the renderer can play its burst on a shield there."""
     x: float
     y: float
     direction: int
     owner_id: int
     age: float = 0.0
+    reason: str = "edge"   # "hit" (a body), "shield" or "edge" (left the frame)
 
 
 @dataclass
@@ -354,14 +355,18 @@ class Game:
             target = self._find_projectile_target(projectile, previous_x, active_player_ids)
             if target is not None:
                 # A shield absorbs the bolt: it disappears without damage.
-                if not self.shielded(target):
+                reason = "shield" if self.shielded(target) else "hit"
+                if reason == "hit":
                     self._apply_damage(target, projectile.owner_id, projectile.x,
                                        projectile.y, cfg["bolt_damage"], projectile.direction)
             elif 0.0 <= projectile.x <= self.frame_w:
                 remaining.append(projectile)
                 continue
+            else:
+                reason = "edge"
             self.bolt_ends.append(BoltEnd(min(max(projectile.x, 0.0), float(self.frame_w)),
-                                          projectile.y, projectile.direction, projectile.owner_id))
+                                          projectile.y, projectile.direction, projectile.owner_id,
+                                          reason=reason))
         self.projectiles = remaining
 
         charge = cfg["beam_charge_s"]

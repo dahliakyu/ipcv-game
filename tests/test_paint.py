@@ -8,7 +8,7 @@ from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Motion
 from ipcvgame.interaction.game import PaintSplat
 from ipcvgame.scene.draw import player_color
-from ipcvgame.scene.paint import BodyPaint, body_mask, splash_shapes
+from ipcvgame.scene.paint import BodyPaint, body_mask, draw_blob, draw_burst, splash_shapes
 
 # Fully opaque, so painted pixels have the exact team colour.
 CFG = {**load_config()["render"], "paint_opacity": 1.0}
@@ -169,3 +169,45 @@ def test_no_paint_side_on_or_without_splashes():
     assert not blue(canvas).any() and layer.builds == 0
     edge = TORSO + [-220, 0]                                     # partly out of the frame: no error
     paint([PaintSplat(0.1, 0.5, owner_id=2)], torso=edge)
+
+
+# --- The paint blob in flight and its burst (step 4) ------------------------
+
+RED = player_color(1)
+
+
+def blob_at(age, direction=1):
+    canvas = np.zeros((400, 600, 3), np.uint8)
+    draw_blob(canvas, 300.0, 200.0, direction, age, 26.0, RED, CFG)
+    return canvas
+
+
+def test_blob_is_a_wet_ball_in_the_team_colour():
+    c = blob_at(0.0)
+    assert tuple(c[200, 300]) == RED                                  # body
+    lighter = c[185:195, 300:315].reshape(-1, 3).sum(axis=1).max()
+    assert lighter > sum(RED) + 150                                    # highlight, front top
+    assert c[150:250, 360:].sum() == 0                                # nothing ahead of it
+
+
+def test_blob_wobbles_and_trails_droplets_behind():
+    a, b = blob_at(0.0), blob_at(0.2)
+    assert (np.any(a != b, axis=2)).sum() > 50                         # the outline moves
+    red = np.all(a == RED, axis=2)
+    assert red[200:215, 240:270].any()                                 # droplets behind (to the left)
+    left = np.all(blob_at(0.0, direction=-1) == RED, axis=2)
+    assert left[200:215, 330:360].any() and not left[200:215, 240:262].any()
+
+
+def test_burst_drops_fly_back_up_then_fall_and_vanish():
+    def drops(age):
+        canvas = np.zeros((400, 600, 3), np.uint8)
+        draw_burst(canvas, 300.0, 200.0, 1, age, 0.5, 26.0, RED, CFG, seed=3)
+        ys, xs = np.nonzero(np.all(canvas == RED, axis=2))
+        return xs, ys
+    xs, ys = drops(0.1)
+    assert xs.mean() < 300 and ys.mean() < 200                         # thrown back (left) and up
+    later_x, later_y = drops(0.4)
+    assert later_x.mean() < xs.mean() and later_y.mean() > ys.mean()    # further back, falling
+    assert len(drops(0.5)[0]) == 0                                      # gone at the end
+    np.testing.assert_array_equal(drops(0.2)[0], drops(0.2)[0])         # the same drops each frame

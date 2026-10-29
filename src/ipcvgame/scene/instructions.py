@@ -41,7 +41,7 @@ ARMS = {
 # What each move is called, how to do it and what it does in the game.
 MOVE_TEXT = {
     "neutral": ("STAND STILL", "ARMS DOWN, FACE THE CAMERA", "MEASURING YOU"),
-    "punch": ("PUNCH", "ONE ARM OUT TO THE SIDE", "FIRES A BOLT"),
+    "punch": ("PUNCH", "ONE ARM OUT TO THE SIDE", "FIRES A PAINT BLOB"),
     "hands_up": ("HANDS UP", "BOTH HANDS ABOVE YOUR HEAD", "MAGIC BEAM"),
     "arms_crossed": ("CROSS ARMS", "CROSS WRISTS IN FRONT OF CHEST", "SHIELD"),
 }

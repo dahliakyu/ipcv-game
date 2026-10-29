@@ -540,9 +540,12 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # width, and hips not visible = 2 shoulder widths below the shoulders.
   min_shoulder_px: 10.0
   hip_below_shoulders: 2.0
-  # A bolt's end point (a hit, a shield or the frame edge) is kept this long,
-  # so the renderer can play its break-up there (game.Game.bolt_ends).
-  bolt_end_s: 0.25
+  # A bolt's end point (a hit, a shield or the frame edge, BoltEnd.reason) is
+  # kept this long, so the renderer can play the paint blob's burst into
+  # falling drops on a shield there (game.Game.bolt_ends). 0.25 s fitted the
+  # fire bolt's break-up frames; drops thrown up need ~0.5 s to rise and fall
+  # back past the hit point.
+  bolt_end_s: 0.5
   # --- Game phases (game start, docs/merge_log.md): waiting ->
   # calibration -> countdown -> playing -> result. false = no waiting,
   # calibration or countdown: the game plays at once, as before (tests, and
@@ -914,23 +917,34 @@ render:
   # buff_fade_s, so the player sees it is about to end.
   buff_icon_h: 0.045
   buff_fade_s: 2.0
-  # Bolt look (normal attack), from the assets/beam frames: a fire blast.
-  # Split by phase: the first bolt_sprite_launch frames are the launch flash,
-  # the next bolt_sprite_flight frames loop while the bolt flies, and the rest
-  # (its break-up into sparks) play once where the bolt ends (a hit, a
-  # shield or the frame edge), over game.bolt_end_s. null = a plain dot.
-  bolt_sprite: assets/beam
-  bolt_sprite_launch: 1
-  bolt_sprite_flight: 2
-  # 12 FPS: a common pixel-art rate; the two flight frames flicker like fire.
-  bolt_sprite_fps: 12
-  # Frame height as a fraction of the frame height: at 0.08 (58 px at 720p)
-  # the blast is ~27 px thick and ~240 px long. Its head is on the bolt's
-  # hit point and the flames trail behind it.
-  bolt_sprite_h: 0.08
-  # The frames' own colours (orange fire) suit P1, the red team. Other
-  # players get a copy with every hue turned so it takes their team colour.
-  bolt_effect_owner: 1
+  # Paint blob (normal attack, scene/paint.py draw_blob(); it replaced the
+  # assets/beam fire blast). Radius in frame widths: 0.02 is ~26 px at
+  # 1280 px wide, about a fist at 2.3 m (a 0.1 m fist is ~40 px across
+  # there); the design's 0.03 made a ball wider than the players' heads.
+  blob_r_w: 0.02
+  # Its outline wobbles: amplitude this / k for k = 2..4, phases turning at
+  # this x k turns a second, so it never looks like a still disc.
+  blob_wobble: 0.18
+  blob_wobble_hz: 1.5
+  # Stretched along the flight, as a moving drop.
+  blob_stretch: 1.25
+  # Droplets trailing behind it: how many, how far apart (blob radii), and
+  # how far the i-th sinks (this x i^2 radii, like gravity).
+  blob_trail: 3
+  blob_trail_gap: 1.3
+  blob_trail_fall: 0.15
+  # Burst on a shield (draw_burst()): the drops thrown back and up (within
+  # this spread of 45 degrees up-back), their speed (blob radii / s),
+  # gravity (blob radii / s^2) and size (blob radii); they shrink to
+  # nothing over game.bolt_end_s. Drawn over the shield's ring. At 4-9
+  # radii/s the drops stayed under the ring (~20 px in 0.1 s on
+  # shield.mp4); at 8-16 they clear it (~40 px), and with gravity 30
+  # they arc down past the hit point by the end (~0.5 s).
+  burst_drops: [8, 12]
+  burst_spread_rad: 0.7
+  burst_speed: [8.0, 16.0]
+  burst_gravity: 30.0
+  burst_drop_r: [0.2, 0.45]
   # Beam look (power attack), from the magic_effect pack: a magic ball between
   # the player's hands (the beam's start point) and the beam coming out of
   # it, as in the pack's preview (magic.gif). null = a plain line.

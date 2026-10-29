@@ -29,6 +29,10 @@ coverage sprite. Every frame the sprites go onto the body in three steps:
    brightness relative to its mean under the paint. Folds and shadows show
    through, but a dark shirt does not darken the paint, because only the
    brightness relative to the shirt counts.
+
+The paint blob in flight (draw_blob(), the normal attack; it replaced the
+fire bolt sprite) and its burst into drops on a shield (draw_burst()) are
+here too: they share the blob() outline.
 """
 
 from __future__ import annotations
@@ -331,3 +335,63 @@ class BodyPaint:
         k = s / (cv2.mean(gray, mask=under)[0] + 1.0)
         # (1 - s) + s x min((gray + 1) / (mean + 1), 2), as one multiply-add.
         return np.minimum(gray.astype(np.float32) * k + ((1.0 - s) + k), 1.0 + s)
+
+
+# ----------------------------------------------------- the blob in flight
+
+def _mix(color: tuple[int, int, int], other: tuple[int, int, int], k: float) -> tuple[int, ...]:
+    """color moved a fraction k towards other."""
+    return tuple(int(round(c + k * (o - c))) for c, o in zip(color, other, strict=True))
+
+
+def draw_blob(canvas: np.ndarray, x: float, y: float, direction: int, age: float, radius: float,
+              color: tuple[int, int, int], cfg: dict) -> None:
+    """The paint blob (the normal attack) at (x, y) px, flying in direction
+    (+1 right, -1 left), age s after it was fired.
+
+    - Body: blob() with wobble amplitudes blob_wobble / k for k = 2..4 whose
+      phases turn at blob_wobble_hz x k turns a second, so the outline keeps
+      changing like a ball of liquid; stretched blob_stretch times along the
+      flight.
+    - A darker rim (half way to black) so it shows on a background of its
+      own colour, and a highlight towards the front top (most of the way
+      to white), so it looks wet.
+    - blob_trail droplets behind it, each blob_trail_gap radii further back,
+      sinking blob_trail_fall x i^2 radii (gravity) and smaller each time.
+    Drawn opaque and anti-aliased straight onto the canvas."""
+    r = radius
+    wobble = [(cfg["blob_wobble"] / k, 2 * np.pi * cfg["blob_wobble_hz"] * k * age + k) for k in (2, 3, 4)]
+    body = blob(32, 1.0, wobble) * r
+    body[:, 0] *= cfg["blob_stretch"]
+    rim = _mix(color, (0, 0, 0), 0.5)
+    for i in range(1, int(cfg["blob_trail"]) + 1):
+        c = (x - direction * i * cfg["blob_trail_gap"] * r, y + cfg["blob_trail_fall"] * i * i * r)
+        drop = blob(12, r * 0.45 * 0.7 ** (i - 1), [], center=c)
+        cv2.fillPoly(canvas, [fixed(drop)], color, cv2.LINE_AA, SHIFT)
+    pts = fixed(body + (x, y))
+    cv2.fillPoly(canvas, [pts], color, cv2.LINE_AA, SHIFT)
+    cv2.polylines(canvas, [pts], True, rim, max(1, int(round(r / 8))), cv2.LINE_AA, SHIFT)
+    shine = blob(12, 0.22 * r, [], center=(x + direction * 0.3 * r, y - 0.4 * r))
+    cv2.fillPoly(canvas, [fixed(shine)], _mix(color, (255, 255, 255), 0.75), cv2.LINE_AA, SHIFT)
+
+
+def draw_burst(canvas: np.ndarray, x: float, y: float, direction: int, age: float, life: float,
+               radius: float, color: tuple[int, int, int], cfg: dict, seed: int) -> None:
+    """A blob stopped by a shield at (x, y), bursting into drops: burst_drops
+    drops thrown back (against direction) and up, within burst_spread_rad of
+    45 degrees up-back, at burst_speed radii a second, falling with
+    burst_gravity radii/s^2 and shrinking to nothing over life (s; the
+    game's bolt_end_s). The same seed gives the same drops in every frame."""
+    rng = np.random.default_rng(seed)
+    t, r = age, radius
+    shrink = max(0.0, 1.0 - age / life)
+    if shrink <= 0:
+        return
+    base = np.arctan2(-1.0, -float(direction))             # up and back, image y down
+    for _ in range(rng.integers(cfg["burst_drops"][0], cfg["burst_drops"][1] + 1)):
+        ang = base + rng.normal(0.0, cfg["burst_spread_rad"])
+        speed = rng.uniform(*cfg["burst_speed"]) * r
+        size = rng.uniform(*cfg["burst_drop_r"]) * r * shrink
+        fall = 0.5 * cfg["burst_gravity"] * r * t * t
+        c = (x + speed * np.cos(ang) * t, y + speed * np.sin(ang) * t + fall)
+        cv2.fillPoly(canvas, [fixed(blob(10, size, [], center=c))], color, cv2.LINE_AA, SHIFT)

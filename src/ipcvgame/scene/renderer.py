@@ -1,14 +1,13 @@
 """Task 5 — game renderer, from Colour Clash renderer.py.
 
 The game view, in drawing order: the camera frame (pixelated, as in
-renderer.py), each player's paint (scene/paint.py: splashes kept as polygons in torso
-coordinates, mapped onto the body, clipped to it and shaded), the
-game's objects drawn with their sprites (fire blast bolts, magic ball and
-beam, ring of fire shields), face effects, each player's status above the
-head (name tag, dizzy stars, crown; docs/merge_log.md, "Face effects"),
-health bars pinned to the bottom,
-renderer.py's top bar
-with the controls, the end-of-game panel and a timing HUD. The
+renderer.py), each player's paint (scene/paint.py: splashes in torso
+coordinates, placed on the body, clipped to it and shaded), the game's
+objects (paint blobs drawn by scene/paint.py, bursting into drops on a
+shield; magic ball and beam and ring of fire shields from sprites), face
+effects, each player's status above the head (name tag, dizzy stars, crown;
+docs/merge_log.md, "Face effects"), health bars pinned to the bottom,
+renderer.py's top bar with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
@@ -56,15 +55,14 @@ from ipcvgame.scene.draw import (
     player_color,
     pt,
 )
-from ipcvgame.scene.fire_bolt import FireBolt
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
 from ipcvgame.scene.magic_beam import MagicBeam
-from ipcvgame.scene.paint import BodyPaint
+from ipcvgame.scene.paint import BodyPaint, draw_blob, draw_burst
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
 # renderer.py's controls line, with our three gestures and what they fire.
-CONTROLS = "PUNCH: FIRE BOLT   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
+CONTROLS = "PUNCH: PAINT BLOB   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
 DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
 GREY = (120, 115, 105)      # moves still to do, in the instruction panels
@@ -97,7 +95,6 @@ class Renderer:
         self.face_effects = face_effects
         self.show_timings = bool(cfg.get("show_timings", True))
         self.show_skeleton = bool(cfg.get("show_skeleton", False))
-        self._fire: dict[int, FireBolt] = {}     # bolt look per player
         self._magic: dict[int, MagicBeam] = {}   # beam look per player
         self._rings: dict[int, FireRing] = {}    # shield look per player
         self._tags: dict[int, _Tag] = {}         # name tag per player (_draw_tag())
@@ -724,21 +721,14 @@ class Renderer:
     # ----------------------------------------------------------- game objects
 
     def draw_game(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
-        """Bolts (fire blast, and its break-up where it ended), beams (magic
-        ball and beam) and shields (ring of fire on the chest)."""
-        unit = max(canvas.shape[1] / 100.0, 2.0)    # 1% of the frame width, px
-        bolt_h = int(self.cfg["bolt_sprite_h"] * canvas.shape[0])
-        for end in game.bolt_ends:
-            fire = self.bolt_effect(end.owner_id, game)
-            k = fire.end_index(end.age) if fire is not None else None
-            if k is not None:
-                fire.draw(canvas, end.x, end.y, end.direction, k, bolt_h)
+        """Bolts (the paint blob, the normal attack, and its burst into
+        drops where a shield stopped it; at a hit the splash on the body
+        is the effect, at the frame edge it just leaves), beams (magic ball
+        and beam) and shields (ring of fire on the chest)."""
+        cfg = self.cfg
+        radius = cfg["blob_r_w"] * canvas.shape[1]
         for b in game.projectiles:
-            fire = self.bolt_effect(b.owner_id, game)
-            if fire is not None:
-                fire.draw(canvas, b.x, b.y, b.direction, fire.flight_index(b.age), bolt_h)
-            else:
-                cv2.circle(canvas, pt((b.x, b.y)), int(unit), player_color(b.owner_id), -1, cv2.LINE_AA)
+            draw_blob(canvas, b.x, b.y, b.direction, b.age, radius, player_color(b.owner_id), cfg)
 
         thickness = max(2, int(2 * game.beam_band_px()))
         ball_px = int(self.cfg["beam_ball_h"] * canvas.shape[0])
@@ -758,6 +748,14 @@ class Renderer:
                 ring.draw(canvas, center, diameter, shield.age, game.shield_opacity(shield))
             elif game.shield_opacity(shield) > 0:
                 cv2.circle(canvas, pt(center), int(diameter / 2), player_color(pid), 3, cv2.LINE_AA)
+
+        # Bursts after the shields: the ring is wide and would hide the drops.
+        for end in game.bolt_ends:
+            if end.reason == "shield":
+                # Seeded by where it ended, so each burst keeps its drops.
+                seed = int(end.x) * 7919 + int(end.y) * 31 + end.owner_id
+                draw_burst(canvas, end.x, end.y, end.direction, end.age, game.bolt_end_s, radius,
+                           player_color(end.owner_id), cfg, seed)
 
     def ring_geometry(self, pid: int, shield: Shield, state: FrameState,
                       game: Game) -> tuple[tuple[float, float], float]:
@@ -785,15 +783,6 @@ class Renderer:
             if owner_id != owner:
                 cache[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
         return cache[owner_id]
-
-    def bolt_effect(self, owner_id: int, game: Game) -> FireBolt | None:
-        """The bolt's look for one player (bolt_sprite); None = a plain dot."""
-        cfg = self.cfg
-        if not cfg.get("bolt_sprite"):
-            return None
-        return self._team_copy(self._fire, cfg["bolt_effect_owner"], owner_id, lambda shift: FireBolt(
-            cfg["bolt_sprite"], cfg["bolt_sprite_launch"], cfg["bolt_sprite_flight"],
-            cfg["bolt_sprite_fps"], game.bolt_end_s, shift))
 
     def beam_effect(self, owner_id: int) -> MagicBeam | None:
         """The beam's look for one player (beam_ball, beam_band); None = a

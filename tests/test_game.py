@@ -87,6 +87,7 @@ def test_red_bolt_damages_blue_player_and_splats_red_paint(arena):
 def test_blue_bolt_damages_red_player_with_blue_paint(arena):
     arena.attack(600, 500, -1, player_id=2)
     arena.advance(0.3, {1, 2})
+    assert [e.reason for e in arena.bolt_ends] == ["hit"]
 
     red = arena.get_player(1)
     assert red.health == 90
@@ -490,9 +491,9 @@ def test_bolt_end_is_kept_where_the_bolt_stopped(arena):
     arena.attack(300, 500, 1, player_id=1)       # blocked by P2's shield
     arena.attack(300, 100, 1, player_id=1)       # above both boxes: leaves the frame
     arena.advance(0.3, {1, 2})
-    assert sorted((round(e.x), e.y) for e in arena.bolt_ends) == [(720, 500)]
+    assert sorted((round(e.x), e.y, e.reason) for e in arena.bolt_ends) == [(720, 500, "shield")]
     arena.advance(0.3, {1, 2})                   # second bolt reaches the edge
-    assert (1000.0, 100) in [(e.x, e.y) for e in arena.bolt_ends]
+    assert (1000.0, 100, "edge") in [(e.x, e.y, e.reason) for e in arena.bolt_ends]
     arena.advance(arena.cfg["bolt_end_s"], {1, 2})
     assert all(e.y == 100 for e in arena.bolt_ends)      # the first end is over
     arena.reset()
