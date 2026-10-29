@@ -54,7 +54,7 @@ Renumbered four times: twice on 2026-10-28 (the second time when the face effect
 | 3. Both players attacking at once | 4 | 5 | 6 | 14 |
 | Dodge by stepping forward: dropped (2026-10-29) | 5 | 6 | 7 (added on 2026-10-28) | — |
 
-Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Its design is in the git history of this file; the line-up in the calibration was built for it (`merge_log.md`, "Game start: Modifications").
+Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Its design is in the git history of this file. The line-up in the calibration was built for it (`merge_log.md`, "Game start: Modifications") and stays for now; the depth is calibrated but unused, see [limitations.md](limitations.md), "Depth is calibrated, but no game rule uses it".
 
 ### 1. Final smash: a paint orb in four parts, raining until the caster blinks
 

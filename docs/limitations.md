@@ -95,3 +95,23 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 - **Labelled clips:** each gesture marked frame by frame, plus hard negatives (hanging arms, running, waving, guard fists, stretching).
 - **Model:** a small, explainable one first (logistic regression, k-NN or a random forest with `scikit-learn`), with the rule kept as a fallback in config.
 - **Check:** train and test split by recording, not by frame. Precision and recall per player-frame and missed or extra events, for the rule and the classifier on the same clips.
+
+## Depth
+
+### Depth is calibrated, but no game rule uses it
+
+**Seen.** Every frame the identity stage estimates each player's position in metres, `Player.pos` = (x, depth) (`identity/tracker.py`, `_position()`; `docs/merge_log.md`, "Game start", step 6). It is logged as `p<pid>_x_m` and `p<pid>_depth_m` and shown in `--until identity`. The calibration also makes the two players line up by depth: the neutral pose is measured only while their depths are less than `game.line_up_depth_m` (0.4 m) apart, and the nearer player is told to step back (`Game._check_line_up()`; "Game start: Modifications"). No game rule reads the depth, though. On `session.mp4`, where the players were not asked to line up, they stood a median of 0.35 m apart by depth.
+
+**Cause.** The depth and the line-up were built for a dodge: a player stepping ~0.5 m towards the camera, off the line both players stand on, would make a paint blob miss. The Task 5 owner dropped the dodge on 2026-10-29, before it was built; its design is in the git history of `docs/extra_features.md` (feature 5 there before the drop).
+
+**Done.**
+
+- Depth stays: it is Task 3's spatial output, which the brief asks for ("x-y location, not in pixel, while perhaps in physical unit, maybe adding depth"). After the calibration it is scaled by the torso length, so it does not change when a player turns.
+- The line-up stays in the calibration for now (Task 5 owner, 2026-10-29), although nothing needs it any more. It makes the calibration stricter: two players must stand at about the same distance before they are measured.
+- The depth is not checked against a measured distance yet: the field of view (`identity.camera_hfov_deg`, 70°) and the shoulder width (`identity.shoulder_m`, 0.39 m, the same for everyone) are assumed. This is a follow-up in `docs/extra_features.md` ("Depth on the webcam").
+
+**Improvement.**
+
+- Use the depth in a game rule: the dropped dodge, or, for example, attack size or damage scaled by distance.
+- If no rule uses it by the final version, remove the line-up from the calibration (`_check_line_up()`, `line_up_hint()`, the "STAND LEVEL" and "STEP BACK" texts, `line_up_depth_m`, `line_up_hysteresis`, the `game_level` and `game_line_gap` columns), so players are measured wherever they stand.
+- To report how reliable the depth is: stand at measured distances (e.g. 1.5, 2, 2.5, 3 m), compare `p<pid>_depth_m` in the log, and set `camera_hfov_deg` from the camera's spec.
