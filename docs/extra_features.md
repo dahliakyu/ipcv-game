@@ -41,20 +41,20 @@ Each module reads only its own config section; the renderer reads game timings f
 
 ## Features
 
-Renumbered four times: twice on 2026-10-28 (the second time when the face effects were built), and twice on 2026-10-29 (when the consumables were built, then when the normal attack was built and the dodge dropped). Old numbers in commits and `merge_log.md` map as follows:
+Renumbered five times: twice on 2026-10-28 (the second time when the face effects were built), and three times on 2026-10-29 (when the consumables were built; when the normal attack was built and the dodge dropped; when the aiming was dropped). Old numbers in commits and `merge_log.md` map as follows:
 
-| Now | Was after the consumables (2026-10-29) | Was after the face effects (2026-10-28) | Was after the first renumbering (2026-10-28) | Was before |
-| --- | --- | --- | --- | --- |
-| Game start: built, recorded in `merge_log.md` ("Game start") | — | — | — | 12 |
-| Face effects: built, recorded in `merge_log.md` ("Face effects") | — | — | 1 | 1 (team colour), 2 (hit reaction), 3 (status above the head), 7 (cheek bulge) |
-| Consumables: built, recorded in `merge_log.md` ("Consumables") | — | 2 | 3 | 6 |
-| Normal attack as splashed paint: built, recorded in `merge_log.md` ("Normal attack") | 3 | 4 | 5 | 13 (paint stains where the hit landed) |
-| 1. Final smash | 1 | 1 | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
-| 2. Aiming the normal attack | 2 | 3 | 4 | 11 |
-| 3. Both players attacking at once | 4 | 5 | 6 | 14 |
-| Dodge by stepping forward: dropped (2026-10-29) | 5 | 6 | 7 (added on 2026-10-28) | — |
+| Now | Was after the normal attack (2026-10-29) | Was after the consumables (2026-10-29) | Was after the face effects (2026-10-28) | Was after the first renumbering (2026-10-28) | Was before |
+| --- | --- | --- | --- | --- | --- |
+| Game start: built, recorded in `merge_log.md` ("Game start") | — | — | — | — | 12 |
+| Face effects: built, recorded in `merge_log.md` ("Face effects") | — | — | — | 1 | 1 (team colour), 2 (hit reaction), 3 (status above the head), 7 (cheek bulge) |
+| Consumables: built, recorded in `merge_log.md` ("Consumables") | — | — | 2 | 3 | 6 |
+| Normal attack as splashed paint: built, recorded in `merge_log.md` ("Normal attack") | — | 3 | 4 | 5 | 13 (paint stains where the hit landed) |
+| 1. Final smash | 1 | 1 | 1 | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
+| 2. Both players attacking at once | 3 | 4 | 5 | 6 | 14 |
+| Aiming the normal attack: dropped (2026-10-29) | 2 | 2 | 3 | 4 | 11 |
+| Dodge by stepping forward: dropped (2026-10-29) | — | 5 | 6 | 7 (added on 2026-10-28) | — |
 
-Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Its design is in the git history of this file. The line-up in the calibration was built for it (`merge_log.md`, "Game start: Modifications") and stays for now; the depth is calibrated but unused, see [limitations.md](limitations.md), "Depth is calibrated, but no game rule uses it".
+Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Then the Task 5 owner dropped the aiming of the normal attack (a pointing laser from the hand and blobs flying in 2D towards where the arm points), to focus on the final smash and both players attacking at once: blobs keep flying sideways, towards the nearest other player (`Game.facing()`). The designs of both dropped features are in the git history of this file. The line-up in the calibration was built for the dodge (`merge_log.md`, "Game start: Modifications") and stays for now; the depth is calibrated but unused, see [limitations.md](limitations.md), "Depth is calibrated, but no game rule uses it".
 
 ### 1. Final smash: a paint orb in four parts, raining until the caster blinks
 
@@ -108,30 +108,7 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 - Blink: on the webcam, a deliberate blink always ends the rain; looking down at the floor for 2 s does not; turning away ends it. Log blinks and the rain's length per attack, and count false blinks on the clips.
 - Attack: the rain follows the opponent at the set speed; standing still takes every drop, a quick long step out avoids some; the rain never lasts past the cap; the shield blocks the drops while it is up.
 
-### 2. Aiming the normal attack: a pointing laser and paint blobs towards the opponent
-
-**What.** The normal attack (a punch fires a paint blob, built: [merge_log.md, "Normal attack"](merge_log.md#normal-attack-paint-blob-and-splashes-on-the-body)) no longer flies only sideways: it goes where the player aims, towards the opponent. A thin pointing laser from the hand shows the aim before firing. Only the normal attack is aimed; the final smash (feature 1) falls on the opponent and needs no aim.
-
-**Owners.**
-
-- Task 4: aim direction and 2D movement and hits in `interaction/game.py`.
-- Task 2: arm direction from the keypoints.
-- Task 5: the pointing laser and the blob drawn along its direction.
-
-**Design.**
-
-- **Aim direction.** The punching arm's direction, shoulder → wrist (`punching_hand()` already finds the arm). Aim assist: if the arm points within ~20° of the opponent's torso (shoulder midpoint to hip level, `body_position()`), snap to it, so a roughly correct punch hits.
-- **Towards the opponent, not the middle.** Done for sideways attacks (Task 4 modifications): `Game.facing()` fires towards the nearest other player in view. What is left is the 2D direction below.
-- **2D game logic.**
-  - `Projectile` gets a velocity vector instead of `direction`.
-  - Hits test the path since the last frame (a segment) against the target's body box in 2D.
-  - The splash (`Game._splash()`) uses the 2D impact point: u from where the path crosses the torso, instead of the near side plus a random step.
-- **Pointing laser.** While an arm is extended (straight but not yet a punch), a thin dashed line in the team colour runs from the wrist along the aim direction until it meets a body box or the frame edge. It fades with the gesture's state, and it is drawn only for the aiming player, to keep the frame readable.
-- **Drawing.** The blob's trail follows the velocity vector, so the drawn blob needs no rotated sprite.
-
-**Check.** Blobs hit an opponent who stands higher or lower (e.g. crouching) or in the same half of the frame; the pointing laser matches where the blob actually flies; aim assist does not snap to a player behind the shooter.
-
-### 3. Both players attacking at the same time: the stronger attack gets the shot
+### 2. Both players attacking at the same time: the stronger attack gets the shot
 
 **What.** Make simultaneous attacks fair and visible, and link them to the consumables (built: [merge_log.md, "Consumables"](merge_log.md#consumables-drinks-caught-with-the-mouth)): an attack drink raises a player's attack multiplier, and when both attack at once, the higher attack multiplier gets the shot. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
 

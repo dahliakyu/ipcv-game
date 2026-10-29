@@ -230,7 +230,7 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 - [x] Consumables (`docs/merge_log.md`, "Consumables", 2026-10-28): drinks fall while playing; an open mouth catches one and closing it drinks it, for +HP or a 10 s attack or defense buff, bigger drinks giving more. Logged as `game_drinks`, `game_p<pid>_mouth_open`, `_holding`, `_attack`, `_defense`.
 - [ ] Webcam check of the drinks, alone and with two (`docs/extra_features.md`, follow-ups).
 - [x] Normal attack as splashed paint (`docs/merge_log.md`, "Normal attack", 2026-10-29): one splash per hit at its place on the torso (`PaintSplat`, `torso_corners()`), the end reason of every blob (`BoltEnd.reason`), key `b` for a test blob at P1.
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 3); the other features are there too. The dodge by stepping forward was dropped (2026-10-29).
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 2); the final smash is feature 1. The dodge by stepping forward and the aiming of the normal attack were dropped (2026-10-29).
 
 ### Task 5: Integration — owner: @el
 
