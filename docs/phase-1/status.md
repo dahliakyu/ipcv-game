@@ -13,7 +13,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `core/` contracts, skeleton, filters, timing, config | Task 5 | Done | `types.py` is exactly the agreed contract |
 | `io/source.py` webcam + video file | Task 5 | Done | Mirrored at capture; clips replay real timestamps |
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
-| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28); drinks, pick-up text and buff icons (2026-10-28) |
+| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28); drinks, pick-up text and buff icons (2026-10-28); the paint blob and generated splashes on the body, clipped to it and shaded (`scene/paint.py`, 2026-10-29) |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26s-pose (small; nano until 2026-10-28), ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
@@ -217,11 +217,11 @@ Hands up and crossed must hold for 0.03 s to turn on, and stay on until their ru
 
 **Game (merged 2026-10-26 from `game.py` and `main.py`; details in [merge_log.md](../merge_log.md#task-4-gestures-and-game-logic), design changes in "Task 4: Modifications"):** `Game.update(state)` turns each gesture event into an action:
 
-- **`punch` → bolt:** a fire blast from the punching hand, sideways towards the other player, 10 damage, 1 frame width per second;
+- **`punch` → bolt:** a paint blob from the punching hand (drawn as a wobbling ball since 2026-10-29; a fire blast before), sideways towards the other player, 10 damage, 1 frame width per second;
 - **`hands_up` → beam:** a magic ball between the hands charges for 0.35 s, then a beam grows across the frame for 0.8 s, 12 damage, each player hit once; one beam per player at a time;
 - **`arms_crossed` → shield:** a ring of fire on the chest for 1 s that blocks bolts and beams, then fades.
 
-A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, the moves learned one at a time while the game measures each player, and a 3-2-1 countdown; `--no-intro` skips it. A hit lowers health (100) and adds paint splats; at 0 the attacker wins, and both players' hands up for 2 s (or `r`) start the next round with the same players. Only `active` players can be hit; time comes from `Frame.t`. Positions are pixels; speeds and sizes are fractions of the frame in `game:`. The game keeps only state; `scene/renderer.py` draws it, and `--until game` shows it as plain shapes.
+A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, the moves learned one at a time while the game measures each player, and a 3-2-1 countdown; `--no-intro` skips it. A hit lowers health (100) and adds a paint splash on the torso, in torso coordinates so it moves with the body (`docs/merge_log.md`, "Normal attack"); at 0 the attacker wins, and both players' hands up for 2 s (or `r`) start the next round with the same players. Only `active` players can be hit; time comes from `Frame.t`. Positions are pixels; speeds and sizes are fractions of the frame in `game:`. The game keeps only state; `scene/renderer.py` draws it, and `--until game` shows it as plain shapes.
 
 - [x] Combat from `game.py` in pixels, with its tests; the shield blocks (new).
 - [x] Events to actions from `main.py`; bolts from the punching hand; one action at a time.
@@ -229,7 +229,8 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 - [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
 - [x] Consumables (`docs/merge_log.md`, "Consumables", 2026-10-28): drinks fall while playing; an open mouth catches one and closing it drinks it, for +HP or a 10 s attack or defense buff, bigger drinks giving more. Logged as `game_drinks`, `game_p<pid>_mouth_open`, `_holding`, `_attack`, `_defense`.
 - [ ] Webcam check of the drinks, alone and with two (`docs/extra_features.md`, follow-ups).
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 4); the other features are there too.
+- [x] Normal attack as splashed paint (`docs/merge_log.md`, "Normal attack", 2026-10-29): one splash per hit at its place on the torso (`PaintSplat`, `torso_corners()`), the end reason of every blob (`BoltEnd.reason`), key `b` for a test blob at P1.
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 3); the other features are there too. The dodge by stepping forward was dropped (2026-10-29).
 
 ### Task 5: Integration — owner: @el
 

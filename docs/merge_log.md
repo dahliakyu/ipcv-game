@@ -2026,3 +2026,106 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 #### Step 6 · Docs
 
 **Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, paint splash 3, both attacking 4, dodge 5); follow-ups for the webcam check of the drinks, the shield's render time and the asset pack in the repo. Code comments, config and tests that said "feature 2" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the drinks in the overview table and Task 4's list, the held-drink bulge in Task 1's, and the new feature numbers.
+
+## Normal attack: paint blob and splashes on the body
+
+The fourth feature built from the backlog in `docs/extra_features.md` (feature 3 there after the renumbering of 2026-10-29; feature 4 on 2026-10-28 and 13 originally; the "Normal Attack Change:", "Normal Attack Extra Feature:" and "Normal Attack Extra Effect" commits), by the Task 5 owner on 2026-10-29. It touches Task 4 (`interaction/game.py`) and Task 5 (`core/geometry.py`, `scene/`, `app/`, `README.md`); each step names the files it touched.
+
+### Plan
+
+**What.** A punch fires a blob of paint instead of the fire bolt. Where it hits, the paint splashes onto the opponent's body and stays there, moving with the body. Both are drawn by an algorithm, not from sprites: every splash has its own shape, and over a round the paint covers more and more of the body, so the damage shows on the player. Before, the game kept each splat as a fraction of the body box inside a fixed band (0.38–0.62), stretched over the torso by the renderer, so every hit landed near the middle of the shirt.
+
+**Decisions (Task 5 owner, 2026-10-29).**
+
+- **Body coordinates:** each splash is stored as (u, v) on the torso: u from the screen-left shoulder (0) to the right one (1), v from the shoulder line (0) to the hips (1). A bilinear map over the four corners (both shoulders, both hips) puts it back on the body every frame.
+- **Where a splash lands:** at the hit height, on the torso's side facing the attacker, with a random step inward. The blob flies sideways, so it enters the body box at its near edge, often at an outstretched arm. Most punches arrive at shoulder height, so their paint lands at the top of the chest; with the spikes and drips this reads as paint hitting the upper chest and running down, and it is kept that way.
+- **The splash:** generated once per hit from a seed: a wobbly blob, spikes and droplets thrown on in the attack's direction, and drips that run down over about a second. Splashes grow as health drops, so a player near 0 HP is mostly paint.
+- **Covering the body:** the paint is clipped to a body mask from the keypoints (the torso and capsules along the arms and legs), so it can run onto an arm but never onto the background.
+- **Shading: partial.** The paint follows the clothes' folds relative to the shirt's own brightness, so it stays visible on a black shirt.
+- **A blocked blob** bursts into falling drops on the shield; at the frame edge it just leaves. **Beam hits** splash too, with the same generator.
+- **Hits stay as they are:** the blob still flies sideways and hits the body box; only where the paint goes and how it looks change.
+- **One player:** key `b` throws a test blob at P1 from the far side, in P2's colour, so one player can see the hit, the splash, its drips and the body filling with paint.
+- **Cost:** under ~2 ms per player, logged per frame.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The splash's place and the end reason are in Task 4's package; its owner should check steps 1 and 4.
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Splashes in torso coordinates (Task 4; Task 5 for the key).
+2. Paint on the body and body mask (Task 5).
+3. Splash shapes (Task 5).
+4. The blob in flight and the burst (Task 5; Task 4 for the end reason).
+5. Docs; webcam check by the Task 5 owner.
+
+### Changes
+
+#### Step 1 · Splashes in torso coordinates
+
+**Changed:** `src/ipcvgame/core/geometry.py`: `bilinear(quad, u, v)`, the point at (u, v) in a four-corner quad; between the corners u and v blend linearly, so a point keeps its place on a quad that moves, turns or changes shape.
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+- `Game.torso_corners(m)`: `R_SHOULDER`, `L_SHOULDER`, `L_HIP`, `R_HIP`, so u = 0 is the screen-left side for a player facing the camera (the model's `L_*` is on the screen's right, `core/skeleton.py`). With the hips not both seen, the shoulders are moved down to `torso()`'s estimated hip level. `update()` stores it in `GamePlayer.torso` each frame, like `bounds`; None without a usable shoulder width.
+- `PaintSplat(u, v, owner_id, direction, seed, t)`, one per damaging hit (bolt or beam), made by `_splash()`: u at the near edge of `splat_band_u` plus a random 0–`splat_inward_u` inward, v from the hit height between the shoulder line and the hips, kept in `splat_band_v`. The near side comes from the corners' x and the flight direction. Without a torso: v = 0.5. Seeded per target and splash count, so the same hit always gives the same splash.
+- `Game.test_hit(pid)`: a normal bolt from the far frame edge at `test_hit_v` down the player's torso, owned by the other team, action `test_blob`; only while playing with the player in view.
+- `--until game`: the torso as a thin outline, its splashes as dots.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: `Pipeline.test_hit()`. `src/ipcvgame/app/main.py`: key `b`, and the key in the docstring. `README.md`: the key.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the crosses at `bilinear(torso, u, v)`, sized by the torso; `paint_area()` removed (replaced in step 2).
+
+**Changed:** `configs/default.yaml`, `game:` section: `splat_band_u`, `splat_band_v`, `splat_inward_u`, `test_hit_v`; removed `splat_extra`, `splat_spread`, `splat_band`.
+
+**Changed:** `tests/test_game.py`: the torso corners (with and without hips), a splash on the near side at the hit height, a splash moving and leaning with the torso, a test blob hitting a lone player from the far side, none outside playing; the existing splat tests for one splash per hit. `tests/test_renderer.py`: paint following the torso, not the box.
+
+#### Step 2 · Paint on the body and body mask
+
+**Added:** `src/ipcvgame/scene/paint.py` (Task 5)
+- `BodyPaint`, one per player in the renderer: the splashes as polygons in torso coordinates, each point mapped with `bilinear()` every frame, the game's own map. One image warped through the four torso corners (`cv2.warpPerspective`) was the plan; a perspective map treats the torso's trapezoid (hips narrower than shoulders) as a slanted rectangle, and on a test body it put the middle of the torso 42 px too low.
+- `body_mask()`: the torso quad stretched to `mask_torso_u` / `_v` (the keypoints are joints, inside the outline), and a line `mask_arm_sw` / `mask_leg_sw` shoulder widths thick along every arm and leg bone with both keypoints valid; anti-aliased.
+- `_shade()`: factor (1 − `paint_shade`) + `paint_shade` × the camera's brightness over its mean under the paint, the ratio capped at 2. A dark shirt keeps the paint bright; only folds and shadows relative to the shirt show.
+- Nothing for a torso narrower than `paint_min_torso_px` (side-on) or folded.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the paint through `BodyPaint`, timed per player; `Renderer.log_fields()` (`render_p<pid>_paint_ms`); `reset()` forgets the paint. The crosses (`_draw_player_paint()`) are gone. `src/ipcvgame/app/pipeline.py`: `log_fields()` also asks the renderer.
+
+**Changed:** `configs/default.yaml`, `render:` section: `paint_aspect` (1.7: torso height over width measured at medians of 1.82 and 1.74 on `session.mp4` and 1.46 on `shield.mp4`), `mask_torso_u`, `mask_torso_v`, `mask_arm_sw`, `mask_leg_sw`, `paint_min_torso_px`, `paint_shade`, `paint_opacity`; removed `splat_cell_w`, `splat_cell_h`.
+
+**Added:** `tests/test_paint.py`: placement, growth with damage, following the torso, running onto an arm but not the background, the mask, shading on dark cloth, no paint side-on. **Changed:** `tests/test_renderer.py`: the paint time in the log.
+
+#### Step 3 · Splash shapes
+
+**Changed:** `src/ipcvgame/scene/paint.py` (Task 5)
+- `splash_shapes(seed, cfg)`, in units of the blob's radius with x along the flight and y down:
+  - `blob()`: r(a) = R (1 + Σ aₖ sin(k a + φₖ)) for k = 2…5, with aₖ up to `splash_wobble` / k;
+  - `splash_spikes` wedges from inside the blob out to 1 + `spike_len` radii, each with a drop at its tip; a share `spike_forward` aims within `spike_spread_rad` of the flight, the rest anywhere;
+  - `splash_drops` droplets at `drop_dist`, aimed the same way, with Pareto radii (`drop_r`, exponent `drop_power`): many small, few large;
+  - `drips` from the lower edge, `drip_len` long and `drip_w` wide (`drip_polygons()`).
+- The blob's radius is `splash_r` = [base, growth] torso widths, base + growth × (1 − health / max_health), so every splash swells as the player loses.
+- Each splash is drawn once into a coverage sprite (`paint_sprite_px` per blob radius, cropped to its paint) and placed every frame with one `cv2.warpAffine`, using the local affine map of `bilinear()` at the splash's centre (`BodyPaint._affine()`: the map's value and slopes along u and v there). The centre lands exactly at its (u, v), and the shape follows the torso's local stretch and lean. Mapping and filling every polygon every frame (~30 per splash, as in step 2) took 4–9 ms per player with 10 splashes on `session.mp4`; with sprites it is a median of 0.4 ms after one hit and 1.4–1.6 ms after 7–10.
+- While a splash's drips run (`drip_s`, eased out), they are filled as polygons with the same map, then baked into its sprite.
+- `fill_polygons()` fills one polygon per call: `cv2.fillPoly` (and `drawContours`) given several overlapping polygons fills them even-odd and leaves holes where they overlap, which made a hole where two step 2 discs of one colour overlapped.
+- The flight's sign along u is fixed when a splash is first drawn. Paint from several attackers: one coverage image per colour, later colours over earlier; with one attacker the colour is applied per channel with `cv2.convertScaleAbs`. The mask, shading and blend (`cv2.blendLinear`) run only over the painted pixels.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: passes `Frame.t` for the drips.
+
+**Changed:** `configs/default.yaml`, `render:` section: `splash_r` (now the blob's radius, [0.1, 0.15]), `splash_wobble`, `splash_spikes`, `spike_len`, `spike_width`, `spike_forward`, `spike_spread_rad`, `splash_drops`, `drop_dist`, `drop_r`, `drop_power`, `drips`, `drip_len`, `drip_w`, `drip_s`, `paint_sprite_px`, `paint_sprite_extent`.
+
+**Changed:** `tests/test_paint.py`: the splash at its point, the spray leaning onward, every splash different but stable, the parts' ranges, drips running then stopping, following the torso, shapes made once per splash, no holes where parts overlap.
+
+#### Step 4 · The blob in flight and the burst
+
+**Changed:** `src/ipcvgame/scene/paint.py` (Task 5)
+- `draw_blob()`: `blob()` with wobble amplitudes `blob_wobble` / k (k = 2…4) whose phases turn at `blob_wobble_hz` × k turns a second, stretched `blob_stretch` along the flight; a darker rim, a highlight towards the front top, and `blob_trail` droplets behind, each `blob_trail_gap` radii further back and sinking `blob_trail_fall` × i² radii. Opaque, anti-aliased, `blob_r_w` frame widths in radius.
+- `draw_burst()`: `burst_drops` drops thrown back and up (within `burst_spread_rad` of 45° up-back) at `burst_speed` radii a second, falling with `burst_gravity` and shrinking to nothing over `game.bolt_end_s`; seeded by where the blob ended.
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4): `BoltEnd.reason`, "hit", "shield" or "edge". The game logic keeps its names (`Projectile`, `bolt_*`, `game_bolts`).
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: blobs through `draw_blob()`; bursts only on "shield" (at a hit the splash is the effect, at the edge the blob leaves), drawn after the shields: drawn before, the fire ring covered most drops on `shield.mp4`. `CONTROLS`: "PUNCH: PAINT BLOB". `Renderer.bolt_effect()` removed. `src/ipcvgame/scene/instructions.py`: `MOVE_TEXT["punch"]` "FIRES A PAINT BLOB".
+
+**Removed:** `src/ipcvgame/scene/fire_bolt.py`, `tests/test_fire_bolt.py`. `assets/beam/` (the fire blast frames) is no longer used; its removal is a follow-up in `docs/extra_features.md`.
+
+**Changed:** `configs/default.yaml`: `game:` `bolt_end_s` 0.25 → 0.5 s, so the drops can rise and fall; `render:` `blob_r_w`, `blob_wobble`, `blob_wobble_hz`, `blob_stretch`, `blob_trail`, `blob_trail_gap`, `blob_trail_fall`, `burst_drops`, `burst_spread_rad`, `burst_speed` (8–16 radii/s: at 4–9 the drops stayed under the ring), `burst_gravity`, `burst_drop_r`; removed `bolt_sprite`, `bolt_sprite_launch`, `bolt_sprite_flight`, `bolt_sprite_fps`, `bolt_sprite_h`, `bolt_effect_owner`.
+
+**Changed:** `tests/test_game.py`: the end reasons. `tests/test_paint.py`: the blob (colour, highlight, wobble, trail behind) and the burst (back and up, falling, gone, stable). `tests/test_renderer.py`: the blob drawn, a burst only off a shield; the fire bolt options gone.
+
+#### Step 5 · Docs
+
+**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (Task 5 owner, 2026-10-29); the follow-up for `assets/beam/`. Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.

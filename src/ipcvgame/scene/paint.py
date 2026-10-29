@@ -1,4 +1,4 @@
-"""Task 5 — paint on the players' bodies (extra_features.md feature 3).
+"""Task 5 — paint on the players' bodies (docs/merge_log.md, "Normal attack").
 
 Each player's splashes (game.PaintSplat, in torso coordinates: u from the
 screen-left shoulder 0 to the right one 1, v from the shoulder line 0 to the

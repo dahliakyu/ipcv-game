@@ -245,7 +245,7 @@ def test_same_hit_gives_same_splats():
     assert splats() == splats()
 
 
-# --- Paint in torso coordinates (extra_features.md feature 3, step 1) -------
+# --- Paint in torso coordinates (merge_log.md "Normal attack", step 1) -------
 
 from ipcvgame.core.geometry import bilinear  # noqa: E402
 

@@ -7,7 +7,7 @@ the ``game:`` config.
 Combat (``advance()``): bolts and beams fly across the frame and damage the
 first other player whose body box they reach, adding a paint splash on the
 torso (``PaintSplat``, in torso coordinates, so the paint moves with the
-body; feature 3 in docs/extra_features.md); a raised shield blocks them.
+body; docs/merge_log.md, "Normal attack"); a raised shield blocks them.
 At 0 health the attacker wins and the game freezes.
 Every hit that does damage is also kept in ``Game.hits`` for that frame,
 for the face effects' hit reaction (docs/merge_log.md, "Face effects").

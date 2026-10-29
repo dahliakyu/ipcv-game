@@ -1,4 +1,4 @@
-"""Paint on the players' bodies (scene/paint.py, extra_features.md feature 3)."""
+"""Paint on the players' bodies (scene/paint.py; merge_log.md, "Normal attack")."""
 
 import numpy as np
 import pytest

@@ -638,7 +638,7 @@ def test_held_drink_at_the_lower_lip_face_sized_without_badge():
     assert not color_mask(canvas, renderer_mod.DRINK_COLORS["defense"]).any()   # no badge
 
 
-# ---------- Paint blob (extra_features.md feature 3, step 4) ----------
+# ---------- Paint blob (merge_log.md "Normal attack", step 4) ----------
 
 def test_blob_drawn_in_flight_and_burst_only_on_a_shield(game):
     from ipcvgame.interaction.game import BoltEnd
