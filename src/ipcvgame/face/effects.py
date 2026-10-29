@@ -19,8 +19,8 @@ _Anim record per player, timed with Frame.t.
 Cheek bulge: puffed cheeks, chipmunk style, for about a second. A real
 image warp, not a sticker: around each cheek anchor the camera image is
 magnified by a radial warp with cv2.remap (bulge_map()). Started only by
-bulge(pid, t), when the player eats a consumable (extra_features.md,
-feature 2); while a drink sits at the open mouth (update(..., holding)),
+bulge(pid, t), when the player drinks a consumable (docs/merge_log.md,
+"Consumables"); while a drink sits at the open mouth (update(..., holding)),
 the cheeks already bulge gently.
 """
 
@@ -254,7 +254,7 @@ class FaceEffects:
 
     def bulge(self, pid: int, t: float) -> None:
         """Puff this player's cheeks from time t (Frame.t): called when they
-        eat a consumable (extra_features.md, feature 2), the only trigger.
+        drink a consumable (merge_log.md, "Consumables"), the only trigger.
         It rises from the strength the cheeks have now (the gentle bulge of
         a drink at the mouth, or a puff already running), so it starts over
         without a jump."""

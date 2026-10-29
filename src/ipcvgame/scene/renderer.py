@@ -12,8 +12,8 @@ with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
 
-Drinks (consumables, extra_features.md feature 2): each falling drink as its
-sprite with a badge for its buff (green "+" HP, orange lightning attack,
+Drinks (consumables, docs/merge_log.md, "Consumables"): each falling
+drink as its sprite with a badge for its buff (green "+" HP, orange lightning attack,
 purple shield defense), a drink held at a mouth in front of the face, a
 pick-up text rising beside the drinker's head, and the running attack and
 defense buffs as icons with a time bar above each health bar.
@@ -133,7 +133,7 @@ class Renderer:
             self.draw_game(canvas, state, game)
         # The game's hits start the face effects' hit reaction; a drink at a
         # mouth bulges the cheeks gently and a drink drunk puffs them
-        # (consumables, extra_features.md feature 2).
+        # (consumables, docs/merge_log.md, "Consumables").
         holding = [d.held_by for d in game.drinks if d.held_by is not None]
         self.face_effects.update(game.hits, state.faces, state.frame.t, holding)
         for d in game.drunk:

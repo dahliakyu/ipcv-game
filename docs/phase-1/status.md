@@ -13,14 +13,14 @@ This document covers what the pipeline looks like right now, what your stub does
 | `core/` contracts, skeleton, filters, timing, config | Task 5 | Done | `types.py` is exactly the agreed contract |
 | `io/source.py` webcam + video file | Task 5 | Done | Mirrored at capture; clips replay real timestamps |
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
-| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28) |
+| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, paint on the torso, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28); drinks, pick-up text and buff icons (2026-10-28) |
 | `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26s-pose (small; nano until 2026-10-28), ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
 | `identity/tracker.py` | Task 3 | Done (merged 2026-10-27) | BoT-SORT on the pose boxes + OSNet re-identification; occluded/lost/re-entry |
 | `face/tracker.py`, `face/effects.py` | Task 1 | Done (merged 2026-10-25) | YuNet on per-player head crops, One Euro, optical-flow fallback; hat and mustache; team colour, hit reaction and cheek bulge (2026-10-28) |
 | `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
-| `interaction/game.py` | Task 4 | Done (merged 2026-10-26) | Colour Clash game logic from `game.py`: bolts, beams, blocking shields, paint, winner; drawn by `scene/renderer.py` |
+| `interaction/game.py` | Task 4 | Done (merged 2026-10-26) | Colour Clash game logic from `game.py`: bolts, beams, blocking shields, paint, winner; drinks caught with the mouth for HP, attack and defense buffs (2026-10-28); drawn by `scene/renderer.py` |
 
 Tests: 298 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
@@ -162,7 +162,7 @@ pytest                                        # before every PR
 - [x] Large head crops are shrunk before detection (`crop_max_px`).
 - [x] Head pose with `solvePnP` (5 YuNet landmarks, canonical 3D head): fills `Face.yaw`; forehead, hat and `above_head` are 3D points on the head, so they follow tilt and turn.
 - [x] MediaPipe Face Landmarker on the face, one player per frame in turn: head rotation for the 3D anchors (reliable also for strong up/down tilt) and blendshape scores in the new `Face.blendshapes` (`jawOpen`, `eyeBlinkLeft`/`Right`, `mouthSmileLeft`/`Right`, …).
-- [x] Face effects (`docs/merge_log.md`, "Face effects", 2026-10-28): cheek anchors; the hat band and war paint in the team colour; on a hit, the hat flies off and the face flashes; a cheek bulge (`cv2.remap` warp) that the consumables will start when a player eats. The name tag, crown and dizzy stars above the head are drawn by the renderer.
+- [x] Face effects (`docs/merge_log.md`, "Face effects", 2026-10-28): cheek anchors; the hat band and war paint in the team colour; on a hit, the hat flies off and the face flashes; a cheek bulge (`cv2.remap` warp) when a player drinks one of the consumables, and a gentle one while a drink is at the mouth (`docs/merge_log.md`, "Consumables"). The name tag, crown and dizzy stars above the head are drawn by the renderer.
 - [ ] Webcam check of the face effects (`docs/extra_features.md`, follow-ups).
 - [ ] Next: game features on top of the face stage, see `docs/extra_features.md`.
 
@@ -227,7 +227,9 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 - [x] Events to actions from `main.py`; bolts from the punching hand; one action at a time.
 - [x] `log_fields`: `game_p<pid>_health`, `_shield`, `_actions`, `game_bolts`, `game_beams`, `game_winner`.
 - [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 5); the other features are there too.
+- [x] Consumables (`docs/merge_log.md`, "Consumables", 2026-10-28): drinks fall while playing; an open mouth catches one and closing it drinks it, for +HP or a 10 s attack or defense buff, bigger drinks giving more. Logged as `game_drinks`, `game_p<pid>_mouth_open`, `_holding`, `_attack`, `_defense`.
+- [ ] Webcam check of the drinks, alone and with two (`docs/extra_features.md`, follow-ups).
+- [ ] Both players attacking at once (`docs/extra_features.md`, feature 4); the other features are there too.
 
 ### Task 5: Integration — owner: @el
 

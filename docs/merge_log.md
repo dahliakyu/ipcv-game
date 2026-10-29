@@ -1910,3 +1910,119 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 #### Step 6 · Docs
 
 **Changed:** `docs/extra_features.md`: the code map rows for the face effects and the renderer, the cheek anchors in the face table; the feature moved here and the backlog renumbered (final smash 1, consumables 2, …), with the consumables' eating rule calling `FaceEffects.bulge()`. Code comments, config and tests that said "feature 1" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the face effects in Task 1's list and the new feature numbers.
+
+## Consumables: drinks caught with the mouth
+
+The third feature built from the backlog in `docs/extra_features.md` (feature 2 there after the renumbering of 2026-10-28, feature 3 before that and feature 6 originally; the "extra features consumables", "Extra feature consumable", "Extra features consumables:", "Consumable extra_features", "consumables:" and "Consumables" commits), by the Task 5 owner on 2026-10-28. It touches Task 4 (`interaction/game.py`), Task 1 (`face/effects.py`) and Task 5 (`scene/renderer.py`, `scene/draw.py`, `README.md`); each step names the files it touched.
+
+### Plan
+
+**What.** Drinks fall from the sky during the round. A player drinks one by catching it with their open mouth and closing it. Each drink gives one of three buffs: HP, attack or defense. Drinks fall in random sizes, and a bigger drink gives a bigger buff.
+
+**Decisions (Task 5 owner, 2026-10-28).**
+
+- **Only with the mouth:** a drink that touches an open mouth sticks to it, and closing the mouth drinks it. There is no grabbing with the hands and no drinks on the floor. The first design allowed the mouth or a hand; it was changed before step 1.
+- **Categories:** each buff has its own three drinks from `assets/Fancy Drinks/` in a colour away from the team colours (HP green, attack orange, defense purple), with an icon on a badge (a plus, a lightning bolt, a shield).
+- **Size and value:** each drink gets a random size factor (0.7–1.4), and its value is linear in it, from the category's smallest to its largest value.
+- **Buffs:** HP is added at once, up to the maximum. Attack and defense are timed multipliers (10 s): damage = base × the attacker's attack × (1 − the target's defense), rounded. A drink of a running buff's category replaces its value and restarts its time.
+- **Cheeks:** drinking starts the cheek bulge (`FaceEffects.bulge()`, from "Face effects"), its only trigger. While a drink is at the mouth, the cheeks already bulge gently (added after step 4).
+- **One player:** everything can be tried alone (`--solo`, or `--no-intro` with one player in view): drinks fall, can be drunk, and their buffs show by the health bar and in the log. Only the buffs' effect on damage needs an opponent; tests cover it. Every step has a test with one player.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The drink rules are in Task 4's package and the held-drink bulge in Task 1's; their owners should check these steps.
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Falling drinks (Task 4).
+2. Drinking with the mouth (Task 4, from Task 1's face data).
+3. Buffs (Task 4).
+4. Look (Task 5).
+5. Fixes from the webcam check: cheeks while holding, the hold time.
+6. Docs; webcam check by the Task 5 owner.
+
+### Changes
+
+#### Step 1 · Falling drinks
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+- `Drink`: `x`, `y` (centre, px), `kind`, `size`, `value` and `variant` (0–1). With `variant`, the renderer picks one of the category's sprites, so the game needs no sprite list. `DRINK_KINDS`: `hp`, `attack`, `defense`.
+- `_advance_drinks()` runs inside `advance()`, so only while playing and not after a win. It counts `_drink_wait` down and spawns a drink when it is due and fewer than `drink_max` are in the air; when it is full, the next drink comes as soon as there is room. Drinks fall at a constant speed (one frame height in `drink_fall_s`) and are gone below the frame.
+- `_spawn_drink()`: a random category and size; the value is linear in the size; a random x between the `drink_margin_w` margins; the drink starts just above the frame. `drink_height()` gives its height on screen.
+- The random generator is seeded from `drink_seed` (null: different every game). `_clear_round()` clears the drinks and draws a new wait.
+- Logged as `game_drinks`. In `--until game` (`draw_debug()`): a circle of the drink's size in the category colour, with its letter and value.
+
+**Changed:** `configs/default.yaml`, `game:` section: `drink_every_s`, `drink_max`, `drink_fall_s`, `drink_h`, `drink_size`, `drink_margin_w`, `drink_hp`, `drink_attack`, `drink_defense`, `drink_buff_s`, `drink_seed`. The buff values and time are used from step 3 on.
+
+**Added:** `assets/Fancy Drinks/` (the sprite pack, with its Read Me) and `assets/Jester/`.
+
+**Changed:** `tests/test_game.py`: drinks one by one up to the maximum, the start above the frame and the constant speed, gone below the frame, bigger drinks give bigger values, drinks only while playing and cleared by a new round, the same seed gives the same drinks, drinks for a single player (the solo intro to playing, and `--no-intro` with only P1).
+
+#### Step 2 · Drinking with the mouth
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+- `_track_mouth()` runs every frame for every player. The mouth opens when `jawOpen` is above `drink_mouth_open` (0.5) and closes below `drink_mouth_closed` (0.25). Talking on `session.mp4` and `shield.mp4` stayed under 0.5 (at most 0.44). A frame without a score (MediaPipe runs for each player in turn) keeps the state; a new face starts closed, and no visible face means closed.
+- `_drink_with_mouths()` runs only while playing, before `advance()`.
+  - A drink touches the open mouth when its centre is within `drink_catch_fw` face widths of the mouth anchor plus half its height. Then it is held (`Drink.held_by`, `held_t`, action `catch`), it does not fall, and its rim (`drink_hold_rim` of its height above the centre) sits at the mouth.
+  - Each player holds one drink at a time, and the nearer mouth wins.
+  - Closing the mouth drinks it: `Drunk(pid, kind, value)` in `Game.drunk` for this frame, and the action `drink_<kind>`.
+  - Held longer than `drink_hold_s`, or with the face lost, the drink falls on, and that player cannot catch it again (`Drink.dropped_by`), so holding the mouth open does not keep a drink.
+- `reset(pid)` (re-entry) forgets the mouth and lets a held drink fall.
+- In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
+
+**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5): `draw()` calls `FaceEffects.bulge()` for each drink in `game.drunk`.
+
+**Changed:** `configs/default.yaml`, `game:` section: `drink_mouth_open`, `drink_mouth_closed`, `drink_catch_fw`, `drink_hold_rim`, `drink_hold_s` (1 s at first; see step 5).
+
+**Changed:** `tests/test_game.py`: the mouth's hysteresis; a drink caught by the open mouth and drunk on closing; talking away from a drink drinks nothing; a drink held too long falls on and cannot be caught again; the nearer mouth wins and one drink per mouth; a lost face drops the drink; one player can drink; no drinking outside playing. `tests/test_renderer.py`: drinking puffs the cheeks.
+
+#### Step 3 · Buffs
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+- `GamePlayer.attack` / `attack_left` and `defense` / `defense_left`: 1 and 0 without a buff.
+- `_apply_drink()` runs as a drink is drunk. HP adds the value, rounded, up to `max_health`; attack and defense take the value and `drink_buff_s`, replacing a running buff of the same kind.
+- `_tick_buffs()` counts the buffs down in `advance()`, so only while playing; an ended buff goes back to no effect.
+- `_apply_damage()`: damage = base × the attacker's `attack` × (1 − the target's `defense`), rounded, for bolts and beams alike. `Hit.damage` is the damage after the buffs.
+- `_refresh()` clears the buffs (new round, reset).
+- Logged as `game_p<pid>_attack`, `_attack_left`, `_defense`, `_defense_left`; `--until game` adds "atk x1.42 7s" and "def 35% 7s" to the player's label.
+
+**Changed:** `configs/default.yaml`: the reasons for `drink_hp`, `drink_attack`, `drink_defense` and `drink_buff_s`, now in use.
+
+**Changed:** `tests/test_game.py`: an HP drink heals up to the maximum; an attack drink multiplies the damage until it ends; a defense drink cuts the damage taken; attack and defense together; the same kind replaces the value and restarts the time; the buffs end with the round; one player drinks a buff and sees it in the log.
+
+#### Step 4 · Look
+
+**Changed:** `src/ipcvgame/scene/draw.py` (Task 5): `DRINK_COLORS`, the one table of buff colours (green, orange, purple) for the badges, icons, text and `--until game`.
+
+**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+- `drink_sprites(kind)` loads the config's sprites on first use, cropped to their visible part.
+- `_draw_drinks()`: each drink as one of its kind's sprites (`Drink.variant` picks it), scaled to its height with the nearest pixel (pixel art). Without sprites (`drink_sprites: null`) it is a circle. `draw_badge()` puts the buff's icon (`ICONS`: a plus, a lightning bolt, a shield) on a light disc at the drink's upper right.
+- Drinks are drawn after the face effects, so a drink held at the mouth is in front of the mustache. They are not drawn on the result screen.
+- `_draw_popups()`: "+18 HP", "ATTACK x1.4" or "DEFENSE 35%" in the buff's colour, starting at the mouth and offset `popup_side_fw` face widths towards the middle of the frame, so it does not cover the face. It rises `popup_rise_h` over `popup_s`, fades over the last third and stays under the top bar.
+- `_draw_buffs()`: above each health bar (P1 from the left, P2 from the right), each running attack or defense buff as its badge, its value and a time bar, fading over the last `buff_fade_s`. `Game.drink_buff_s` gives the full time.
+- `faded()` blends a box drawn in a `with` block at an opacity.
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4): `Game.drink_buff_s` for the renderer; `--until game` takes its colours from `DRINK_COLORS`.
+
+**Changed:** `configs/default.yaml`, `render:` section: `drink_sprites` (three drinks per kind: HP Lime Lemonade, Cucumber Water, Power Up; attack Orange Juice, Tropic Cider, Poolside; defense Midnight, Pomegranate, Neon Night), `drink_badge`, `drink_badge_min_px`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
+
+**Changed:** `README.md`: a credit row for the drinks in "Third-party licences" ("Fancy Drinks || Pixel Asset Pack" by Pop Shop Packs; use in game projects allowed, no redistribution as assets, credit optional).
+
+**Changed:** `tests/test_renderer.py`: the sprites per kind, cropped and optional; a falling drink with its badge; the pick-up text rising and ending; the buff icons above the health bars while running, and their fade; one player sees the buff icon; `faded()`.
+
+#### Step 5 · Fixes from the webcam check: cheeks while holding, the hold time
+
+**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+- `FaceEffects.update(hits, faces, t, holding)`: the players holding a drink. Their cheeks bulge gently (`_Anim.hold_level` towards `bulge_hold_k`, half the drinking puff), reached and let go over `bulge_hold_ramp_s`.
+- `bulge()` starts the puff from the current strength (`_Anim.bulge_k0`): it rises from there to `bulge_k` over the first half of `bulge_s` and falls as a half sine over the second half, so after a held drink it does not drop to 0 first. `bulge_strength()` is the larger of the hold level and the puff.
+
+**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+- `draw()` passes the players holding a drink to `FaceEffects.update()`.
+- A drink at a mouth is drawn at most `drink_held_fw` face widths tall, its top `drink_held_drop_fw` below the mouth anchor (the upper lip), without its badge. At ~2.3 m a falling drink is taller than a face, and at full size it covered the cheeks.
+
+**Changed:** `src/ipcvgame/interaction/game.py` (Task 4), `_drink_with_mouths()`: a held drink checks the face, then the closed mouth, then the time limit, so a mouth closing on the frame the time runs out still drinks.
+
+**Changed:** `configs/default.yaml`: `face:` `bulge_hold_k`, `bulge_hold_ramp_s`; `render:` `drink_held_fw`, `drink_held_drop_fw`; `game:` `drink_hold_s` from 1 to 2.5 s. In the first webcam run (`logs/run-20261028-231534.csv`), 3 of 4 caught drinks stuck to the mouth and then fell on: the mouth counted as closed 0.87, 1.00, 1.14 and 2.07 s after the catches, and one closed on the very frame the time ran out.
+
+**Changed:** `tests/test_effects.py`: the cheeks bulge gently while a drink is held; the drinking puff rises from the held bulge without a dip. `tests/test_renderer.py`: a held drink bulges the cheeks; the held drink at the lower lip, face-sized, without a badge. `tests/test_game.py`: a mouth closing as the time runs out still drinks.
+
+#### Step 6 · Docs
+
+**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, paint splash 3, both attacking 4, dodge 5); follow-ups for the webcam check of the drinks, the shield's render time and the asset pack in the repo. Code comments, config and tests that said "feature 2" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the drinks in the overview table and Task 4's list, the held-drink bulge in Task 1's, and the new feature numbers.

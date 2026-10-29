@@ -10,8 +10,8 @@ shield blocks them. At 0 health the attacker wins and the game freezes.
 Every hit that does damage is also kept in ``Game.hits`` for that frame,
 for the face effects' hit reaction (docs/merge_log.md, "Face effects").
 
-Drinks (consumables, extra_features.md feature 2): while playing, drinks
-fall from the top of the frame, one every drink_every_s, at most drink_max
+Drinks (consumables, docs/merge_log.md, "Consumables"): while playing,
+drinks fall from the top of the frame, one every drink_every_s, at most drink_max
 at once. Each has a buff category (hp, attack, defense) and a random size;
 the bigger the drink, the bigger its buff value. A player drinks one only
 with the mouth (_drink_with_mouths()): a drink that touches the open mouth

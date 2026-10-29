@@ -2,7 +2,7 @@ Oct 25, 2026 · @el created with help of Claude Opus 5.5
 
 # Extra features: to build after the merge
 
-This is the backlog of game features agreed during the Colour Clash merge, plus the technical follow-ups the merge left open. Features move to [merge_log.md](merge_log.md) once built: so far the game start (["Game start"](merge_log.md#game-start-instructions-and-pose-calibration)) and the face effects (["Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)). Each feature lists what it should do, which task owns which part, the inputs it needs, a starting design with thresholds, and how to check it. The thresholds are starting points: tune them on the clips and put them in `configs/default.yaml` with a reason, like every other threshold.
+This is the backlog of game features agreed during the Colour Clash merge, plus the technical follow-ups the merge left open. Features move to [merge_log.md](merge_log.md) once built: so far the game start (["Game start"](merge_log.md#game-start-instructions-and-pose-calibration)), the face effects (["Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)) and the consumables (["Consumables"](merge_log.md#consumables-drinks-caught-with-the-mouth)). Each feature lists what it should do, which task owns which part, the inputs it needs, a starting design with thresholds, and how to check it. The thresholds are starting points: tune them on the clips and put them in `configs/default.yaml` with a reason, like every other threshold.
 
 ## The merge is done
 
@@ -19,9 +19,9 @@ The features build on the Colour Clash game, merged from the teammates' code (or
 | --- | --- | --- | --- |
 | Gesture rules and events | `interaction/gestures.py`: `detect_*()`, `GestureRecognizer` | `gestures:` | `tests/test_gestures.py` |
 | Game phases: start places, calibration, countdown, result | `interaction/game.py`: `Game.phase`, `_next_phase()`, `place_taken()`, `_measure()` (neutral pose), `_check_line_up()`, `_tick()` (moves); `app/pipeline.py`: `_calibrate_identity()`; measurements in `pose/measure.py` | `game:` (`intro`, `round_players`, `ready_s`, `neutral_*`, …) | `tests/test_game.py` |
-| Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` → `_act()` (events to actions, `facing()`) → `advance()` (movement, hits, `_apply_damage()`); state in `GamePlayer`, `Projectile`, `PaintBeam`, `Shield`, `PaintSplat` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
-| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`) | `render:` | `tests/test_renderer.py` |
-| Face effects and face data | `face/effects.py`: `FaceEffects.update()` (game hits) and `draw()` (war paint, cheek bulge, mustache, flash, team hat, flying hats), per-player `_Anim`, `bulge(pid, t)` for eating; `face/tracker.py` (`Face`, anchors), `face/head_pose.py` (3D anchor points), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
+| Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` → `_act()` (events to actions, `facing()`) and `_drink_with_mouths()` (mouths from `_track_mouth()`, buffs by `_apply_drink()`) → `advance()` (movement, drinks falling in `_advance_drinks()`, hits, `_apply_damage()` with the buffs, `_tick_buffs()`); state in `GamePlayer` (also `attack`, `defense`), `Projectile`, `PaintBeam`, `Shield`, `PaintSplat`, `Drink`; this frame's `hits` and `drunk` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
+| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
+| Face effects and face data | `face/effects.py`: `FaceEffects.update()` (game hits, players holding a drink) and `draw()` (war paint, cheek bulge, mustache, flash, team hat, flying hats), per-player `_Anim`, `bulge(pid, t)` on drinking; `face/tracker.py` (`Face`, anchors), `face/head_pose.py` (3D anchor points), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
 | Players and identity | `identity/tracker.py`; `Player.status`, `reentered`, `pos` (`_position()`); P1 on the left at calibration (`order_left_to_right()`) | `identity:` | `tests/test_identity.py` |
 | Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting; `--no-intro`, `--solo`), `app/pipeline.py` | | `tests/test_pipeline.py` |
 
@@ -41,18 +41,18 @@ Each module reads only its own config section; the renderer reads game timings f
 
 ## Features
 
-Renumbered twice on 2026-10-28, the second time when the face effects were built. Old numbers in commits and `merge_log.md` map as follows:
+Renumbered three times: twice on 2026-10-28 (the second time when the face effects were built), and on 2026-10-29 when the consumables were built. Old numbers in commits and `merge_log.md` map as follows:
 
-| Now | Was on 2026-10-28 | Was before |
-| --- | --- | --- |
-| Game start: built, recorded in `merge_log.md` ("Game start") | — | 12 |
-| Face effects: built, recorded in `merge_log.md` ("Face effects") | 1 | 1 (team colour), 2 (hit reaction), 3 (status above the head), 7 (cheek bulge) |
-| 1. Final smash | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
-| 2. Consumables (drinks, redesigned 2026-10-28) | 3 | 6 |
-| 3. Aiming the normal attack | 4 | 11 |
-| 4. Normal attack as splashed paint | 5 | 13 (paint stains where the hit landed) |
-| 5. Both players attacking at once | 6 | 14 |
-| 6. Dodge by stepping forward | 7 (added on 2026-10-28) | — |
+| Now | Was after the face effects (2026-10-28) | Was after the first renumbering (2026-10-28) | Was before |
+| --- | --- | --- | --- |
+| Game start: built, recorded in `merge_log.md` ("Game start") | — | — | 12 |
+| Face effects: built, recorded in `merge_log.md` ("Face effects") | — | 1 | 1 (team colour), 2 (hit reaction), 3 (status above the head), 7 (cheek bulge) |
+| Consumables: built, recorded in `merge_log.md` ("Consumables") | 2 | 3 | 6 |
+| 1. Final smash | 1 | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
+| 2. Aiming the normal attack | 3 | 4 | 11 |
+| 3. Normal attack as splashed paint | 4 | 5 | 13 (paint stains where the hit landed) |
+| 4. Both players attacking at once | 5 | 6 | 14 |
+| 5. Dodge by stepping forward | 6 | 7 (added on 2026-10-28) | — |
 
 Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups).
 
@@ -63,7 +63,7 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 **Builds on** (state on 2026-10-28):
 
 - **Attack now:** `hands_up` fires the magic beam: `Game.beam_attack()`, `PaintBeam`, the `beam_*` keys in `game:`, drawn by `scene/magic_beam.py` with the `beam_ball` / `beam_band` keys in `render:`. Texts that name it: `CONTROLS` in `scene/renderer.py` ("HANDS UP: MAGIC BEAM") and `MOVE_TEXT["hands_up"]` in `scene/instructions.py`.
-- **Normal attack until feature 4 is built:** the fire bolt (`Projectile`). "Blob hits" below means bolt hits until then.
+- **Normal attack until feature 3 is built:** the fire bolt (`Projectile`). "Blob hits" below means bolt hits until then.
 - **Rules a hands-up gesture already goes through:** one action at a time (`gestures.py`: back to a normal position between actions), and facing the camera, checked in `Game.update()` before the action (`Game.facing_camera()`, head and body; merge_log "Game start: Modifications").
 - **Shield:** `activate_shield()`, `shield_s` (1 s) in `game:`, `Game.shielded(pid)`.
 - **Face data:** `state.faces[pid]`: `blendshapes` (`eyeBlinkLeft`, `eyeBlinkRight`), `alpha`, `valid`, `anchors["above_head"]`; the face stage logs `face_p<pid>_blink` and `face_p<pid>_pitch_deg`. The face tracker is Task 1's code.
@@ -79,9 +79,9 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 
 - **Orb parts.**
   - **Spawning:** one part at a time at a random free spot in the upper half of the frame (reachable with a raised hand), every ~5–8 s while fewer than four parts are in play; it slowly bobs.
-  - **Collecting:** a wrist (smoothed keypoint, `state.motion`) within ~0.5 shoulder widths of the part, held for ~0.2 s, picks it up, as for the items in feature 2.
+  - **Collecting:** a wrist (smoothed keypoint, `state.motion`) within ~0.5 shoulder widths of the part, held for ~0.2 s, picks it up.
   - **Holding:** each player's parts show as a 4-slot orb icon by their health bar, in their team colour; the quarters fill in as they are collected. A player cannot hold more than four.
-  - **Dropping:** 3 blob hits (feature 4) in a row knock one part out of the player; it flies off and lands as a part to collect again, so the other player can steal it.
+  - **Dropping:** 3 blob hits (feature 3) in a row knock one part out of the player; it flies off and lands as a part to collect again, so the other player can steal it.
 - **Start.** Without all four parts, `hands_up` does nothing: the orb icon flashes "not ready", and the one-action-at-a-time reset still applies. With all four, the complete orb glows above the player's head, and `hands_up` starts the attack. The slots empty at the start: the orb is used up whether the rain lasts a second or much longer.
 - **Duration: until the caster blinks.** Blinks count only during the attack. The rain stops at the first blink after the start, and also when the caster's face is not measured (empty `Face.blendshapes`, or `alpha` < 1), so turning away cannot hide a blink. A cap (~6 s, in config) keeps one attack from deciding the round alone. Damage per drop is fixed, so a longer stare means more damage.
 - **Blink detection.** The raw score is not enough: on the test clips, `blink` = mean of `eyeBlinkLeft`/`Right` went over 0.5 in up to 26% of frames just because people looked down. Use:
@@ -96,7 +96,7 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
   3. **Rain:** paint drops fall over the drop zone, densest in the middle, until the caster blinks.
   4. **Splashes:** splash marks fade on the floor.
 - **Drop zone and dodging.** The zone is centred on the opponent's body box, ~2 box widths wide, and follows the opponent slowly: it moves towards their current position at a limited speed (~0.3 frame widths/s). A player standing still takes the whole attack. Getting out of the direct drop needs a quick, long step to the side, faster than the zone follows; the zone then catches up again, so dodging works only now and then. Zone width and follow speed go in config and are tuned on the webcam.
-- **Hits.** Each drop tests its path since the last frame against the target's box, as the blob does. Every hit adds a splash on the body (feature 4) and a little damage (e.g. 1 per drop, ~5 per second of rain; the beam did 12 per attack). The shield blocks the drops while it is up. It lasts `shield_s` (1 s), so it covers part of a long rain, not all of it.
+- **Hits.** Each drop tests its path since the last frame against the target's box, as the blob does. Every hit adds a splash on the body (feature 3) and a little damage (e.g. 1 per drop, ~5 per second of rain; the beam did 12 per attack). The shield blocks the drops while it is up. It lasts `shield_s` (1 s), so it covers part of a long rain, not all of it.
 - **Look.**
   - **Eye glow:** while the rain lasts, the caster's eyes glow in their team colour, so both players can see what ends it. On the blink, the glow shatters into particles, with a short "blink!" text at `above_head`.
   - **Rain:** drops in the caster's team colour, falling with gravity, slightly random sizes; splash sprites where they hit the floor (the bottom of the body box, or the frame bottom) or the player.
@@ -108,113 +108,9 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 - Blink: on the webcam, a deliberate blink always ends the rain; looking down at the floor for 2 s does not; turning away ends it. Log blinks and the rain's length per attack, and count false blinks on the clips.
 - Attack: the rain follows the opponent at the set speed; standing still takes every drop, a quick long step out avoids some; the rain never lasts past the cap; the shield blocks the drops while it is up.
 
-### 2. Consumables: drinks caught with the mouth
+### 2. Aiming the normal attack: a pointing laser and paint blobs towards the opponent
 
-**What.** Drinks fall from the sky during the round. A player drinks one by catching it with their open mouth and closing it. Each drink gives one of three buffs: **HP**, **attack** or **defense**. Drinks fall in random sizes, and a bigger drink gives a bigger buff. The attack buff also decides who gets the shot when both players attack at once (feature 5).
-
-**Owners.**
-
-- Task 4: spawning, falling, the mouth rule (open, catch, close), the buffs and their effect on damage, in `interaction/game.py`.
-- Task 1: mouth state (`jawOpen`, `anchors["mouth"]`); the cheek bulge on drinking (`FaceEffects.bulge()`).
-- Task 5: drink sprites, category icons, buff display and pick-up text in the renderer.
-
-**Design (decided 2026-10-28).**
-
-- **Spawning.** Only while playing. Every 6–10 s (random), one drink appears at a random x over the play area, just above the top of the frame. At most two drinks are in the air at once.
-- **Falling.** Slowly and at a constant speed (one frame height in ~4 s), so a player can get under it. A drink that falls out of the bottom of the frame is gone.
-- **Size and value.** Each drink gets a random size factor (e.g. 0.7–1.4 × the base size, a fraction of the frame height). Its buff value scales linearly with the size, from the category's smallest to its largest value.
-- **Drinking: only with the mouth.** There is no grabbing with the hands.
-  - The mouth is open when `jawOpen` > 0.5, and closed again below 0.25 (hysteresis, per player).
-  - A drink that touches the open mouth (within ~0.6 face widths of `anchors["mouth"]`, plus the drink's half size) sticks to the mouth and stops falling.
-  - Closing the mouth drinks it. A drink not drunk within 2.5 s falls on again (1 s was too short on the webcam; step 2).
-  - The mouth anchor follows head tilt, so players can lean to catch drinks. Talking does not drink anything that is not at the mouth.
-  - Drinking puffs the drinker's cheeks: `FaceEffects.bulge(pid, t)` (built: [merge_log.md, "Face effects"](merge_log.md#face-effects-team-colour-hit-reaction-status-above-the-head-cheek-bulge)), its only trigger. While a drink is at the mouth, the cheeks already bulge gently, and the puff rises from there (added 2026-10-28).
-- **Buff categories.** Each uses its own drinks from `assets/Fancy Drinks/`, in colours that do not look like the team colours (red P1, blue P2), with an icon on the drink:
-
-  | Category | Drinks | Icon | Effect (value from the size) |
-  | --- | --- | --- | --- |
-  | HP | green: Lime Lemonade, Cucumber Water, Power Up | green "+" | +10 to +30 HP at once, up to the maximum |
-  | Attack | orange: Orange Juice, Tropic Cider, Poolside | orange lightning bolt | ×1.2 to ×1.6 damage dealt, for ~10 s |
-  | Defense | purple: Midnight, Pomegranate, Neon Night | purple shield | 20% to 50% less damage taken, for ~10 s |
-
-- **Stacking.** Another drink of the same category replaces the running buff's value and restarts its time.
-- **One player.** Everything must be testable alone (asked 2026-10-28): with `--solo` (the intro with P1 only) or `--no-intro` with one player in view, drinks fall, can be drunk (cheek bulge, pick-up text) and their buffs show by the health bar and in the log (`game_p1_attack`, `_defense`). Only the attack and defense effect on damage needs an opponent; the tests cover it. An HP drink at full health heals nothing but still shows its text.
-- **Damage with buffs:** damage = base damage × the attacker's attack multiplier × (1 − the target's defense), rounded.
-- **Look.**
-  - Falling drinks: the sprite at its size, with the category icon in a small badge.
-  - On drinking: "+18 HP", "ATTACK ×1.4" or "DEFENSE 35%" rises from the drinker's head in the category colour.
-  - Running attack and defense buffs: an icon with the value by the player's health bar, with a bar for the time left, fading in the last 2 s.
-- **Sprites:** `assets/Fancy Drinks/` (64 × 64 drinks, by Savannah). Its Read Me states no licence: check the pack's download page, and credit it in the README before the final ZIP.
-
-**Implementation steps.** One step at a time, each checked by the Task 5 owner before the next. Every new number goes in the module's config section with a reason.
-
-1. **Falling drinks** (Task 4, `interaction/game.py`; plain shapes in `--until game`). *Done.*
-   - `Drink` (position, category, size factor, value, sprite index) and spawning with a seedable random generator, only while playing, at most `drink_max` at once.
-   - Constant-speed fall; gone below the frame; cleared on a new round and on reset.
-   - Logged as `game_drinks`; drawn as circles with the category letter in `draw_debug()`.
-   - As built: `Drink` has `x`, `y` (centre, px), `kind`, `size`, `value` and `variant` (0–1). With `variant`, the renderer picks one of the category's sprites, so the game needs no sprite list.
-     - `_advance_drinks()` runs inside `advance()`, so only while playing and not after a win. It counts `_drink_wait` down and spawns a drink when it is due and fewer than `drink_max` are in the air; when it is full, the next drink comes as soon as there is room.
-     - `_spawn_drink()`: a random category and size; the value is linear in the size; a random x between the `drink_margin_w` margins; the drink starts just above the frame. `drink_height()` gives its height on screen.
-     - The random generator is seeded from `drink_seed` (null: different every game). `_clear_round()` clears the drinks and draws a new wait.
-     - In `--until game`: a circle of the drink's size in the category colour (`DRINK_DEBUG_COLORS`: green, orange, purple), with its letter and value.
-   - New `game:` keys, all with reasons: `drink_every_s`, `drink_max`, `drink_fall_s`, `drink_h`, `drink_size`, `drink_margin_w`, `drink_hp`, `drink_attack`, `drink_defense`, `drink_buff_s`, `drink_seed`. The buff values and time are used from step 3 on.
-   - On `session.mp4` (`--no-intro`, seed 3): drinks at 7.0, 15.7, 25.7 and 32.3 s; at the base size a drink is about as tall as a player's head.
-   - One player: drinks fall on `shield.mp4` (`--no-intro`, one player); a test runs the solo intro (`round_players: 1`) to playing and gets drinks, and one runs `--no-intro` with only P1.
-2. **Drinking with the mouth** (Task 4, from Task 1's face data). *Done.*
-   - Mouth open/closed per player from `jawOpen`, with hysteresis; a held drink follows the mouth anchor.
-   - Catch, drink on closing, drop again after `drink_hold_s`.
-   - `Game.drunk` (pid, category, value) for this frame, logged as the action `drink_<category>`. The renderer calls `FaceEffects.bulge()` for each.
-   - As built:
-     - `_track_mouth()` runs every frame for every player. The mouth opens above `drink_mouth_open` (0.5) and closes below `drink_mouth_closed` (0.25). A frame without a score (MediaPipe runs for each player in turn) keeps the state; a new face starts closed, and no visible face means closed.
-     - `_drink_with_mouths()` runs only while playing, before `advance()`.
-       - A drink touches the open mouth when its centre is within `drink_catch_fw` face widths of the mouth anchor plus half its height. Then it is held (`Drink.held_by`, action `catch`), it does not fall, and its rim (`drink_hold_rim` of its height above the centre) sits at the mouth.
-       - Each player holds one drink at a time, and the nearer mouth wins.
-       - Closing the mouth drinks it: `Drunk(pid, kind, value)` in `Game.drunk` for this frame, and the action `drink_<kind>`.
-       - Held longer than `drink_hold_s`, or the face lost, the drink falls on, and that player cannot catch it again (`dropped_by`), so holding the mouth open does not keep a drink. A mouth closing on the frame the time runs out still drinks (closing is checked first).
-       - `drink_hold_s` is 2.5 s, not the design's 1 s. In the first webcam run (`logs/run-20261028-231534.csv`), 3 of 4 caught drinks fell on with 1 s: the mouth counted as closed 0.87, 1.00, 1.14 and 2.07 s after the catches, and one closed on the very frame the time ran out.
-     - `reset(pid)` (re-entry) forgets the mouth and lets a held drink fall.
-     - The renderer calls `FaceEffects.bulge()` for each drink drunk.
-     - In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
-   - New `game:` keys: `drink_mouth_open`, `drink_mouth_closed`, `drink_catch_fw`, `drink_hold_rim`, `drink_hold_s`.
-   - On `session.mp4` and `shield.mp4` (`--no-intro`, a drink every 2–3 s): no catch and nothing drunk; talking never reached a `jawOpen` of 0.5 (P1 at most 0.44, P2 0.38). Catching and drinking are covered by tests, also with one player; the clips have no drinking.
-3. **Buffs** (Task 4). *Done.*
-   - HP at once; attack and defense as timed multipliers in `_apply_damage()`; replace and restart.
-   - Cleared on a new round. Logged as `game_p<pid>_attack` and `_defense`.
-   - As built:
-     - `GamePlayer.attack` / `attack_left` and `defense` / `defense_left`: 1 and 0 without a buff.
-     - `_apply_drink()` runs as a drink is drunk. HP adds the value, rounded, up to `max_health`; attack and defense take the value and `drink_buff_s`, replacing a running buff of the same kind.
-     - `_tick_buffs()` counts them down in `advance()`, so only while playing; an ended buff goes back to no effect.
-     - `_apply_damage()`: damage = base × attacker's `attack` × (1 − target's `defense`), rounded, for bolts and beams alike. `Hit.damage` is the damage after the buffs.
-     - `_refresh()` clears the buffs (new round, reset).
-     - Logged as `game_p<pid>_attack`, `_attack_left`, `_defense`, `_defense_left`; `--until game` adds "atk x1.42 7s" and "def 35% 7s" to the player's label.
-   - On `session.mp4` (`--no-intro`, nobody drinks): the round is the same as before the buffs (7 and 10 hits, P1 wins with 28 HP). The buffs are covered by tests, also for one player through the log.
-4. **Look** (Task 5, `scene/renderer.py`). *Done.*
-   - Drink sprites (loaded on first use, like the other sprites) with the category badge.
-   - The held drink at the mouth, the pick-up text, and the buff icons by the health bars.
-   - The README credit for the sprites.
-   - As built:
-     - `DRINK_COLORS` in `scene/draw.py` is the one table of buff colours (green, orange, purple), used by the badges, icons, text and `--until game`.
-     - `drink_sprites(kind)` loads the config's sprites on first use, cropped to their visible part.
-     - `_draw_drinks()`: each drink as one of its kind's sprites (`Drink.variant` picks it), scaled to its height with the nearest pixel. Without sprites (`drink_sprites: null`) it is a circle. `draw_badge()` puts the buff's icon (`ICONS`: a plus, a lightning bolt, a shield) on a light disc at the drink's upper right.
-     - Drinks are drawn after the face effects, so a drink held at the mouth is in front of the mustache. They are not drawn on the result screen.
-     - `_draw_popups()`: "+18 HP", "ATTACK x1.4" or "DEFENSE 35%" in the buff's colour, starting at the mouth and offset `popup_side_fw` face widths towards the middle of the frame, so it does not cover the face. It rises `popup_rise_h` over `popup_s`, fades over the last third and stays under the top bar.
-     - `_draw_buffs()`: above each health bar (P1 from the left, P2 from the right), each running attack or defense buff as its badge, its value and a time bar, fading over the last `buff_fade_s`. `Game.drink_buff_s` gives the full time.
-     - `faded()` blends a box drawn in a `with` block at an opacity.
-     - A drink at a mouth is drawn at most `drink_held_fw` face widths tall, its top `drink_held_drop_fw` below the mouth anchor (the upper lip), without its badge. At ~2.3 m a falling drink is taller than a face, and at full size it covered the cheeks.
-     - Cheeks while drinking (asked 2026-10-28): the renderer passes the players holding a drink to `FaceEffects.update(..., holding)`. Their cheeks bulge gently (`bulge_hold_k`, half the drinking puff), reached and let go over `bulge_hold_ramp_s`. `bulge()` now starts the puff from the current strength (`_Anim.bulge_k0`), so after a held drink it rises from the gentle bulge instead of dropping to 0 first; `bulge_strength()` is the larger of the two.
-     - README: a credit row for the drinks in "Third-party licences".
-   - New `render:` keys: `drink_sprites` (three drinks per kind), `drink_badge`, `drink_badge_min_px`, `drink_held_fw`, `drink_held_drop_fw`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
-   - On `session.mp4` (a drink every 2–3 s; an attack drink put at P1's mouth, drunk on the next frame because the mouth was closed): falling drinks with their badges, the drink at P1's lips in front of the mustache, then "ATTACK x1.5" beside the head and the x1.5 icon with its time bar above P1's health bar. Render time 4.98 → 5.24 ms per frame with drinks in the air. New `face:` keys: `bulge_hold_k`, `bulge_hold_ramp_s`.
-   - Holding and drinking on `session.mp4` (a drink put at P1's mouth, the mouth kept open for 10 frames): the bulge rises to 0.25 in 0.2 s while held, then from 0.24 to the 0.5 peak after drinking, and back to 0 by ~1.6 s, without a dip; the held drink hangs at the lower lip with the cheeks free.
-5. **Check and docs.** Clips for falling, sizes and the look; eating and the buffs in tests (the clips have no drinking); the webcam check is the Task 5 owner's, also alone (`--solo`). Then the feature moves to `merge_log.md`.
-
-Every step is checked with one player too (a test, and `data/clips/shield.mp4`, a solo clip, where it applies).
-
-**Check.** A drink cannot be drunk twice or by both players; talking without a drink at the mouth drinks nothing; each buff changes the damage as designed and ends on time; bigger drinks give bigger values.
-
-### 3. Aiming the normal attack: a pointing laser and paint blobs towards the opponent
-
-**What.** The normal attack (a punch fires a paint blob, feature 4) no longer flies only sideways: it goes where the player aims, towards the opponent. A thin pointing laser from the hand shows the aim before firing. Only the normal attack is aimed; the final smash (feature 1) falls on the opponent and needs no aim.
+**What.** The normal attack (a punch fires a paint blob, feature 3) no longer flies only sideways: it goes where the player aims, towards the opponent. A thin pointing laser from the hand shows the aim before firing. Only the normal attack is aimed; the final smash (feature 1) falls on the opponent and needs no aim.
 
 **Owners.**
 
@@ -229,13 +125,13 @@ Every step is checked with one player too (a test, and `data/clips/shield.mp4`, 
 - **2D game logic.**
   - `Projectile` gets a velocity vector instead of `direction`.
   - Hits test the path since the last frame (a segment) against the target's body box in 2D.
-  - The splash (feature 4) uses the 2D impact point.
+  - The splash (feature 3) uses the 2D impact point.
 - **Pointing laser.** While an arm is extended (straight but not yet a punch), a thin dashed line in the team colour runs from the wrist along the aim direction until it meets a body box or the frame edge. It fades with the gesture's state, and it is drawn only for the aiming player, to keep the frame readable.
 - **Drawing.** The blob's trail follows the velocity vector, so the drawn blob needs no rotated sprite.
 
 **Check.** Blobs hit an opponent who stands higher or lower (e.g. crouching) or in the same half of the frame; the pointing laser matches where the blob actually flies; aim assist does not snap to a player behind the shooter.
 
-### 4. Normal attack as splashed paint that covers the body
+### 3. Normal attack as splashed paint that covers the body
 
 **What.** A punch fires a blob of paint instead of the fire bolt. Where it hits, the paint splashes onto the opponent's body and stays there. Both are drawn by an algorithm, not from sprites: every splash has its own shape, and over a round the paint covers more and more of the body, so the damage shows on the player.
 
@@ -265,9 +161,9 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 **Check.** A punch that hits at shoulder height leaves paint near the shoulder, and the paint stays there while the player moves their arms and leans; no paint outside the body mask; no two splashes look the same; the render cost per frame is logged.
 
-### 5. Both players attacking at the same time: the stronger attack gets the shot
+### 4. Both players attacking at the same time: the stronger attack gets the shot
 
-**What.** Make simultaneous attacks fair and visible, and link them to the consumables (feature 2): an attack drink raises a player's attack multiplier, and when both attack at once, the higher attack multiplier gets the shot. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
+**What.** Make simultaneous attacks fair and visible, and link them to the consumables (built: [merge_log.md, "Consumables"](merge_log.md#consumables-drinks-caught-with-the-mouth)): an attack drink raises a player's attack multiplier, and when both attack at once, the higher attack multiplier gets the shot. Today (`Game.advance()` in `interaction/game.py`, as in `game.py`):
 
 - bolts and beams fly through each other, and both hits land;
 - when both hits would finish the round in the same frame, the attack fired first wins: `_apply_damage()` ignores everything once `winner_id` is set, so the order of the `projectiles` list decides.
@@ -276,8 +172,8 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 **Design.**
 
-- **Attack level:** the attack multiplier from the consumables (feature 2), 1 without an attack drink.
-- **Blob meets blob:** two blobs (feature 4) of different players whose paths cross in a frame (x segments overlap, y within the blob's size):
+- **Attack level:** the attack multiplier from the consumables (`GamePlayer.attack`), 1 without an attack drink.
+- **Blob meets blob:** two blobs (feature 3) of different players whose paths cross in a frame (x segments overlap, y within the blob's size):
   - the blob with the higher attack level flies on and hits; the other bursts at the meeting point, a splash in mid-air in its colour;
   - with equal levels, both burst, with a splash in both team colours.
 - **Final smash** (feature 1): it falls from above, so blobs never meet it, and a blob fired at a player under the rain still hits. If both players fire one, both fall; each player's shield blocks the drops on them.
@@ -285,9 +181,9 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
 
 **Check.** Unit tests: two blobs with equal levels cancel in the middle; a blob with the higher level goes through and hits; two finishing hits in one frame give a draw with equal levels, and a win for the higher level otherwise. On the webcam: both punch at once, with and without a power item.
 
-### 6. Dodge by stepping forward
+### 5. Dodge by stepping forward
 
-**What.** A player dodges a normal attack by stepping forward, towards the camera, off the line both players stand on. The paint blob (feature 4) then flies past behind them. The game sees the step as a change in the player's depth (`Player.pos`). For the line to mean the same for both players, the calibration also asks them to stand level with each other, side by side at the same distance from the camera.
+**What.** A player dodges a normal attack by stepping forward, towards the camera, off the line both players stand on. The paint blob (feature 3) then flies past behind them. The game sees the step as a change in the player's depth (`Player.pos`). For the line to mean the same for both players, the calibration also asks them to stand level with each other, side by side at the same distance from the camera.
 
 **Owners.**
 
@@ -305,7 +201,7 @@ Today the game keeps each splat as a fraction of the body box, inside a fixed ba
   - **At most ~1 s per dodge;** then the player has to return to the line before the next one. Otherwise standing forward would make a player safe for good. While dodging, the player cannot attack (the one-action-at-a-time rule).
 - **Fast enough to react.** A blob crosses the frame in ~1 s, and `identity.pos_tau_s` (0.3 s) delays the smoothed depth. The dodge reads its own depth signal with a shorter time constant (~0.1 s), or the torso ratio directly. Leaning forward shortens the torso in the image, which reads as further away, so it never fakes a dodge. If the hips leave the frame up close, the depth falls back to the shoulder width, which turning also changes.
 - **Hit rule:** a normal blob passes a dodging player without hitting them, and flies on. The final smash is not dodged by stepping forward: its paint falls on every depth, and stepping sideways is its dodge (feature 1).
-- **Look:** while dodging, the player's outline flashes white. A blob that passes them is drawn behind their body (the body mask of feature 4), with a short "MISS!" at `above_head`.
+- **Look:** while dodging, the player's outline flashes white. A blob that passes them is drawn behind their body (the body mask of feature 3), with a short "MISS!" at `above_head`.
 
 **Check.** On the webcam, at measured distances:
 
@@ -324,6 +220,9 @@ Log `p<pid>_depth_m` and the dodge state per player (`log_fields`), and count fa
 | Webcam check of the game start | The intro was checked on clips only: two players through the start places, calibration, countdown, result and replay; the P1-left swap with players who walked in the other way round; the line-up (whether 0.4 m by depth is too strict or too loose for two real players); the facing rule (whether 30° for head and body blocks players who glance at the opponent) | `--until game` |
 | Depth on the webcam | `Player.pos` uses an assumed field of view and shoulder width; stand at a measured distance (e.g. 2 m), compare `p<pid>_depth_m` in the log, and set `camera_hfov_deg` from the camera's spec and `shoulder_m` to match | `identity:` config |
 | Render cost at high resolution | The pixel look costs ~14 ms per frame on a 4K clip (~4.5 ms at 720p); the face effects and status add ~0.6 ms at 720p (render 4.3 → 5.0 ms on `session.mp4`) | `render.pixel_size`, `pixelate()` |
+| Webcam check of the drinks | Checked on clips (no drinking) and in tests; one webcam run so far (`logs/run-20261028-231534.csv`, which set `drink_hold_s` to 2.5 s). Check alone (`--solo`) and with two: catching and drinking, whether `jawOpen` 0.5 / 0.25 and the 2.5 s hold fit, whether players know to close the mouth (a "CLOSE YOUR MOUTH" text while holding is an option), the buff values and the spawn rate | `game:` `drink_*` keys |
+| Shield render time | On `shield.mp4` (2026-10-29, TeamViewer running), the render took ~51 ms on frames with the shield up and ~3 ms without; the same with drinks turned off. Not checked why yet | `scene/fire_ring.py`, `FireRing` |
+| Asset packs in the repo | All of `assets/Fancy Drinks/` (paid; reselling or redistributing the files as assets is not allowed), including `Misc/`, and `assets/Jester/` are committed. If the repo or the final ZIP is shared, keep only the nine sprites in use, or keep the packs out of git with a download note in the README | `assets/`, `.gitignore`, `README.md` |
 | Webcam check of the face effects | Checked on clips only: the war paint and the hat band with real head turns; the name tag steady when standing still and keeping up when walking (`tag_filter_*`); the hat knock-off and flash in a real round; the dizzy stars drawn over the hat even when "behind" the head | `face:` and `render:` config |
 
 ## Technical follow-ups from the Task 3 merge

@@ -500,7 +500,7 @@ def test_drinking_puffs_the_cheeks(game):
     assert 2 not in r.face_effects._anim or r.face_effects._anim[2].bulge_t is None
 
 
-# ---------- Drinks (consumables, extra_features.md feature 2, step 4) ----------
+# ---------- Drinks (consumables, merge_log.md "Consumables", step 4) ----------
 def drink_game():
     from ipcvgame.interaction.game import Game as G
     g = G({**CFG["game"], "intro": False, "act_facing_camera": False, "drink_every_s": [1e6, 1e6]})

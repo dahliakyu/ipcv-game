@@ -411,8 +411,8 @@ face:                     # Task 1 — YuNet face detection on per-player head c
   # like a lens, not a cheek.
   bulge_k: 0.5
   # The bulge rises and falls over this long (half a sine), chipmunk style.
-  # It starts only when the player eats a consumable (extra_features.md,
-  # feature 2).
+  # It starts only when the player drinks a consumable (merge_log.md,
+  # "Consumables").
   bulge_s: 1.0
   # While a drink sits at the open mouth, the cheeks already bulge gently:
   # half the drinking puff (a mouthful, not yet swallowed), reached and let
@@ -582,7 +582,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # Line-up (docs/merge_log.md, "Game start: Modifications"): the neutral
   # pose only counts while both players stand level, side by side at the
   # same distance from the camera, so a later change in depth (a dodge,
-  # extra_features.md feature 6) starts from one line for both. Judged by
+  # extra_features.md feature 5) starts from one line for both. Judged by
   # depth (Player.pos, from the shoulder width): the feet are usually out
   # of frame (they are on session.mp4).
   # Level: the depths less than this far apart (m). Wide, because depth
@@ -606,7 +606,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # against the neutral pose (Game.body_yaw_deg()): cos(30) = 0.87, the
   # shoulders look 13% narrower. Not checked before the calibration.
   act_max_body_yaw_deg: 30.0
-  # --- Drinks (consumables, extra_features.md feature 2). They fall only
+  # --- Drinks (consumables, merge_log.md "Consumables"). They fall only
   # while playing. A new one every drink_every_s (random in this range, s):
   # often enough to matter in a ~1-2 minute round, rare enough that
   # fighting stays the main thing.
@@ -800,7 +800,7 @@ render:
   stars_orbit: 0.75
   stars_flat: 0.3
   star_size: 0.2
-  # --- Drinks (consumables, extra_features.md feature 2).
+  # --- Drinks (consumables, merge_log.md "Consumables").
   # Sprites per buff kind, from "Fancy Drinks || Pixel Asset Pack" by Pop
   # Shop Packs (README, third-party licences). Each kind has drinks of its
   # own colour, away from the team colours (red, blue): green for HP,

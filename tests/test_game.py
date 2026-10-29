@@ -842,7 +842,7 @@ def test_calibration_move_counts_only_facing_the_camera():
     assert g.current_move(1) == "hands_up"
 
 
-# --- Drinks (consumables, extra_features.md feature 2) ---------------------
+# --- Drinks (consumables, merge_log.md "Consumables") ----------------------
 
 def drink_game(**over) -> Game:
     g = Game({**load_config()["game"], "intro": False, "drink_seed": 1, **NO_FACING, **over})
