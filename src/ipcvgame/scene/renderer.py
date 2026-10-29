@@ -69,7 +69,7 @@ from ipcvgame.scene.paint import BodyPaint, draw_blob, draw_burst
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
 # renderer.py's controls line, with our three gestures and what they fire.
-CONTROLS = "PUNCH: PAINT BLOB   HANDS UP: MAGIC BEAM   CROSS ARMS: SHIELD"
+CONTROLS = "PUNCH: PAINT BLOB   FULL ORB + HANDS UP: BEAM   CROSS ARMS: SHIELD"
 KEYS = "R: NEW ROUND   Q: QUIT"
 DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
 GREY = (120, 115, 105)      # moves still to do, in the instruction panels

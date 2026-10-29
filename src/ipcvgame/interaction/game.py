@@ -27,7 +27,10 @@ Orb parts (final smash, docs/extra_features.md §1): while playing, one
 small orb part at a time enters from the top of the frame and bounces in a
 band at punching height (_advance_orb()). A punch whose hand touches it
 collects it (_collect_orb()); orb_parts of them make a player's full orb.
-The next part comes orb_every_s after the last was collected.
+The next part comes orb_every_s after the last was collected. For now (a
+playtest, 2026-10-29) the full orb unlocks the magic beam: hands up fires
+it only with a full orb, and firing it empties both players' orbs
+(_use_orb()); the paint rain that ends at a blink comes later.
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -258,7 +261,8 @@ class Game:
         self.shields: dict[int, Shield] = {}
         self.winner_id: int | None = None
         self._t: float | None = None  # Frame.t of the previous update
-        # Actions this frame as (pid, "bolt" | "beam" | "shield" | "hit" | "orb"), and
+        # Actions this frame as (pid, "bolt" | "beam" | "shield" | "hit" | "orb"
+        # | "no_orb" (hands up without a full orb)), and
         # (pid, "learned_<move>") for a move ticked off in calibration; for the CSV.
         self.actions: list[tuple[int, str]] = []
         # Hits that did damage this frame (cleared by update()), for the face
@@ -607,6 +611,15 @@ class Game:
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
         self.actions.append((pid, "orb"))
         return True
+
+    def _use_orb(self) -> None:
+        """A final smash was fired: every player's orb goes back to 0 and the
+        part on the field goes, so the parts start coming in again, the next
+        one orb_every_s from now."""
+        for player in self.players.values():
+            player.orb = 0
+        self.orb_part = None
+        self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
 
     def test_orb(self, pid: int = 1) -> bool:
         """Fill pid's orb (key n), so one player can try the final smash
@@ -1119,11 +1132,16 @@ class Game:
             if self.attack(x, y, direction, pid):
                 self.actions.append((pid, "bolt"))
         elif gesture == "hands_up":
+            # The beam is the final smash for now: only with a full orb.
+            if player.orb < self.orb_parts:
+                self.actions.append((pid, "no_orb"))
+                return
             if not (m.valid[sk.L_WRIST] and m.valid[sk.R_WRIST]):
                 return
             hx, hy = (m.kpts[sk.L_WRIST] + m.kpts[sk.R_WRIST]) / 2.0
             if self.beam_attack(float(hx), float(hy), direction, pid):
                 self.actions.append((pid, "beam"))
+                self._use_orb()
         elif gesture == "arms_crossed":
             self.activate_shield(player.x, player.y, direction, pid)
             self.actions.append((pid, "shield"))

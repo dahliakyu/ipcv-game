@@ -390,8 +390,15 @@ def test_punch_without_wrists_fires_from_the_box_edge(game):
     assert (b2.x, b2.y) == (700.0, 600.0)    # P2 right: left edge
 
 
+def full_orb(game, *pids) -> Game:
+    """Give the players a full orb: hands up fires the beam only then."""
+    for pid in pids:
+        game.get_player(pid).orb = game.orb_parts
+    return game
+
+
 def test_hands_up_beam_starts_between_the_wrists(game):
-    game.update(frame_state(0.0, events=[(1, "hands_up")]))
+    full_orb(game, 1).update(frame_state(0.0, events=[(1, "hands_up")]))
     (beam,) = game.beams
     assert (beam.start_x, beam.y, beam.direction, beam.owner_id) == (200.0, 200.0, 1, 1)
 
@@ -453,7 +460,7 @@ def test_event_without_shoulders_is_ignored(game):
 
 def busy_game(game) -> Game:
     """Every kind of object on screen at once."""
-    game.update(frame_state(0.0, events=[(1, "punch"), (1, "hands_up"), (2, "arms_crossed")]))
+    full_orb(game, 1).update(frame_state(0.0, events=[(1, "punch"), (1, "hands_up"), (2, "arms_crossed")]))
     game.update(frame_state(0.1))
     game.get_player(2).paint_splats.append(PaintSplat(0.5, 0.5, owner_id=1))
     return game
@@ -521,14 +528,14 @@ def test_torso_and_drawing_values(game):
     ((400.0, 100.0), -1),     # both in the left half: P1 fires left, at P2
 ])
 def test_attacks_fly_towards_the_other_player(game, xs, p1_dir):
-    game.update(frame_state(0.0, events=[(1, "hands_up")], xs=xs))
+    full_orb(game, 1).update(frame_state(0.0, events=[(1, "hands_up")], xs=xs))
     assert game.beams[0].direction == p1_dir
-    game.update(frame_state(0.1, events=[(2, "hands_up")], xs=xs))
+    full_orb(game, 2).update(frame_state(0.1, events=[(2, "hands_up")], xs=xs))
     assert game.beams[1].direction == -p1_dir
 
 
 def test_alone_attacks_fly_towards_the_middle(game):
-    game.update(frame_state(0.0, events=[(1, "hands_up")], xs=(800.0, 200.0), lost=(2,)))
+    full_orb(game, 1).update(frame_state(0.0, events=[(1, "hands_up")], xs=(800.0, 200.0), lost=(2,)))
     assert game.beams[0].direction == -1          # right half, no one else in view
 
 
@@ -1385,3 +1392,35 @@ def test_orb_parts_only_while_playing():
     assert g.phase == "waiting" and g.orb_part is None
     row = g.log_fields(frame_state(0.5))
     assert (row["game_orb_x"], row["game_orb_y"]) == ("", "")
+
+
+def test_hands_up_fires_the_beam_only_with_a_full_orb():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, events=[(1, "hands_up")], xs=(200.0,)))
+    assert g.beams == [] and g.actions == [(1, "no_orb")]
+    g.get_player(1).orb = g.orb_parts - 1
+    g.update(frame_state(0.1, events=[(1, "hands_up")], xs=(200.0,)))
+    assert g.beams == [] and g.get_player(1).orb == g.orb_parts - 1   # nothing used up
+
+
+def test_firing_the_beam_empties_both_orbs_and_restarts_the_parts():
+    g = orb_game(orb_every_s=[2.0, 2.0])
+    g.update(frame_state(0.0))
+    g.get_player(1).orb, g.get_player(2).orb = g.orb_parts, 3
+    part_at(g, 500.0, 300.0)
+    g.update(frame_state(0.1, events=[(1, "hands_up")]))
+    assert len(g.beams) == 1 and (1, "beam") in g.actions
+    assert (g.get_player(1).orb, g.get_player(2).orb, g.orb_part) == (0, 0, None)
+    for i in range(2, 20):    # next part orb_every_s later (firing frame counts)
+        g.update(frame_state(0.1 * i))
+    assert g.orb_part is None
+    g.update(frame_state(2.25))
+    assert g.orb_part is not None
+
+
+def test_one_player_fills_the_orb_with_key_n_and_fires():
+    g = orb_game(**NO_ORB)
+    g.update(frame_state(0.0, xs=(200.0,)))
+    g.test_orb(1)
+    g.update(frame_state(0.1, events=[(1, "hands_up")], xs=(200.0,)))
+    assert len(g.beams) == 1 and g.get_player(1).orb == 0
