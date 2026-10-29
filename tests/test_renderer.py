@@ -74,21 +74,17 @@ def test_pixelate_makes_blocks():
     np.testing.assert_array_equal(pixelate(img, 1), img)
 
 
-def test_paint_crosses_in_attacker_colour_grow_with_damage(game):
-    """torso: the four corners the paint is drawn on."""
+def test_paint_time_logged_per_player(game):
     from ipcvgame.interaction.game import PaintSplat
     r = renderer()
-    torso = np.array([[100.0, 100], [300, 100], [300, 500], [100, 500]])
-
-    def painted(coverage):
-        canvas = np.zeros((600, 400, 3), np.uint8)
-        r._draw_player_paint(canvas, torso, [PaintSplat(0.5, 0.5, owner_id=2)], coverage)
-        return canvas
-    fresh, beaten = painted(0.0), painted(1.0)
-    blue = np.all(fresh == player_color(2), axis=2)
-    assert blue.any() and not blue[:100].any() and not blue[:, :100].any()     # inside the box
-    assert np.all(beaten == player_color(2), axis=2).sum() > 3 * blue.sum()
-
+    state = frame_state(0.0)
+    game.update(state)
+    game.get_player(1).paint_splats.append(PaintSplat(0.5, 0.5, owner_id=2))
+    r.draw(state, game)
+    fields = r.log_fields(state)
+    assert set(fields) == {"render_p1_paint_ms", "render_p2_paint_ms"} and fields["render_p1_paint_ms"] > 0
+    r.reset(1)
+    assert 1 not in r._paint
 
 def test_hud_and_game_over_hide_objects_in_flight(game):
     r = renderer(pixel_size=1, show_timings=False, bolt_sprite=None, beam_ball=None, shield_sprite=None,
@@ -123,7 +119,7 @@ def test_new_round_keeps_players(monkeypatch):
 
 def test_paint_follows_the_torso_not_the_box(game):
     from ipcvgame.interaction.game import PaintSplat
-    r = renderer(pixel_size=1)
+    r = renderer(pixel_size=1, paint_opacity=1.0)
 
     def blue_on_p1(canvas):
         # Around P1 only: P2's health bar and P2 are blue too.

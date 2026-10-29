@@ -132,7 +132,7 @@ class Pipeline:
     def log_fields(self, state: FrameState) -> dict:
         """Extra CSV columns from modules that define log_fields(state)."""
         row: dict = {}
-        for m in self.debug_module.values():
+        for m in (*self.debug_module.values(), self.renderer):
             fn = getattr(m, "log_fields", None)
             if fn is not None:
                 row.update(fn(state))

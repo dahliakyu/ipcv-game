@@ -702,15 +702,45 @@ render:
   # Player boxes and skeletons in the game view, for testing; renderer.py
   # drew none (the player is named on their health bar).
   show_skeleton: false
-  # Paint splats (renderer.py): each is a cross of 5 cells, drawn on the
-  # torso (shoulder width x shoulders to hips). A cell is [base, growth] of
-  # the torso: base + growth x coverage, where coverage = 1 - health /
-  # max_health, so splats grow as the player loses. renderer.py used
-  # 0.02 + 0.025 c of the box width and 0.015 + 0.025 c of its height; the
-  # box is ~2 shoulder widths wide and ~2.5 torso heights tall, so the same
-  # sizes are about double in torso units.
-  splat_cell_w: [0.04, 0.05]
-  splat_cell_h: [0.04, 0.06]
+  # --- Paint on the bodies (scene/paint.py; extra_features.md feature 3).
+  # renderer.py drew each splat as a cross of 5 pixel cells. Now each splash
+  # is a set of polygons in torso coordinates (u: shoulder to shoulder, v:
+  # shoulder line to hips), mapped onto the body every frame.
+  # Torso height / width (shoulder line to hips over shoulder to shoulder):
+  # shapes are sized in torso widths and their v divided by this, so a round
+  # splash stays about round on the body. Medians measured: 1.82 and 1.74
+  # on session.mp4, 1.46 on shield.mp4 (hips often out of frame there,
+  # estimated).
+  paint_aspect: 1.7
+  # Until the splash shapes (step 3): each splash a disc, radius
+  # base + growth x coverage torso widths (coverage = 1 - health /
+  # max_health), so a beaten player looks more painted, as renderer.py's
+  # crosses grew. 0.12 is a palm-sized spot on a fresh player.
+  splash_r: [0.12, 0.1]
+  # Body mask, so paint never lands on the background. The torso quad is
+  # widened past the shoulder and hip keypoints (joints sit inside the
+  # body's outline: the shoulder's outline is ~0.15 torso widths further
+  # out) and reaches a little above the shoulder line, not below the hips
+  # (the belt line is where the trousers start, often loose).
+  mask_torso_u: [-0.15, 1.15]
+  mask_torso_v: [-0.1, 1.0]
+  # Thickness of the capsule along each arm and leg bone, in shoulder
+  # widths: an upper arm in a sleeve is about a third of the shoulder width
+  # across, a thigh a little more.
+  mask_arm_sw: 0.35
+  mask_leg_sw: 0.45
+  # No paint while the torso is narrower than this (px, shoulder to
+  # shoulder): a player standing side-on has the shoulders nearly on top of
+  # each other, and the map onto a sliver would smear the paint.
+  paint_min_torso_px: 12
+  # Partial shading: the paint is multiplied by (1 - s) + s x the camera's
+  # brightness relative to its mean under the paint, so folds and shadows
+  # show through while a dark shirt keeps the paint bright (decided
+  # 2026-10-29: stays visible on black clothes). 0 = flat colour, 1 = the
+  # brightness ratio in full.
+  paint_shade: 0.5
+  # Opacity of the paint; just under 1 keeps a hint of the cloth texture.
+  paint_opacity: 0.95
   # Health bars pinned to the bottom (P1 left, P2 right, as in a fighting
   # game): length as a fraction of the frame width (0.3 leaves the middle
   # for the key line), height and "PLAYER N" label height as fractions of the

@@ -1,8 +1,8 @@
 """Task 5 — game renderer, from Colour Clash renderer.py.
 
 The game view, in drawing order: the camera frame (pixelated, as in
-renderer.py), each player's paint splats (renderer.py's pixel crosses, at
-their place on the torso), the
+renderer.py), each player's paint (scene/paint.py: splashes kept as polygons in torso
+coordinates, mapped onto the body, clipped to it and shaded), the
 game's objects drawn with their sprites (fire blast bolts, magic ball and
 beam, ring of fire shields), face effects, each player's status above the
 head (name tag, dizzy stars, crown; docs/merge_log.md, "Face effects"),
@@ -34,6 +34,7 @@ is drawn as a plain shape instead.
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -42,7 +43,6 @@ import cv2
 import numpy as np
 
 from ipcvgame.core.filters import OneEuro
-from ipcvgame.core.geometry import bilinear
 from ipcvgame.core.types import Face, FrameState
 from ipcvgame.face.effects import FaceEffects, load_sprite
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
@@ -60,6 +60,7 @@ from ipcvgame.scene.fire_bolt import FireBolt
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
 from ipcvgame.scene.magic_beam import MagicBeam
+from ipcvgame.scene.paint import BodyPaint
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
 # renderer.py's controls line, with our three gestures and what they fire.
@@ -103,13 +104,22 @@ class Renderer:
         self._drink_sprites: dict[str, list[np.ndarray]] = {}   # per buff kind, on first use
         # Pick-up texts: (pid, text, kind, Frame.t it started).
         self._popups: list[tuple[int, str, str, float]] = []
+        self._paint: dict[int, BodyPaint] = {}    # paint per player
+        self.paint_ms: dict[int, float] = {}       # this frame's paint time per player (log)
 
     def reset(self, pid: int | None = None) -> None:
-        """Forget the name tags' smoothing (one player on re-entry, or all)."""
+        """Forget the name tags' smoothing and the paint shapes (one player on
+        re-entry, or all)."""
         if pid is None:
             self._tags.clear()
+            self._paint.clear()
         else:
             self._tags.pop(pid, None)
+            self._paint.pop(pid, None)
+
+    def log_fields(self, state: FrameState) -> dict:
+        """Paint time per player this frame (ms), for the render cost."""
+        return {f"render_p{pid}_paint_ms": round(ms, 3) for pid, ms in self.paint_ms.items()}
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
         canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
@@ -123,10 +133,14 @@ class Renderer:
         # only detected players).
         visible = [pid for pid, p in sorted(state.players.items())
                    if p.status == "active" and pid in game.players and game.players[pid].torso is not None]
+        self.paint_ms = {}
         for pid in visible:
             player = game.players[pid]
-            self._draw_player_paint(canvas, player.torso, player.paint_splats,
-                                    1.0 - player.health / game.max_health)
+            t0 = time.perf_counter()
+            paint = self._paint.setdefault(pid, BodyPaint(self.cfg))
+            paint.draw(canvas, player.torso, state.motion.get(pid), player.paint_splats,
+                       1.0 - player.health / game.max_health)
+            self.paint_ms[pid] = (time.perf_counter() - t0) * 1000.0
         phase = game.phase
         if phase != "result":
             # After a win the game stops (game.py), so bolts and beams in
@@ -678,32 +692,6 @@ class Renderer:
         cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_AA)
 
     # ------------------------------------------------------ paint and health
-
-    def _draw_player_paint(self, canvas: np.ndarray, torso: np.ndarray, splats: list,
-                           coverage: float) -> None:
-        """renderer.py: each splat is a pixel cross (5 cells) in the
-        attacker's colour. The cells grow as the player's health drops
-        (coverage = 1 - health / max_health), so a beaten player looks more
-        painted.
-
-        Changed: each splash sits at its (u, v) on the torso (the game's
-        GamePlayer.torso corners, mapped with bilinear()), so it moves, leans
-        and scales with the body; cells are fractions of the torso's width
-        (shoulder to shoulder) and height (shoulder line to hips)."""
-        h, w = canvas.shape[:2]
-        torso_w = float(np.linalg.norm(torso[1] - torso[0]))
-        torso_h = float(np.linalg.norm((torso[2] + torso[3]) / 2 - (torso[0] + torso[1]) / 2))
-        (cw0, cw1), (ch0, ch1) = self.cfg["splat_cell_w"], self.cfg["splat_cell_h"]
-        cell_w = max(2, int(torso_w * (cw0 + cw1 * coverage)))
-        cell_h = max(2, int(torso_h * (ch0 + ch1 * coverage)))
-        for splat in splats:
-            cx, cy = (int(c) for c in bilinear(torso, splat.u, splat.v))
-            for ox, oy in ((-1, 0), (0, -1), (0, 0), (0, 1), (1, 0)):
-                x, y = cx + ox * cell_w - cell_w // 2, cy + oy * cell_h - cell_h // 2
-                x0, y0 = max(0, x), max(0, y)
-                x1, y1 = min(w, x + cell_w - 1), min(h, y + cell_h - 1)
-                if x0 < x1 and y0 < y1:
-                    cv2.rectangle(canvas, (x0, y0), (x1, y1), player_color(splat.owner_id), -1, cv2.LINE_8)
 
     def _draw_player_health(self, canvas: np.ndarray, pid: int, game: Game) -> None:
         """renderer.py's health bar (dark backing, "PLAYER N", off-white
