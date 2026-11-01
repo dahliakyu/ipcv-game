@@ -1,6 +1,6 @@
 # Merge log
 
-This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge was done on branch `face-tracking-eline`; every step names the files it touched. After the merge, the game features were built on the same branch, each in its own section below. The backlog they came from, `docs/extra_features.md`, was folded into [limitations.md](limitations.md) on 2026-11-01: features not built are under "Future improvements" there.
+This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge was done on branch `face-tracking-eline`; every step names the files it touched. After the merge, the game features were built on the same branch, each in its own section below. The backlog they came from, `docs/extra_features.md`, was folded into the limitations (now `project_report.md`, section 7) on 2026-11-01: features not built are under "Future improvements" there.
 
 ## Pre-merging Inits
 
@@ -90,7 +90,7 @@ A quick reference: where the teammates' code now lives, and what was changed bey
 | `update_tracks()` | `face/tracker.py`, `head_box()` + `FaceTracker._detect()` | Replaced; see Modifications |
 | Main loop: detect, flow, delete tracks | `face/tracker.py`, `FaceTracker.update()` | |
 | `Metrics` | `face/tracker.py`, `FaceTracker.log_fields()` + `tools/eval_face.py`, `evaluate()` | Jitter = `second_difference()` |
-| `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: `docs/evaluation.md` |
+| `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: the evaluation instructions (now `README.md`, "Evaluation") |
 | `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline |
 | Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` new round, `R` full reset) | |
 | `draw_status()` (name + HP bar) | `scene/renderer.py`, `_draw_player_health()` | Game UI: "PLAYER N" and the health bar, pinned to the bottom (Task 5 modifications) |
@@ -491,7 +491,7 @@ The script's `Metrics` class (jitter, alignment error, detection rate per lighti
 - `--set` and `--tag` run parameter experiments; `--markdown` saves the table.
 - Differences from the script: conditions come from clip names instead of `s`/`d`/`l` key presses. Latency is the face-stage time from the profiler (`ms_face`). Identity switches are no longer counted here: faces cannot swap with head crops, and switches are Task 3's metric.
 
-**Added:** `docs/evaluation.md`: how to evaluate on the clips for the report. The workflow and run-log columns are for all tasks; the face section has commands, column definitions, how to read the numbers, and an example. It ends with how to add an `eval_<stage>.py`.
+**Added:** the evaluation instructions (now `README.md`, "Evaluation"): how to evaluate on the clips for the report. The workflow and run-log columns are for all tasks; the face section has commands, column definitions, how to read the numbers, and an example. It ends with how to add an `eval_<stage>.py`.
 
 **Added:** `tests/test_eval_face.py` (3 tests: the metrics on a synthetic log with known jitter, lag and coverage; missing frames count as "no face"; the Markdown table). Also added to `tests/test_face.py`: a test that raw mouth columns are only written on detect frames.
 
@@ -585,7 +585,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 - `hat_depth_mm: 50`, `focal_per_width: 1.0`, `pose_max_deg: 60`.
 - `pose_filter_min_cutoff: 1.0`, `pose_filter_beta: 0.5`: angle filter values from the update guide.
 
-**Changed:** `tools/eval_face.py`: new columns `pose %` and `hat jitter px`; `docs/evaluation.md` explains both.
+**Changed:** `tools/eval_face.py`: new columns `pose %` and `hat jitter px`; the evaluation instructions (now `README.md`, "Evaluation") explains both.
 
 **Added to** `tests/test_face.py`: 9 tests on a synthetic head projected with known rotations, 1.5 m from the camera.
 
@@ -641,7 +641,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 - `head_model_mm` gets `left_ear` and `right_ear` at (±72, 20, 85) mm: beside the head, at ear-canal height, behind the eyes.
 - New: `landmarker` (true), `landmarker_model`, `landmarker_min_conf` (0.5), `landmarker_crop` (2.0), `landmarker_max_side` (256), `landmarker_per_frame` (1), `landmarker_max_age_s` (0.25).
 
-**Changed:** `README.md`: download command and SHA-256 for `models/face_landmarker.task`. `tools/eval_face.py`: `pose %` now counts both pose sources, plus a new `mediapipe pose %`; `docs/evaluation.md` explains them.
+**Changed:** `README.md`: download command and SHA-256 for `models/face_landmarker.task`. `tools/eval_face.py`: `pose %` now counts both pose sources, plus a new `mediapipe pose %`; the evaluation instructions (now `README.md`, "Evaluation") explains them.
 
 **Tests:**
 
@@ -1198,7 +1198,7 @@ The webcam test sometimes fired the major attack and a normal attack together. R
 
 **Changed:** `src/ipcvgame/interaction/game.py`, `attack()`: no bolt while the player's own beam is still alive (1.15 s), so the two attacks never overlap even after a quick reset. The other player is not affected.
 
-**Known limit:** when the arms go up one after the other, the punch pose usually comes first. The punch then fires and the beam is blocked: never both, but the punch wins. Telling a raise from a punch needs a better punch detector (`docs/limitations.md`, "Punch").
+**Known limit:** when the arms go up one after the other, the punch pose usually comes first. The punch then fires and the beam is blocked: never both, but the punch wins. Telling a raise from a punch needs a better punch detector (the limitations (now `docs/project_report.md`, section 7), "Punch").
 
 **Changed:** `docs/phase-1/status.md`: the gesture description mentions the reset rule.
 
@@ -1714,13 +1714,13 @@ The first feature built from the backlog in `docs/extra_features.md` (feature 12
 
 **Changed:** `src/ipcvgame/scene/renderer.py`: the neutral panel fills a bar while the pose is held, then shows "NICE! MEASURED"; the punch panel adds "STRETCH YOUR ARM ALL THE WAY" for a short arm.
 
-**Changed:** `src/ipcvgame/scene/instructions.py`: the cross-arms panel teaches wrists crossed just past the middle of the chest ("CROSS WRISTS IN FRONT OF CHEST"). With the hands on the opposite shoulders, the pose model puts each wrist back on its own side and the rule misses the cross; details in `docs/limitations.md`.
+**Changed:** `src/ipcvgame/scene/instructions.py`: the cross-arms panel teaches wrists crossed just past the middle of the chest ("CROSS WRISTS IN FRONT OF CHEST"). With the hands on the opposite shoulders, the pose model puts each wrist back on its own side and the rule misses the cross; details in the limitations (now `docs/project_report.md`, section 7).
 
 **Changed:** `configs/default.yaml`, `game:` section: `neutral_s`, `neutral_wrist_below_sw`, `neutral_max_speed_sw`, `neutral_max_yaw_deg`, `min_arm_sw`.
 
 **Changed:** `tests/test_game.py`: the calibration helpers stand in a real neutral pose; medians with noisy frames, each reason a pose is not neutral, a hold that restarts, a short arm.
 
-**Added:** `docs/limitations.md`: known limits and improvements for the report, starting with the missed high arm cross.
+**Added:** the limitations (now `docs/project_report.md`, section 7): known limits and improvements for the report, starting with the missed high arm cross.
 
 #### Step 5 · Identity at calibration
 
@@ -1801,7 +1801,7 @@ A gesture now counts, as an action in the round and as a move in the calibration
 
 ### Small pose model instead of nano
 
-The arms-crossed rule missed most crosses with the hands on the opposite shoulders, mostly with baggy or dark clothes, because the nano pose model put the wrists in the wrong place (`docs/limitations.md`, "Arms crossed"). With the same rule, the small model found 9 of 10 attempts on `data/clips/shield.mp4` (nano: 3) and 4 real crosses with no false ones on `session.mp4` (nano: 5 real, 2 false). Punches and hands up were the same, and the pose stage still takes ~10 ms per frame on the GPU. Finding the hands with MediaPipe Hand Landmarker was tried first and did not find the hands in most attempts (details in `docs/limitations.md`).
+The arms-crossed rule missed most crosses with the hands on the opposite shoulders, mostly with baggy or dark clothes, because the nano pose model put the wrists in the wrong place (the limitations (now `docs/project_report.md`, section 7), "Arms crossed"). With the same rule, the small model found 9 of 10 attempts on `data/clips/shield.mp4` (nano: 3) and 4 real crosses with no false ones on `session.mp4` (nano: 5 real, 2 false). Punches and hands up were the same, and the pose stage still takes ~10 ms per frame on the GPU. Finding the hands with MediaPipe Hand Landmarker was tried first and did not find the hands in most attempts (details in the limitations (now `docs/project_report.md`, section 7)).
 
 **Changed:** `configs/default.yaml`, `pose.weights`: `models/yolo26s-pose.pt`, with the comparison in its comment. `README.md`: the download command. `docs/phase-1/status.md`: the pose rows and the pose model decision.
 
@@ -2131,11 +2131,11 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 #### Step 5 · Docs
 
-**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (2026-10-29); the follow-up for `assets/beam/`. `docs/limitations.md`: "Depth is estimated, but no game rule uses it" (the line-up in the calibration stays for now). Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.
+**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (2026-10-29); the follow-up for `assets/beam/`. the limitations (now `docs/project_report.md`, section 7): "Depth is estimated, but no game rule uses it" (the line-up in the calibration stays for now). Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.
 
 ## Final smash: an orb grabbed by hand unlocks the beam
 
-The fifth feature built from the backlog (feature 1 there, the "Final Smash Extra Feature:" commits), on 2026-10-29. Each step names the files it touched. The full design, a paint rain on the opponent that lasts until the caster blinks, was cut short for a playtest; what was built ends in the interim below, which is the final version. The rest of the design is in [limitations.md](limitations.md), "Future improvements".
+The fifth feature built from the backlog (feature 1 there, the "Final Smash Extra Feature:" commits), on 2026-10-29. Each step names the files it touched. The full design, a paint rain on the opponent that lasts until the caster blinks, was cut short for a playtest; what was built ends in the interim below, which is the final version. The rest of the design is in the limitations (now `project_report.md`, section 7), "Future improvements".
 
 ### Plan
 
@@ -2208,7 +2208,7 @@ The fifth feature built from the backlog (feature 1 there, the "Final Smash Extr
 
 **Changed:** `tests/test_gestures.py`: blinks, baselines, low scores, hysteresis, eyes kept closed, a long gap, a one-frame glitch, looking down, no score, no baseline yet, the recognizer. `tests/test_face.py`: `Face.pitch`. `tests/test_game.py`: blinks are not moves.
 
-**On the clips:** at play distance the score hardly moves; the design's values give one blink in 110 s on `session.mp4` (see [limitations.md](limitations.md), "Future improvements"); the detector was removed in step 6.
+**On the clips:** at play distance the score hardly moves; the design's values give one blink in 110 s on `session.mp4` (see the limitations (now `project_report.md`, section 7), "Future improvements"); the detector was removed in step 6.
 
 #### Step 4 · Interim: the full orb unlocks the beam
 
@@ -2218,11 +2218,11 @@ For a playtest, the rain was postponed. **Changed:** `src/ipcvgame/interaction/g
 
 The punch rarely hit the part, and four parts took too long. **Changed:** `src/ipcvgame/interaction/game.py`: `_grab_orb()`: either wrist within `orb_reach_sw` of the orb's edge (`_hand_on_orb()`) for `orb_grab_s`, with gaps up to `hold_gap_s`, grabs it (`_take_orb()`); a punch no longer collects; no orb spawns while someone holds a full one, so one is in the game at a time. `configs/default.yaml`: `orb_parts` 1, `orb_r_h` 0.045, `orb_grab_s` 0.1. `tests/test_game.py`, `tests/test_renderer.py`: grabbing by touch, either hand, out of reach, one orb at a time, a punch no longer collecting.
 
-**On the clips:** on `session.mp4` the right-hand player grabbed the orb at 9.6 s and fired the beam, the other at 78.7 s; on `shield.mp4` the player grabbed it by accident at 12.7 s ([limitations.md](limitations.md), "The orb can be grabbed by accident").
+**On the clips:** on `session.mp4` the right-hand player grabbed the orb at 9.6 s and fired the beam, the other at 78.7 s; on `shield.mp4` the player grabbed it by accident at 12.7 s (the limitations (now `project_report.md`, section 7), "The orb can be grabbed by accident").
 
 #### Step 6 · Blink detection removed (2026-11-01)
 
-The paint rain that would end at the caster's blink was dropped, so nothing used the blink detector of step 3. **Removed:** `src/ipcvgame/interaction/gestures.py`: `blink_score()`, `BlinkDetector`, the `blink` and `eyes_closed` events, the `faces` argument of `GestureRecognizer.update()` and its CSV columns `gest_p<pid>_blink_base` and `_eyes_closed`. `src/ipcvgame/core/types.py`: `Face.pitch` (the face tracker keeps its own pitch for the head pose and still logs `face_p<pid>_pitch_deg`). `src/ipcvgame/face/tracker.py`: the `face_p<pid>_blink` column; the debug view shows a smile bar instead of a blink bar. `configs/default.yaml`: the `gestures: blink_*` keys. **Changed:** `src/ipcvgame/app/pipeline.py`: the gesture stage gets only the motion again; `src/ipcvgame/interaction/game.py`: every event goes through the facing check again (only gestures are sent). Tests for the detector, `Face.pitch` and blink events removed. The detector's design and clip findings are in [limitations.md](limitations.md), "Future improvements", "Final smash".
+The paint rain that would end at the caster's blink was dropped, so nothing used the blink detector of step 3. **Removed:** `src/ipcvgame/interaction/gestures.py`: `blink_score()`, `BlinkDetector`, the `blink` and `eyes_closed` events, the `faces` argument of `GestureRecognizer.update()` and its CSV columns `gest_p<pid>_blink_base` and `_eyes_closed`. `src/ipcvgame/core/types.py`: `Face.pitch` (the face tracker keeps its own pitch for the head pose and still logs `face_p<pid>_pitch_deg`). `src/ipcvgame/face/tracker.py`: the `face_p<pid>_blink` column; the debug view shows a smile bar instead of a blink bar. `configs/default.yaml`: the `gestures: blink_*` keys. **Changed:** `src/ipcvgame/app/pipeline.py`: the gesture stage gets only the motion again; `src/ipcvgame/interaction/game.py`: every event goes through the facing check again (only gestures are sent). Tests for the detector, `Face.pitch` and blink events removed. The detector's design and clip findings are in the limitations (now `project_report.md`, section 7), "Future improvements", "Final smash".
 
 #### Step 7 · The glow around the real outline (2026-11-01)
 
@@ -2244,7 +2244,7 @@ Built in a cloud session on 2026-10-31 after a check of the current state agains
 **Decisions.**
 
 - **The camera image is the arena.** Paint that misses a body lands on the wall *behind* the players and stays for the round, in the shooter's team colour; the room dims and takes the caster's colour during a beam; every hit shakes the picture along its direction. Over a round the wall shows who attacked where, and each team's share of it is logged.
-- **Behind the players** needs a person mask: built from the keypoints like the body paint's clip mask (`scene/paint.py`, `body_mask()`), but wider (it must cover clothes and hair, not stay inside them), plus a head disc, blurred. No segmentation model: no second model run per frame. Its limits are in `docs/limitations.md`, "Scene".
+- **Behind the players** needs a person mask: built from the keypoints like the body paint's clip mask (`scene/paint.py`, `body_mask()`), but wider (it must cover clothes and hair, not stay inside them), plus a head disc, blurred. No segmentation model: no second model run per frame. Its limits are in the limitations (now `docs/project_report.md`, section 7), "Scene".
 - **On the pixel look's small image:** the room is drawn after the camera image is shrunk (`render.pixel_size`) and before it is scaled up, so the paint matches the pixel look and costs a quarter of the pixels at `pixel_size` 2.
 - **New bolt ends by key, not by age:** after a win `advance()` stops, ages freeze, and an `age == 0` test would paint every frame.
 - **The wall belongs to the round:** kept on the result panel, cleaned on every other phase change.
@@ -2324,7 +2324,7 @@ The guards cover errors while running, not at startup: a wrong model path still 
 
 #### Step 6 · Docs
 
-**Changed:** `docs/phase-1/status.md`: the renderer and pipeline rows, a convention on failing modules, the test count (395). `docs/limitations.md`: "Scene" (the keypoint mask can let wall paint and dimming spill onto loose clothes or hair; a box-shaped hole for a player without a torso; improvements: YOLO-seg masks or a background plate) with the `session.mp4` check, and "Pipeline" (a failing module is skipped, not fixed; pose, gestures and the game have no stub). `docs/extra_features.md`: the code map rows for the look and the pipeline; new backlog feature 3, a calibrated mode (`--calibrated`) that loads a camera calibration (Tutorial 3) and only then turns on the dodge by stepping forward (planned, not built; the calibration tool is not in the repo yet). `README.md`: the failure handling and `pipeline.catch_errors`; key `n` now fills the one orb.
+**Changed:** `docs/phase-1/status.md`: the renderer and pipeline rows, a convention on failing modules, the test count (395). the limitations (now `docs/project_report.md`, section 7): "Scene" (the keypoint mask can let wall paint and dimming spill onto loose clothes or hair; a box-shaped hole for a player without a torso; improvements: YOLO-seg masks or a background plate) with the `session.mp4` check, and "Pipeline" (a failing module is skipped, not fixed; pose, gestures and the game have no stub). `docs/extra_features.md`: the code map rows for the look and the pipeline; new backlog feature 3, a calibrated mode (`--calibrated`) that loads a camera calibration (Tutorial 3) and only then turns on the dodge by stepping forward (planned, not built; the calibration tool is not in the repo yet). `README.md`: the failure handling and `pipeline.catch_errors`; key `n` now fills the one orb.
 
 ## Arena and stage guards: Modifications
 
@@ -2346,7 +2346,7 @@ On the webcam the wall paint beside the players was cut along straight lines wit
 
 **Changed:** `tests/test_arena.py`: the keypoint-mask tests set `arena_segmenter: null` (their drawn frames have no real people); a fake segmenter's mask keeps the paint off; a missing model falls back to the keypoints; the segmenter's result stays unchanged after later calls (skipped without the model file).
 
-**On `session.mp4`** (`--no-intro`): at 100 s the paint now meets the right-hand player's raised arm, shoulder and hair; the straight cut and the bare strip are gone. The segmenter alone takes 2.5–4 ms at 640 x 360 (feeding it 256 x 144 and scaling the mask up ourselves was no faster). The arena costs 0.34 ms median with a clean wall, 4.6 ms (95th percentile 5.4 ms) with wall paint and 6.8 ms during a beam, against 1.4 ms with the keypoint mask; `ms_render` 11.0 ms median, a frame 35.8 ms. `docs/limitations.md`, "Scene", is rewritten for the segmenter.
+**On `session.mp4`** (`--no-intro`): at 100 s the paint now meets the right-hand player's raised arm, shoulder and hair; the straight cut and the bare strip are gone. The segmenter alone takes 2.5–4 ms at 640 x 360 (feeding it 256 x 144 and scaling the mask up ourselves was no faster). The arena costs 0.34 ms median with a clean wall, 4.6 ms (95th percentile 5.4 ms) with wall paint and 6.8 ms during a beam, against 1.4 ms with the keypoint mask; `ms_render` 11.0 ms median, a frame 35.8 ms. the limitations (now `docs/project_report.md`, section 7), "Scene", is rewritten for the segmenter.
 
 ## Performance: the shield ring no longer slows the game (2026-11-01)
 
@@ -2377,4 +2377,21 @@ On the webcam the wall paint beside the players was cut along straight lines wit
 | `session.mp4`, P2 | 2.70 → 2.13 (−21%) | 535 frames: 1.34 → 0.98 (−27%) | 0.96 / 3.43 | 0.14 |
 | `shield.mp4`, P1 (close up) | 9.39 → 7.76 (−17%) | 79 frames: 4.58 → 4.08 (−11%) | 3.29 / 14.1 | 0.45 |
 
-The light EMA (`tau` 0.048 s) cuts the frame-to-frame jitter of a still player by about a quarter to a third at ~2.3 m, at a lag of about 1 px; the lag reaches several px only in fast moves. Wrist speeds around punches are in [limitations.md](limitations.md), "Punch: decided per frame from the pose".
+The light EMA (`tau` 0.048 s) cuts the frame-to-frame jitter of a still player by about a quarter to a third at ~2.3 m, at a lag of about 1 px; the lag reaches several px only in fast moves. Wrist speeds around punches are in the limitations (now `project_report.md`, section 7), "Punch: decided per frame from the pose".
+
+## Evaluation tools and the team clips (2026-11-01)
+
+**What.** Evaluation scripts for every task, hand labels for the team's clips of 29–31 Oct, and three changes the evaluation called for. Results and methods: `docs/project_report.md`, the evaluation instructions (now `README.md`, "Evaluation"), tables in `results/`.
+
+**Added:** `tools/eval_common.py` (shared run loop: `--light`/`--noise` for a repeatable low-light condition, `--tag`, `--set`, `--intro`, run-info file with start-up time and CPU/GPU/memory), `tools/eval_motion.py`, `eval_identity.py`, `eval_gestures.py`, `eval_pipeline.py`; `tools/eval_face.py` moved onto the shared loop (same metrics). `tools/label_clip.py`: identity labels (A, B, other) and gesture starts, in `data/labels/`; the labels of the team clips were pre-assigned by clothing colour and checked frame by frame. Tests `tests/test_eval_*.py` on synthetic logs with known values.
+
+**Changed:** `src/ipcvgame/io/recorder.py`. Clips said 30 fps in the file while the frames came in at 15 fps (6.7 and 2.4 fps while the game ran on the laptop), so video players showed them 2-4.5x sped up. `ClipRecorder.close()` now sets the container rate to the measured mean rate with ffmpeg (stream copy, frames untouched); `tools/retime_clip.py` does the same for older clips. The pipeline was never affected (it replays the timestamps sidecar).
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`, rising-wrist veto for the punch (`gestures.punch_max_rise_sw` 0.8, `punch_rise_window_s` 0.2; log column `gest_p<pid>_vetoed`). An arm swinging up into hands up or the crossed arms passed through the punch pose and fired a punch, which then blocked the intended action. Wrist rise in the 0.2 s before each punch event: real punches at most 0.67 sw (the 11 labelled in `Shoot_test` at most 0.18; on `session.mp4` checked by eye), false ones 0.89-1.55 sw. A first version vetoed only the frame where the rise was measured, and the punch fired one frame later when the arm stopped held out; the veto now holds until the arm leaves the punch pose. Result: false punches 4 -> 1, hands-up recall 12/14 -> 14/14, both players at once 8/10 -> 9/10; on `session.mp4` the three false punches gone and the three checked real ones kept. A minimum wrist speed was checked first and rejected: the swings were faster than the punches. Tests: a rising arm gives no punch, also when it stops held out; a sideways reach does; `test_one_punch_gives_one_event` now starts its punches from a guard pose (a jump from hanging arms to a punch in one frame is a 2.5 sw rise).
+
+**Changed:** `src/ipcvgame/pose/motion.py`, backend `oneeuro` next to `ema` (config `motion.oneeuro_min_cutoff`, `_beta`, `_d_cutoff`), the same gate, hold and snap-back with a One Euro filter. Swept on the clips: min cutoff 0.5 Hz, beta 0.03 cut still jitter by 52 % (EMA 35 %) and halved the delay in fast moves (15 vs 28.5 ms); with the veto it recognised the same actions 30-90 ms sooner, with two more false shields on `shield_test`. Tests: smooths a still keypoint more and lags less on a fast move than the EMA; hold and snap-back for both backends.
+
+**Then (same day): One Euro as the default** (`motion.backend: oneeuro`, `oneeuro_min_cutoff` 0.5, `oneeuro_beta` 0.03). `tools/eval_motion.py` first split still and moving frames by the *smoothed* speed, so a stronger filter was scored on more frames; the split now uses the raw keypoints averaged over 5 frames, the same for every filter. On identical frames: still jitter −63 % (median; EMA −34 %), at 6.7 fps −28 % (EMA −4 %: the demo laptop runs at 7-11 FPS on its CPU), delay in fast moves 10-18 ms (EMA 20-28.5), in slow head moves 18-96 ms (EMA 14-20). Gestures with the veto: punch 9/11 with 1 false trigger, shield 12/15 with 6 (4 of them a held shield firing twice after a dropout), beam 14/14; every action 30-90 ms sooner than with the EMA. Tests that assume the EMA now set `backend: ema` themselves.
+
+**Then (same day): the punch veto switched off** (`gestures.punch_max_rise_sw: 0`, the check stays in the code). Three more clips were labelled: the move tests at the start of the laptop game (`session2`, ~5 fps) and two phone videos of one more player (`wa_1030`, `wa_1031`, 25 fps, without timestamps). That player punches upward from the hip: 8 of his 25 punches were vetoed. Rise in the 0.2 s before the event: his real punches 0.3-1.28 sw, the false swings elsewhere 0.89-1.55 sw, so no threshold separates them. Over the 6 labelled clips (One Euro filter): with the veto at 0.8, punches 41/56, beams 18/18, false punches 2; without, punches 49/56, beams 14/18 (4 blocked by a false punch first), false punches 6. Decided: without, for punch recall; the swing-through-a-punch case stays a limitation. Tests: the veto is off by default; with it on, a rising arm gives no punch.
+
