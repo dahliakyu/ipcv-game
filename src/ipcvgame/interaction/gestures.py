@@ -19,7 +19,7 @@ event again. A gesture that turns on before that sends nothing, so raising
 the arms through the punch pose cannot fire a punch and a beam. If several
 gestures turn on in the same frame, only the first in ``GESTURES`` sends one.
 
-Blinks (final smash, docs/extra_features.md §1): ``BlinkDetector`` reads each
+Blinks (final smash, docs/merge_log.md, "Final smash"): ``BlinkDetector`` reads each
 player's eye scores from the face stage (``Face.blendshapes``) and sends a
 ``blink`` event when the eyes open again after a short closure, or
 ``eyes_closed`` once they stay closed too long for a blink. These events
@@ -178,7 +178,7 @@ class BlinkDetector:
 
     The raw score is not enough: looking down, glasses or the light raise it
     for some people, and it is lower for faces far from the camera
-    (extra_features.md §1). So:
+    (docs/merge_log.md, "Final smash"; the blink ending: docs/limitations.md). So:
 
     - Baseline: the median score over the last blink_baseline_s (the
       scores before this frame), so a closure does not lift its own

@@ -657,7 +657,7 @@ def test_blob_drawn_in_flight_and_burst_only_on_a_shield(game):
         assert red[300:500, 380:620].any() == (reason == "shield")  # drops only off a shield
 
 
-# --- Orb parts (final smash, extra_features.md §1) -------------------------
+# --- Orb parts (final smash, merge_log.md, "Final smash") -------------------------
 
 def test_orb_part_drawn_in_both_colours(game):
     from ipcvgame.interaction.game import OrbPart

@@ -1,195 +1,214 @@
-# IPCV webcam multiplayer game
+# Colour Clash: a webcam paint battle for two players
 
-University of Twente, IPCV 2026-1A. Architecture, data contracts and plan:
-[docs/phase-1/setup-guide.md](docs/phase-1/setup-guide.md).
-Current status and per-task to-do lists: [docs/phase-1/status.md](docs/phase-1/status.md).
+University of Twente, Image Processing and Computer Vision (IPCV) 2026-1A, group project. Group: `<group number>`.
 
-## Setup (Ubuntu 24.04, Python 3.12)
+Two players stand in front of one webcam and fight with their bodies. A punch throws a ball of paint at the other player; crossing the arms raises a shield; drinks fall from the top of the frame and are caught with the mouth for health, attack or defense; an orb drifts through the room, and the player who grabs it glows and can fire a magic beam with both hands up. Every hit leaves paint on the target's body, which moves with them, and paint that flies past lands on the wall behind them. The first player to run out of health loses.
 
-Python 3.12 is required: MediaPipe does not ship wheels for newer versions yet.
+## Tasks and owners
+
+| Task (project brief §3) | What it does in the game | Code | Owner |
+| --- | --- | --- | --- |
+| 1 Face tracking and augmented effects | Finds each player's face (YuNet on a head crop from the pose, MediaPipe Face Landmarker for head rotation and expressions); draws a team hat, war paint and a mustache that follow the head; the hat flies off on a hit; cheeks bulge when drinking; mouth opening and blinks for the game | `src/ipcvgame/face/` | `<name>` |
+| 2 Body pose estimation and motion tracking | YOLO26s-pose: 17 keypoints for every person in one pass; smoothing, short dropouts held, velocities; body measurements for the calibration | `src/ipcvgame/pose/` | `<name>` |
+| 3 Multiplayer detection and identity tracking | Stable Player 1 and Player 2 through crossing, occlusion and re-entry (BoT-SORT on the pose boxes, OSNet re-identification); position in metres | `src/ipcvgame/identity/` | `<name>` |
+| 4 Player interaction and game control | Rule-based gestures (punch, hands up, arms crossed; blinks) and the game rules: attacks, shield, damage, drinks, the orb, rounds | `src/ipcvgame/interaction/` | `<name>` |
+| 5 Scene processing and real-time integration | The pipeline and its failure handling, webcam and clip input, logging; the game view: pixel look, paint on the bodies, the room reacting to the fight (wall paint, light, shake), sprites, health bars and screens | `src/ipcvgame/core/`, `io/`, `scene/`, `app/`, `tools/` | `<name>` |
+
+## How to play
+
+1. **Start.** Both players stand in their start place (P1 left, P2 right) until the game sees them. Each player then learns the moves one at a time while the game measures them: standing still with the arms down (shoulder width and arm length), a punch, hands up and crossed arms. Stand side by side at the same distance from the camera, about 2–2.5 m away, and face the camera. A 3-2-1 countdown starts the round.
+2. **Fight.** Gestures count only while facing the camera, and after each one return to a normal position (arms down) before the next.
+
+   | Move | Effect |
+   | --- | --- |
+   | Punch: one straight arm out to the side, the other bent | Throws a paint blob at the other player (10 damage) |
+   | Cross the wrists in front of the chest | Shield for 1 s: blocks blobs and the beam |
+   | Open the mouth under a falling drink, then close it | Green: +10–30 health; orange: damage dealt ×1.2–1.6; purple: 20–50% less damage taken; the buffs last 10 s |
+   | Touch the orb with a hand | You hold the orb: your body glows |
+   | Hands up, holding the orb | Magic beam across the frame (12 damage); the orb is used up |
+
+3. **End.** At 0 health the other player wins. Both players holding their hands up for 2 s start the next round.
+
+## Requirements
+
+- Ubuntu 24.04 (developed and tested there), a webcam, and Python 3.12. MediaPipe has no wheels for newer Python versions.
+- An NVIDIA GPU with a driver for CUDA 12.8, for real time; demo machine: `<laptop, GPU>`. Without a GPU the game runs on the CPU, more slowly.
+- About 2 × 3 m of free floor in front of the camera.
+
+## Setup
 
 ```bash
-# conda (what the demo laptop uses)
+git clone <repository url> ipcv-game && cd ipcv-game     # or unpack the ZIP
+
+# conda (used for the demo) ...
 conda create -n ipcvgame python=3.12 -y && conda activate ipcvgame
-# ...or a plain venv
+# ... or a plain venv
 python3.12 -m venv .venv && source .venv/bin/activate
 
-# GPU (CUDA 12.8). CPU-only: replace cu128 with cpu.
+# PyTorch with CUDA 12.8; on a CPU-only machine replace cu128 with cpu
 pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 pip install -e .
-python -c "import torch; print(torch.cuda.is_available())"
+python -c "import torch; print(torch.cuda.is_available())"   # True on a GPU machine
 ```
 
-Model weights are not in the repo. `models/yolo26s-pose.pt` (the small pose
-model) is downloaded automatically on first run; to fetch it by hand:
+`environment.yml` does the same in one step: `conda env create -f environment.yml && conda activate ipcvgame && pip install -e .`
+
+### Model weights
+
+Model weights are not in the repository or the ZIP. Download them into `models/` with the exact versions below; the checksums are those of the files the game was tested with.
+
+| File | What for | Licence |
+| --- | --- | --- |
+| `yolo26s-pose.pt` | Body pose (task 2), Ultralytics assets release v8.4.0 | AGPL-3.0 |
+| `face_detection_yunet_2023mar.onnx` | Face detection (task 1), OpenCV model zoo | MIT |
+| `face_landmarker.task` | Head rotation, mouth opening, blinks (task 1), MediaPipe model version 1 | Apache 2.0 |
+| `osnet_x1_0_msmt17_combineall.pth` | Recognising a player who comes back (task 3), OSNet MSMT17 `combineall` from the authors' Hugging Face repo | MIT |
+| `selfie_segmenter_landscape.tflite` | Outline of the people, so wall paint stays behind them (task 5), MediaPipe model version 1 | Apache 2.0 |
 
 ```bash
-mkdir -p models && wget -P models https://github.com/ultralytics/assets/releases/latest/download/yolo26s-pose.pt
-```
-
-The face detector (YuNet, OpenCV model zoo) is not downloaded automatically:
-
-```bash
+mkdir -p models
+wget -P models https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-pose.pt
 wget -P models https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
-sha256sum models/face_detection_yunet_2023mar.onnx   # 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4
-```
-
-The MediaPipe Face Landmarker (head rotation, mouth opening, blinks) is not
-downloaded automatically either:
-
-```bash
 wget -P models https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
-sha256sum models/face_landmarker.task   # 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
-```
-
-The MediaPipe Selfie Segmenter (landscape model; the outline of the people,
-so paint on the wall stays behind them, `scene/arena.py`) is not downloaded
-automatically either. Without it the wall paint falls back to a coarser mask
-from the keypoints:
-
-```bash
-wget -P models https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite
-sha256sum models/selfie_segmenter_landscape.tflite   # 490e9ea734313e0de10fa0cd9e3c6133e36ea4db2b7a49bde9ef019f72796b8e
-```
-
-The OSNet person re-identification weights (Task 3: recognising a player who
-comes back) are not downloaded automatically either. They are the MSMT17
-`combineall` model from the authors' Hugging Face repo
-([kaiyangzhou/osnet](https://huggingface.co/kaiyangzhou/osnet)), saved under a
-shorter name:
-
-```bash
 curl -L -o models/osnet_x1_0_msmt17_combineall.pth https://huggingface.co/kaiyangzhou/osnet/resolve/main/osnet_x1_0_msmt17_combineall_256x128_amsgrad_ep150_stp60_lr0.0015_b64_fb10_softmax_labelsmooth_flip_jitter.pth
-sha256sum models/osnet_x1_0_msmt17_combineall.pth   # 48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727
+wget -P models https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite
+
+sha256sum models/*
+# a083adb42303728ae14c4bd6bd56d80da46f82fb2564dbd6f31dcc92ea321646  models/yolo26s-pose.pt
+# 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4  models/face_detection_yunet_2023mar.onnx
+# 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff  models/face_landmarker.task
+# 48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727  models/osnet_x1_0_msmt17_combineall.pth
+# 490e9ea734313e0de10fa0cd9e3c6133e36ea4db2b7a49bde9ef019f72796b8e  models/selfie_segmenter_landscape.tflite
 ```
 
-The network code is copied into `identity/osnet.py`, so `torchreid` is not
-needed (the Hugging Face page's usage example installs it).
-
-Test clips go in `data/clips/` (gitignored, shared via the drive). Copy each
-`.mp4` together with its `.timestamps.csv`.
+The pose model is also downloaded automatically on the first run if it is missing. Without the Selfie Segmenter the wall paint falls back to a coarser mask built from the keypoints; the other files are required. The OSNet network code is included in `src/ipcvgame/identity/osnet.py`, so `torchreid` is not needed.
 
 ## Run
 
 ```bash
-python -m ipcvgame.app.main                                   # webcam (configs/default.yaml)
-python -m ipcvgame.app.main --source data/clips/crossing.mp4  # recorded clip
-python tools/run_module.py --until identity --source data/clips/crossing.mp4
-python -m ipcvgame.app.main --set pose.det_conf=0.5           # config override
-python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
-python -m ipcvgame.app.main --solo                            # the intro with one player
+python -m ipcvgame.app.main                                          # the game, on the webcam
+python -m ipcvgame.app.main --solo                                   # one player, to try it alone
+python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro   # a recorded clip, playing at once
 ```
 
-A round starts with an intro: the players stand in their start places (P1
-left, P2 right), learn the moves one at a time while the game measures them,
-and get a 3-2-1 countdown. At the end, both hands up for 2 s starts the next
-round. `--no-intro` (`game.intro=false`) plays from the first frame, for clips
-recorded without the intro. `--solo` (`game.round_players=1`) runs the intro
-with one player, to test it alone; a solo round never ends, so use `r` or `R`.
+| Option | Effect |
+| --- | --- |
+| `--source <index or path>` | Webcam index or video file (default: `source:` in the config) |
+| `--no-intro` | Play from the first frame, without start places, calibration and countdown (for clips recorded without the intro) |
+| `--solo` | The intro and rounds need only P1; a solo round never ends (keys `r` / `R`) |
+| `--until <stage>` | Run up to `pose`, `identity`, `motion`, `face`, `gestures` or `game` and show that stage's debug overlay |
+| `--set <key>=<value>` | Override one config value, e.g. `--set render.arena_shake_fw=0` (no shake on hits) |
+| `--config <file>` | A YAML file on top of `configs/default.yaml` |
+| `--headless`, `--max-frames N` | No window; stop after N frames |
+| `--log <file>`, `--no-log` | Per-frame CSV path (default `logs/run-<time>.csv`), or none |
+| `--record <clip>`, `--record-view [<clip>]` | Also save the raw input (replayable), or the view as shown |
 
-Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players, from the
-countdown), `R` (shift) reset all module state (players are identified again
-and the game goes back to waiting), `b` throw a test blob at P1 while playing
-(to try hits and paint alone), `n` fill P1's orb for the final smash while
-playing (to try it without grabbing the orb).
-`--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
-module and shows only its `draw_debug` overlay. `--headless --max-frames N`
-runs without a window.
+Keys in the game window: `q` / `Esc` quit, `p` pause, `r` new round with the same players (from the countdown), `R` reset everything (players are identified again, back to the start places), `b` throw a test blob at P1, `n` give P1 the orb (both for trying the game alone).
 
-A module that raises does not stop the game: its stage gets an empty output
-for that frame, the traceback is printed once and the stage is named at the
-top right; identity, motion and face switch to their stub after failing for
-1 s (`pipeline:` in the config). `--set pipeline.catch_errors=false` raises
-at once instead, to debug your module.
+A module that raises an error does not stop the game: that stage is skipped for the frame and its name is shown at the top right; identity, motion and face switch to a simple stand-in after failing for 1 s (`pipeline:` in the config; `--set pipeline.catch_errors=false` stops at once instead).
 
-## Record test clips and logs
+## Clips, logs and tests
 
 ```bash
-python tools/record_clip.py crossing          # space = start/stop -> data/clips/crossing.mp4
-python -m ipcvgame.app.main --record data/clips/session.mp4   # record while the game runs
-python -m ipcvgame.app.main --until game --record data/clips/session.mp4 --record-view
-                                              # + the shown view -> data/clips/session_view.mp4
+python tools/record_clip.py session                    # record a raw clip from the webcam (space: start/stop)
+python -m ipcvgame.app.main --record data/clips/session.mp4   # record while playing
+python tools/run_module.py --until identity --source data/clips/session.mp4   # one stage's debug view
+python tools/eval_face.py data/clips/*.mp4             # face tracking evaluation per clip (docs/evaluation.md)
+pytest                                                 # unit and pipeline tests; no camera or models needed
+ruff check src tests tools                             # lint
 ```
 
-`--record-view [MP4]` saves the window's view (effects, debug overlays,
-timings) as shown, mirrored; it is for watching and the report, not for
-replaying through the pipeline. The debug views from `--until face` on draw
-the face effects under their overlay (`render.debug_face_effects`).
+Clips are stored un-mirrored with a `<clip>.timestamps.csv` file of the real capture times, so a replay sees the same time steps as the live run. They are not in the repository (`data/clips/`, shared separately). Every run writes `logs/run-<time>.csv` with one row per frame: the time of each stage in ms, each player's status, box and position, and each module's own columns (`face_p1_roll`, `game_p1_health`, `render_wall_p1`, …).
 
-Clips are stored raw (un-mirrored) with a `<clip>.timestamps.csv` sidecar of
-real capture times; `VideoFile` replays those times so filters see the true dt.
-Every run also writes `logs/run-<time>.csv` (frame_id, t, per-stage ms,
-per-player status/pos/box; `--no-log` to skip). To add your own columns, give
-your module a `log_fields(state) -> dict` method with keys named
-`<stage>_p<pid>_<field>` (e.g. `face_p1_roll`).
-
-## Layout
+## File structure
 
 ```
-configs/default.yaml     every threshold, one section per module
+README.md                  this file
+requirements.txt           pinned Python dependencies (PyTorch is installed separately, see Setup)
+environment.yml            conda environment (Python 3.12 + requirements.txt)
+pyproject.toml             package, pytest and ruff settings
+configs/default.yaml       every threshold and setting, one section per stage, each with the reason for its value
 src/ipcvgame/
-  core/                  Task 5: types (contract), skeleton, filters, geometry, timing, config
-  io/                    Task 5: source (webcam / video file), recorder (clips, CSV logs)
-  pose/                  Task 2: estimator (YOLO-pose), motion (smoothing, signals)
-  identity/              Task 3: tracker
-  face/                  Task 1: tracker, effects
-  interaction/           Task 4: gestures, game
-  scene/                 Task 5: renderer, shared drawing helpers
-  app/                   Task 5: pipeline, main
-tools/                   run_module.py, record_clip.py, eval_*.py (per task)
-tests/                   pytest; no model or camera needed
-assets/                  sprites and other media the game draws (e.g. assets/face/hat.png)
-data/clips/, models/, logs/   gitignored
+  core/                    shared contracts and helpers
+    types.py               the data passed between stages (Frame, PoseDetection, Player, Motion, Face, GestureEvent, FrameState)
+    skeleton.py            keypoint names (COCO-17)
+    filters.py             One Euro, EMA and Kalman filters
+    geometry.py            boxes, crops, angles, bilinear mapping
+    timing.py, config.py   per-stage profiler; YAML config with overrides
+  io/
+    source.py              webcam and video file behind one interface (mirrored, real timestamps)
+    recorder.py            clip recording and per-frame CSV logs
+  pose/                    task 2
+    estimator.py           YOLO-pose wrapper
+    motion.py              keypoint smoothing, dropout hold, velocities
+    measure.py             shoulder width, arm and torso length
+  identity/                task 3
+    tracker.py             BoT-SORT tracks to persistent players, re-entry, position in metres
+    tracks.py, embedding.py, osnet.py   track helpers; OSNet appearance vectors (network code from torchreid)
+  face/                    task 1
+    tracker.py             face per player from the head crop, smoothing, anchors for effects
+    head_pose.py           3D head pose (solvePnP / MediaPipe) and 3D anchor points
+    landmarker.py          MediaPipe Face Landmarker (head rotation, blendshapes)
+    effects.py             face effects: hat, war paint, mustache, hit reaction, cheek bulge
+  interaction/             task 4
+    gestures.py            gesture rules and blink detection -> events
+    game.py                game rules, phases, drinks, orb, damage, paint positions
+  scene/                   task 5: how the game looks
+    renderer.py            the game view, in drawing order
+    arena.py, segment.py   the room reacting to the fight; person mask (Selfie Segmenter)
+    paint.py               paint splashes on the bodies, the paint blob
+    orb.py                 the orb, its slots and the full-orb glow
+    fire_ring.py, magic_beam.py, animation.py   sprite effects (shield, beam)
+    instructions.py, draw.py   intro figures and texts; colours and drawing helpers
+  app/
+    pipeline.py            pose -> identity -> motion -> face -> gestures -> game -> render, a guard per stage
+    main.py                command line, window and keys
+tools/                     record_clip.py, run_module.py, eval_face.py
+tests/                     pytest, one file per module
+assets/                    sprites (face, drinks, shield, beam; sources below)
+docs/
+  merge_log.md             every change and design decision, step by step, with the evidence
+  limitations.md           limitations, future improvements and checks still open
+  evaluation.md            how the report's numbers are made
+  candidate-modules-and-libraries.md   the libraries considered per task
+  phase-1/                 the project brief, the original architecture plan and status
+data/clips/, models/, logs/   not in the repository (clips shared separately, weights downloaded, logs written per run)
 ```
 
-## Naming conventions
+## Dependencies
 
-Full version with examples: [docs/phase-1/status.md](docs/phase-1/status.md#naming-conventions).
+All Python packages are pinned in `requirements.txt`:
 
-- **Stages** The code names each pipeline step by what it
-  does, and the same name is used for `--until`, the config section and the
-  CSV timing column (`ms_<stage>`):
-
-  | Stage | `pose` | `identity` | `motion` | `face` | `gestures` | `game` | `render` |
-  | --- | --- | --- | --- | --- | --- | --- | --- |
-  | Task | 2 | 3 | 2 | 1 | 4 | 4 | 5 |
-
-  Task numbers appear only in branch names: `task<N>-<name>`, e.g. `task3-identity`.
-- **Players** are `pid` integers from 1: `state.players[1]` in code, `P1` on
-  screen, `p1_<field>` in the CSV, and `<stage>_p1_<field>` for your own columns.
-- **Keypoints**: `sk.L_WRIST` in code, `l_wrist` in strings. Frames are
-  mirrored, so `L_*` is the player's own **right** side.
-- **Shared strings** (signals, anchors, gesture names, clip names) are
-  lowercase `snake_case`: `r_wrist_speed`, `above_head`, `crossing.mp4`.
-- **Files**: `tools/eval_<stage>.py`, `tests/test_<module>.py`,
-  `data/clips/<scenario>.mp4`.
-
-## Develop
-
-```bash
-pytest          # filters, recorder, end-to-end pipeline smoke tests
-ruff check src tests tools
-```
-
-Every module has `__init__(cfg)`, `update(...)` (pose: `detect(frame)`),
-`reset(pid=None)` and `draw_debug(canvas, state)`, plus an optional
-`log_fields(state)`. Replace your stub in place and keep the signature;
-`core/types.py` changes need a team heads-up. Work on your task branch and
-merge through a PR.
-
-## Third-party licences
-
-Ultralytics YOLO (AGPL-3.0), MediaPipe (Apache 2.0), the YuNet face
-detector from the OpenCV model zoo (MIT) and OSNet from torchreid (MIT; code
-and weights by Kaiyang Zhou) are used as pretrained models; all
-are fine for coursework and are listed in the AI and external-tools statement.
-
-Sprites from third parties:
-
-| File | Source | Licence |
+| Package | Version | Used for |
 | --- | --- | --- |
-| `assets/magic_effect/` (power-attack ball and beam) | "Magic Attack" by NYKNCK, itch.io, https://nyknck.itch.io/magic-attack (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
-| `assets/beam/` (normal-attack fire blast) | "Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, https://nyknck.itch.io/fx061 (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
-| `assets/shield/FX019/` (shield ring of fire), `assets/shield/FX017/` (unused) | Pixel effect packs FX019 and FX017 by NYKNCK, itch.io, https://nyknck.itch.io (purchased) | None stated on the page beyond the purchase; used with attribution for coursework only |
-| `assets/Fancy Drinks/Sprites/individual_sprites/` (the drinks, consumables) | "Fancy Drinks \|\| Pixel Asset Pack" by Pop Shop Packs (its Read Me is signed Savannah), itch.io, https://pop-shop-packs.itch.io/fancy-drinks (paid, from $2) | The page allows use in any game project, personal or commercial; reselling or redistributing the files as assets is not allowed; credit is optional |
+| torch, torchvision | 2.11.0, 0.26.0 | YOLO and OSNet inference (CUDA 12.8 build) |
+| ultralytics | 8.4.164 | YOLO26-pose and the BoT-SORT tracker |
+| mediapipe | 1.0.1 | Face Landmarker, Selfie Segmenter |
+| opencv-python, opencv-contrib-python | 5.0.0.93 | Image processing, YuNet, drawing, video I/O (both at the same version) |
+| numpy, scipy | 2.5.2, 1.18.1 | Arrays; Hungarian matching |
+| filterpy | 1.4.5 | Kalman filters |
+| lap | 0.5.13 | BoT-SORT's assignment |
+| PyYAML | 6.0.3 | Config |
+| pandas, matplotlib | 3.0.6, 3.11.2 | Log analysis for the report |
+| pytest, ruff | 9.1.1, 0.16.9 | Tests, lint |
+
+
+## Documentation
+
+- `docs/merge_log.md`: what was built, in what order, why, and with which clip evidence.
+- `docs/limitations.md`: known limitations, features designed but not built, and checks still open.
+- `docs/evaluation.md`: the evaluation workflow and scripts.
+- AI and external-tools statement: `<file>`.
+
+## Third-party models, code and assets
+
+Pretrained models: Ultralytics YOLO26 (AGPL-3.0), MediaPipe Face Landmarker and Selfie Segmenter (Apache 2.0), YuNet from the OpenCV model zoo (MIT), OSNet by Kaiyang Zhou (MIT, code and weights). All are used for coursework and listed in the AI and external-tools statement.
+
+| Assets | Source | Licence |
+| --- | --- | --- |
+| `assets/magic_effect/` (the beam's ball and band) | "Magic Attack" by NYKNCK, itch.io, https://nyknck.itch.io/magic-attack (purchased) | None stated beyond the purchase; used with attribution for coursework only |
+| `assets/shield/FX019/` (shield ring of fire), `assets/shield/FX017/` (unused) | Pixel effect packs FX019 and FX017 by NYKNCK, itch.io, https://nyknck.itch.io (purchased) | None stated beyond the purchase; used with attribution for coursework only |
+| `assets/beam/` (fire blast, unused since the paint blob) | "Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, https://nyknck.itch.io/fx061 (purchased) | None stated beyond the purchase; used with attribution for coursework only |
+| `assets/Fancy Drinks/Sprites/individual_sprites/` (the drinks) | "Fancy Drinks \|\| Pixel Asset Pack" by Pop Shop Packs, itch.io, https://pop-shop-packs.itch.io/fancy-drinks (paid) | Use in any game project allowed; reselling or redistributing the files as assets is not allowed |
+| `assets/face/` (hat, mustache) | From the group's face-tracking script; original source: `<source>` | `<licence>` |

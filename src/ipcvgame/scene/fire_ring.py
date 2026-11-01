@@ -40,7 +40,6 @@ class FireRing:
         self.center = ((xs.min() + xs.max()) / 2.0, (ys.min() + ys.max()) / 2.0)
         heights = [np.ptp(np.flatnonzero(m.any(axis=1))) + 1 for m in loop]
         self.ring_px = float(np.median(heights))
-        self._scaled: dict[int, list[np.ndarray]] = {}
 
     def index(self, age: float) -> int:
         """Frame shown `age` s after the shield went up."""
@@ -51,14 +50,13 @@ class FireRing:
 
     def draw(self, canvas: np.ndarray, center: tuple[float, float], diameter: float, age: float,
              alpha: float = 1.0) -> None:
-        """Draw the ring for `age`, `diameter` px across, centred on `center`."""
+        """Draw the ring for `age`, `diameter` px across, centred on `center`.
+        Only the frame shown is resized: the diameter follows the shoulder
+        width and changes by a pixel or two every frame, so a cache of all
+        frames per size missed nearly every frame and resized them all
+        again (~39 resizes and ~50 ms a frame on shield.mp4)."""
         height = max(int(round(self.frames[0].shape[0] * diameter / self.ring_px)), 1)
-        if height not in self._scaled:   # sizes vary with distance: keep a few
-            if len(self._scaled) > 8:
-                self._scaled.clear()
-            s = height / self.frames[0].shape[0]
-            self._scaled[height] = [cv2.resize(f, None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
-                                    for f in self.frames]
-        img = self._scaled[height][self.index(age)]
+        s = height / self.frames[0].shape[0]
+        img = cv2.resize(self.frames[self.index(age)], None, fx=s, fy=s, interpolation=cv2.INTER_NEAREST)
         s = img.shape[0] / self.frames[0].shape[0]
         blend_rgba(canvas, img, center[0] - self.center[0] * s, center[1] - self.center[1] * s, alpha)

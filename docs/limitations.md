@@ -1,10 +1,10 @@
 Oct 28, 2026 · @el created with help of Claude Opus 5.5
 
-# Known limitations and improvements
+# Limitations and future improvements
 
-This page collects what the game does not do well, with the evidence, what was done about it, and what would improve it. It is the source for the limitations and future-work parts of the report. Add an entry when a test or a webcam run shows a limit that stays in the final version.
+This page collects what the final version of the game does not do well, with the evidence, what was done about it, and what would improve it; then the features that were designed but not built, and the checks that are still open. It is the source for the limitations and future-work parts of the report. What was built, and why, is in [merge_log.md](merge_log.md).
 
-Each entry gives:
+Each limitation gives:
 
 - **Seen:** what goes wrong, on which clip or log, with numbers.
 - **Cause:** why, as far as the clips show.
@@ -85,7 +85,7 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 
 ### No learned gesture classifier
 
-**Decision.** A trained gesture classifier was planned in `extra_features.md` (feature 8 before the renumbering) and is dropped (2026-10-28). The gestures stay rule-based.
+**Decision.** A trained gesture classifier was planned during the merge and dropped on 2026-10-28. The gestures stay rule-based.
 
 **Why it would help.** A classifier learns from examples where the rules need one more condition per new failure, like the two limits above. It can also use the movement over time instead of one frame.
 
@@ -96,19 +96,59 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 - **Model:** a small, explainable one first (logistic regression, k-NN or a random forest with `scikit-learn`), with the rule kept as a fallback in config.
 - **Check:** train and test split by recording, not by frame. Precision and recall per player-frame and missed or extra events, for the rule and the classifier on the same clips.
 
+### Blinks: thresholds not tuned, and most blinks are missed at play distance
+
+**Seen.** The blink detector (`interaction/gestures.py`, `BlinkDetector`; [merge_log.md](merge_log.md), "Final smash", step 3) was run on every clip; none has deliberate blinks. On `session.mp4` (players ~2.3 m away, 17 FPS) each player gets a fresh eye score only every ~105 ms, the players' baselines are 0.24 and 0.38, and in 110 s the score rose at most 0.38 above the baseline for one player and 0.23 for the other. The design's values (closed above baseline + 0.35 and above 0.5) give 1 blink in 110 s (the face crops show the eyes shut there for ~230 ms) and none on `shield.mp4`. Looser values (baseline + 0.2, above 0.35) give 9 and 3 per minute, and fire on a head turned away. People blink every few seconds, so most blinks are missed. On the close-up fitness clip the score rises 0.4–0.6, several times while the head looks down (pitch −22° to −28°).
+
+**Cause.** MediaPipe's `eyeBlinkLeft` / `Right` on a face ~70 px wide changes little when the eyes close; the face stage measures the players in turn (`face.landmarker_per_frame: 1`), so a 100–150 ms blink often falls between two measurements; and the score depends on the person, the light and glasses.
+
+**Done.** A per-player baseline (median over 3 s), hysteresis, a 60–500 ms duration, and no blink while looking down (`Face.pitch` < −20°). The `blink` and `eyes_closed` events are logged but no game rule uses them: the final smash that ends at the caster's blink was not built (future improvements below).
+
+**Improvement.** A webcam clip of deliberate blinks at play distance (also looking down and turning away) to tune `gestures.blink_*`; measuring a player every frame while a blink matters (`landmarker_per_frame: 2`, ~+8 ms); or the eye aspect ratio from the 478 landmarks instead of the blendshape score.
+
+## Game
+
+### The orb can be grabbed by accident
+
+**Seen.** On `shield.mp4` the player grabbed the orb at 12.7 s while making the shield: a hand on the opposite shoulder passed the orb as it drifted by at shoulder height. On `session.mp4` both grabs (9.6 s and 78.7 s) came from players simply moving.
+
+**Cause.** A wrist within `game.orb_reach_sw` (0.5 shoulder widths) of the orb's edge for `orb_grab_s` (0.1 s) grabs it, whatever the hand is doing. The orb bounces at shoulder and head height, where the hands are during the shield and the punch.
+
+**Done.** The 0.1 s hold keeps a one-frame keypoint glitch from grabbing it. The orb was first collected by punching it, which the punch rarely did (one collection in 110 s on `session.mp4`), so grabbing replaced it.
+
+**Improvement.** Only a hand above the shoulder grabs, or a longer hold (~0.3 s) with the hand open towards the orb.
+
+## Performance
+
+### Rendering cost grows with resolution and wall paint
+
+**Seen.** The pixel look costs ~14 ms per frame on a 4K clip and ~4.5 ms at 720p. The face effects and status add ~0.6 ms at 720p. The arena (wall paint, `scene/arena.py`) costs 0.3 ms with a clean wall and 4.6 ms once it has paint, 6.8 ms during a beam, mostly the Selfie Segmenter on the CPU (see "Scene").
+
+**Improvement.** Run the webcam at 720p (the default); run the segmenter every other frame or on the GPU.
+
 ## Depth
 
-### Depth is calibrated, but no game rule uses it
+### The camera is not calibrated
+
+**Seen.** Every distance in metres (`Player.pos`) and the head pose (`solvePnP`) use an assumed camera: a 70° horizontal field of view (`identity.camera_hfov_deg`), a focal length of `face.focal_per_width` × the image width, the principal point in the middle and no lens distortion. None of it was measured for the webcams the group uses.
+
+**Cause.** Ideally the camera is calibrated with a checkerboard (IPCV Tutorial 3: `cv2.findChessboardCorners` on ~20 views, `cv2.calibrateCamera`), which gives the focal length, principal point and distortion. A calibration holds for one camera at one resolution with autofocus off, and the group develops and records on several webcams and laptops, so one calibration cannot be shipped with the game, and asking every machine to calibrate first was judged too much for a game that should start at once. A calibrated mode (a `--calibrated <file>` argument loading a per-camera file) was designed on 2026-10-31 and dropped on 2026-11-01.
+
+**Done.** All game rules use pixels or ratios of the player's own measurements (shoulder widths, the calibrated neutral pose), which do not need the camera's intrinsics. Only the logged depth and the head pose's absolute angles depend on the assumed values.
+
+**Improvement.** Calibrate the demo webcam with a checkerboard and load its intrinsics from a config file when present: the depth would then be in true metres (still assuming one shoulder width for everyone, or measured with an ArUco marker held during the neutral pose), and the head pose would gain accuracy at the image edges.
+
+### Depth is estimated, but no game rule uses it
 
 **Seen.** Every frame the identity stage estimates each player's position in metres, `Player.pos` = (x, depth) (`identity/tracker.py`, `_position()`; `docs/merge_log.md`, "Game start", step 6). It is logged as `p<pid>_x_m` and `p<pid>_depth_m` and shown in `--until identity`. The calibration also makes the two players line up by depth: the neutral pose is measured only while their depths are less than `game.line_up_depth_m` (0.4 m) apart, and the nearer player is told to step back (`Game._check_line_up()`; "Game start: Modifications"). No game rule reads the depth, though. On `session.mp4`, where the players were not asked to line up, they stood a median of 0.35 m apart by depth.
 
-**Cause.** The depth and the line-up were built for a dodge: a player stepping ~0.5 m towards the camera, off the line both players stand on, would make a paint blob miss. The Task 5 owner dropped the dodge on 2026-10-29, before it was built; its design is in the git history of `docs/extra_features.md` (feature 5 there before the drop).
+**Cause.** The depth and the line-up were built for a dodge: a player stepping ~0.5 m towards the camera, off the line both players stand on, would make a paint blob miss. The dodge was dropped on 2026-10-29, before it was built (design under "Future improvements").
 
 **Done.**
 
-- Depth stays: it is Task 3's spatial output, which the brief asks for ("x-y location, not in pixel, while perhaps in physical unit, maybe adding depth"). After the calibration it is scaled by the torso length, so it does not change when a player turns.
-- The line-up stays in the calibration for now (Task 5 owner, 2026-10-29), although nothing needs it any more. It makes the calibration stricter: two players must stand at about the same distance before they are measured.
-- The depth is not checked against a measured distance yet: the field of view (`identity.camera_hfov_deg`, 70°) and the shoulder width (`identity.shoulder_m`, 0.39 m, the same for everyone) are assumed. This is a follow-up in `docs/extra_features.md` ("Depth on the webcam").
+- Depth stays: it is the identity task's spatial output, which the brief asks for ("x-y location, not in pixel, while perhaps in physical unit, maybe adding depth"). After the pose calibration it is scaled by the torso length, so it does not change when a player turns.
+- The line-up stays in the pose calibration, although nothing needs it any more. It makes the calibration stricter: two players must stand at about the same distance before they are measured.
+- The depth is not checked against a measured distance: the field of view (`identity.camera_hfov_deg`, 70°) and the shoulder width (`identity.shoulder_m`, 0.39 m, the same for everyone) are assumed (see "The camera is not calibrated").
 
 **Improvement.**
 
@@ -143,3 +183,51 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 **Done.** One traceback per stage is printed, then one line per new run of failures; `pipeline_fallback` in the log shows which stages run on a stub. `--set pipeline.catch_errors=false` turns the guard off to debug a module.
 
 **Improvement.** Try the real module again after a while on its stub; a CPU fallback for the pose model if CUDA fails.
+
+## Future improvements
+
+Designed during the project but not built. The designs are condensed here; the full versions are in the git history of `docs/extra_features.md` (removed on 2026-11-01).
+
+### Final smash: paint rain that lasts until the caster blinks
+
+**Now.** A player who grabs the orb glows; hands up then fires the magic beam (12 damage) and both players' orbs are emptied ([merge_log.md](merge_log.md), "Final smash"). This was an interim before a playtest and is the final version.
+
+**Design.** Like the Smash Ball in Smash Bros: hands up with a full orb sends the orb up out of the frame (the room dims with a flash in the caster's colour), a target mark appears under the opponent, and paint drops rain on them, densest in the middle of a drop zone ~2 body widths wide that follows the opponent at ~0.3 frame widths/s, so a quick long step to the side dodges some drops. The rain lasts only while the caster does not blink: the first blink (or the caster's face not being measured, so turning away cannot hide a blink) ends it, with a 6 s cap; the caster's eyes glow in their team colour while it lasts. Each drop does a little damage (~1) and adds a small splash on the body; the shield blocks drops while it is up. Attacking becomes a staring contest.
+
+**Needs.** Tuned blink thresholds (see "Blinks" above), the caster measured every frame during the rain, a `FinalSmash` replacing `PaintBeam`, and drop splashes small enough to keep the body paint under ~2 ms per player at ~5 drops a second. A solo test path: a key that lets a test rain fall on P1.
+
+### Both players attacking at the same time
+
+**Now.** Blobs and beams of the two players fly through each other and both hits land; when both would finish the round in the same frame, the attack fired first wins (`_apply_damage()` ignores everything once `winner_id` is set).
+
+**Design.** The attack level is the attack drink's multiplier (`GamePlayer.attack`, 1 without one). Two blobs whose paths cross in a frame: the higher level flies on and the other bursts mid-air; with equal levels both burst. Final blows in the same frame: apply all damage first, then the higher level wins, or a draw ("DRAW", both colours) with equal levels; that needs a `result` instead of only `winner_id`.
+
+### Dodge by stepping forward
+
+**Design** (dropped 2026-10-29). Each player's depth after the line-up is their fight line; a player at least ~0.5 m closer (back under ~0.3 m, at most ~1 s per dodge, no attacking meanwhile) lets a normal blob pass and fly on to the wall behind them, with "MISS!" above the head. It needs a depth signal faster than the smoothed `Player.pos` (0.3 s lag; a blob crosses the frame in ~1 s), and a calibrated camera for the threshold to mean a real 0.5 m (see "The camera is not calibrated"); without calibration the same rule is "about 20% closer", from the player's own torso ratio.
+
+### Other ideas, not designed
+
+- Paint splats on the face (in face coordinates) as damage.
+- A "paint spit" attack: hold the mouth wide open to fire a blob from the mouth.
+- Real props as consumables: YOLO detection of an apple, banana, bottle or cup (COCO classes) instead of virtual drinks; needs a second detection model per frame.
+
+## Checks still open
+
+What was checked on recorded clips and in tests only, or not at all.
+
+| Check | Why | Where |
+| --- | --- | --- |
+| Balance over real rounds | Damage, speeds and the shield time are the teammates' `game.py` values; the beam (12 damage) may feel small for a grabbed orb | `game:` config |
+| Webcam check of the game start | The intro was checked on clips only: start places, pose calibration, countdown, result and replay with two players; the P1-left swap; whether the 0.4 m line-up and the 30° facing rule suit real players | `--until game` |
+| Webcam check of the drinks | One webcam run (`logs/run-20261028-231534.csv`, which set `drink_hold_s` to 2.5 s). Catching and drinking alone and with two, `jawOpen` 0.5 / 0.25, the hold time, the buff values, the spawn rate and the new fall time (6 s) | `game:` `drink_*` keys |
+| Webcam check of the face effects and face stage | War paint and hat band with real head turns, name tag steadiness, hat knock-off, chin up and down, mouth bars, `hat_depth_mm` | `face:`, `render:` config |
+| Jitter on a still clip | All test clips are moving; shrinking crops and the head pose may add shake that only a still clip shows | `tools/eval_face.py` |
+| Identity on real crossings | Identity was checked on edited copies of `session.mp4` (a player blacked out, halves swapped), not on real crossing, occlusion and re-entry clips; also re-entry and a player turning away live | `--until identity`, `identity:` config |
+| `identity.reid_threshold` | With the Hugging Face OSNet weights, same-player similarities on the fitness test clip are often under 0.6 | `identity:` config |
+| `identity.botsort.track_buffer` is in frames | Ultralytics counts frames: the occluded time is 1 s at 30 FPS but 1.7 s at 17 FPS | `identity.botsort` |
+| Depth against a tape measure | Stand at 1.5, 2, 2.5 and 3 m and compare `p<pid>_depth_m` | `identity:` config |
+| Gesture evaluation | `tools/eval_gestures.py` needs clips with labelled gestures; the test clips have none | `tools/` |
+| MediaPipe GPU delegate | The face landmarker costs ~8 ms per frame on the CPU, the Selfie Segmenter 2.5–4 ms | `face/landmarker.py`, `scene/segment.py` |
+| Asset packs in the final ZIP | All of `assets/Fancy Drinks/` (paid; redistributing the files as assets is not allowed) and `assets/Jester/` are committed; keep only the sprites in use, or leave the packs out with a download note. `assets/beam/` (fire blast) is unused since the paint blob | `assets/`, `README.md` |
+| Remove `garb/` | The teammates' original code, kept locally for the merge (gitignored); everything in it is merged or deliberately left out | `.gitignore` |

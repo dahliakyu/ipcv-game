@@ -1,6 +1,6 @@
 # Merge log
 
-This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge is done by the Task 5 owner on branch `face-tracking-eline`o owners can check what changed in their own code.
+This log records every change made while merging the teammates' Colour Clash code (the `Colour Clash/` folder, kept locally in `garb/rest/` during the merge) into the shared codebase. The merge was done on branch `face-tracking-eline`; every step names the files it touched. After the merge, the game features were built on the same branch, each in its own section below. The backlog they came from, `docs/extra_features.md`, was folded into [limitations.md](limitations.md) on 2026-11-01: features not built are under "Future improvements" there.
 
 ## Pre-merging Inits
 
@@ -57,22 +57,22 @@ The identity code (`PlayerIdentityTracker` in `Colour Clash/Project/bodypose.py`
 
 Found while preparing the merge, in the `Colour Clash/` folder (now `garb/rest/`, ignored by git, local only). Each was fixed in its task's merge, as noted.
 
-- **Two detectors per frame (Task 3, Task 2).** Fixed in the identity merge (step 3): BoT-SORT runs on the pose model's boxes.
-- **Stored appearance is never updated (Task 3).** Fixed in the identity merge (step 2). Matching is still greedy per track, not a joint assignment (Hungarian); with two players and linked tracks handled first, that rarely matters.
+- **Two detectors per frame.** Fixed in the identity merge (step 3): BoT-SORT runs on the pose model's boxes.
+- **Stored appearance is never updated.** Fixed in the identity merge (step 2). Matching is still greedy per track, not a joint assignment (Hungarian); with two players and linked tracks handled first, that rarely matters.
 - **`Colour Clash/Project/test_osnet.py` fails as written.** Replaced by `tests/test_identity.py` (step 1).
 - **Working directory.** Gone: the code now lives in `src/ipcvgame/`.
 
 ## Change Overviews
 
-A quick reference for each teammate: where your code now lives, and what was changed beyond moving it. The task sections below have the step-by-step details and the reasons.
+A quick reference: where the teammates' code now lives, and what was changed beyond moving it. The task sections below have the step-by-step details and the reasons.
 
-### Refactor: where to find your code
+### Refactor: where the teammates' code went
 
 #### Task 1: `face_track/facial_tracking_yunet.py`
 
 **Functions and classes**
 
-| In your code | Now in | Note |
+| In the teammates' code | Now in | Note |
 | --- | --- | --- |
 | `measure()` | `face/tracker.py`, `measure()` | Same maths; constants come from config |
 | `measure()`, the `lk` grid part | `face/tracker.py`, `flow_points()` | Built from the 4 key points |
@@ -91,7 +91,7 @@ A quick reference for each teammate: where your code now lives, and what was cha
 | Main loop: detect, flow, delete tracks | `face/tracker.py`, `FaceTracker.update()` | |
 | `Metrics` | `face/tracker.py`, `FaceTracker.log_fields()` + `tools/eval_face.py`, `evaluate()` | Jitter = `second_difference()` |
 | `Metrics.report()` | `tools/eval_face.py`, `main()` + `markdown()` | Usage: `docs/evaluation.md` |
-| `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline (Task 5) |
+| `open_camera()`, camera loop, flip, window, FPS text | `io/source.py`, `app/main.py`, `scene/renderer.py` | Shared pipeline |
 | Keys `q` | `app/main.py` (`q`/`Esc`; also `p` pause, `r` new round, `R` full reset) | |
 | `draw_status()` (name + HP bar) | `scene/renderer.py`, `_draw_player_health()` | Game UI: "PLAYER N" and the health bar, pinned to the bottom (Task 5 modifications) |
 | `Track.predicted()`, `Track.vel` | Removed | Only used for matching |
@@ -101,7 +101,7 @@ A quick reference for each teammate: where your code now lives, and what was cha
 
 All of these are in `configs/default.yaml`, `face:` section, unless another section is named.
 
-| In your code | Now |
+| In the teammates' code | Now |
 | --- | --- |
 | `MODEL`, `MODEL_URL` | `model` (download command in `README.md`) |
 | `SCORE_THRESH` | `score_threshold` |
@@ -124,7 +124,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Functions and classes**
 
-| In your code | Now in | Note |
+| In the teammates' code | Now in | Note |
 | --- | --- | --- |
 | `KeypointTracker` | `pose/motion.py`, `MotionFilter._smooth()` + `_PlayerState` | Task 2; same rules, in seconds |
 | `KeypointTracker.reset()` | `pose/motion.py`, `MotionFilter.reset(pid)` | Also on re-entry |
@@ -142,7 +142,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Constants** (`configs/default.yaml`)
 
-| In your code | Now |
+| In the teammates' code | Now |
 | --- | --- |
 | `CONF_T` (keypoints) | `motion.kpt_conf_threshold` |
 | `ALPHA` | `motion.tau` (seconds) |
@@ -157,7 +157,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Functions and classes**
 
-| In your code | Now in | Note |
+| In the teammates' code | Now in | Note |
 | --- | --- | --- |
 | `PaintSplat`, `Projectile`, `PaintBeam`, `Shield` | `interaction/game.py`, same names | Pixels; a splat stores `owner_id` instead of a colour |
 | `Player` | `interaction/game.py`, `GamePlayer` | Renamed (`Player` is the identity type) |
@@ -181,7 +181,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 **Functions and classes**
 
-| In your code | Now in | Note |
+| In the teammates' code | Now in | Note |
 | --- | --- | --- |
 | `osnet.py` | `identity/osnet.py` | Unchanged (pre-merge copy of torchreid's file) |
 | `OSNetEmbeddingExtractor` (`osnet_embedding.py`) | `identity/embedding.py`, same name | Weights path and device from config |
@@ -203,7 +203,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 #### Renderer: `renderer.py` (game view)
 
-| In your code | Now in | Note |
+| In the teammates' code | Now in | Note |
 | --- | --- | --- |
 | `Renderer.render(camera_frame, game, pose)` | `scene/renderer.py`, `Renderer.draw(state, game)` | Pixels; positions from the frame state |
 | Pixelated camera image (half size, nearest pixel) | `scene/renderer.py`, `pixelate()` | `render.pixel_size` |
@@ -274,7 +274,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - **`load_weights()` raises an error (pre-merge)** when no layer of the weight file matches, instead of only warning and running with random weights.
 - **One model per frame (step 3).** BoT-SORT runs on the pose model's boxes; `yolo11n.pt` is gone. A new track needs score 0.5 (your detector's limit); weaker boxes from 0.35 still continue a track. Camera-motion compensation is off (4.4 → 0.4 ms).
 - **Weights from Hugging Face.** Same network and training data as your file, with a public download and checksum.
-- **Occluded, then lost (step 2).** A player keeps their link while BoT-SORT still holds the track (`"occluded"`, predicted box); only when the track is dropped is the player `"lost"`, and `reentered` is set when they come back. Your code dropped the link and reset the pose state on every frame without the track.
+- **Occluded, then lost (step 2).** A player keeps their link while BoT-SORT still holds the track (`"occluded"`, predicted box); only when the track is dropped is the player `"lost"`, and `reentered` is set when they come back. The teammates' code dropped the link and reset the pose state on every frame without the track.
 - **Two players** instead of 3; a new player takes the lowest free id.
 - **Seconds instead of frames:** the 5-frame confirmation is `new_player_s` (0.13 s).
 - **Linked tracks first (step 2):** a new track cannot take a player whose own track is visible.
@@ -298,7 +298,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 
 ### Plan
 
-**Source.** `face_track/facial_tracking_yunet.py` with `hat.png` and `mustache.png`, the Task 1 owner's latest standalone script. The two sprites are byte-identical to the ones already in the repo root.
+**Source.** `face_track/facial_tracking_yunet.py` with `hat.png` and `mustache.png`, the latest standalone face-tracking script. The two sprites are byte-identical to the ones already in the repo root.
 
 **What the script does.**
 
@@ -309,11 +309,10 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - **Drawing:** the hat and mustache are warped onto the frame and fade out after a face is lost. A name and HP bar are drawn as well.
 - **Report metrics:** jitter, alignment error, detection rate per lighting condition, latency.
 
-**Decisions (Task 5 owner, 2026-10-25).**
+**Decisions (2026-10-25).**
 
-- **Detector: YuNet**, the Task 1 owner's latest choice. It needs only OpenCV and is fast on small crops. YuNet gives only 5 landmarks, so `Face.yaw` stays 0.0. There are no blendshapes either, so mouth-based game actions would need MediaPipe later.
+- **Detector: YuNet**, the face-tracking script's latest choice. It needs only OpenCV and is fast on small crops. YuNet gives only 5 landmarks, so `Face.yaw` stays 0.0. There are no blendshapes either, so mouth-based game actions would need MediaPipe later.
 - **Fade-out kept.** It needs a new `alpha` field on `Face` in `core/types.py`; this log is the team heads-up for that change.
-- **The Task 1 owner is informed through this log** rather than reviewing before each step.
 
 **The main change: per-player head crops instead of the script's own identity.** In the pipeline, Task 3 decides who is who. So the face stage crops each player's head from that player's pose keypoints and runs YuNet only inside that crop. As a result:
 
@@ -321,7 +320,7 @@ All of these are in `configs/default.yaml`, `face:` section, unless another sect
 - It is much cheaper. Measured on the demo machine's CPU: a full 1280×720 frame costs 24.5 ms, a 200×200 head crop 1.2 ms per player.
 - `update_tracks`, `Track.predicted()`, the velocity and `MATCH_FACTOR` are no longer needed, because they only existed for matching.
 
-The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fallback.
+The script's methods stay: YuNet, `measure()`, One Euro and the optical-flow fallback.
 
 **Where each part goes.**
 
@@ -351,7 +350,7 @@ The owner's methods stay: YuNet, `measure()`, One Euro and the optical-flow fall
 6. Evaluation: `log_fields` and `tools/eval_face.py`.
 7. Cleanup: remove the old root scripts and sprites, mark the update guide as history, update `docs/phase-1/status.md`.
 
-**Verification.** Steps 2 and 3 are covered by unit tests. Steps 4 and 5 are checked by the Task 5 owner on the webcam (single player). The multiplayer cases (two faces, crossing) wait for recorded clips.
+**Verification.** Steps 2 and 3 are covered by unit tests. Steps 4 and 5 are checked on the webcam (single player). The multiplayer cases (two faces, crossing) wait for recorded clips.
 
 ### Changes
 
@@ -520,7 +519,7 @@ The script's `Metrics` class (jitter, alignment error, detection rate per lighti
 
 ## Task 1: Modifications
 
-Changes beyond the Task 1 script, decided by the Task 5 owner after step 6 (2026-10-25). They only touch `face/`, apart from one new `Face` field (`blendshapes`; team heads-up, approved):
+Changes beyond the face-tracking script, decided after step 6 (2026-10-25). They only touch `face/`, apart from one new `Face` field (`blendshapes`; team heads-up, approved):
 
 - **Speed:** shrink each head crop to a maximum size before YuNet; the 4K test clip cost 24 ms in the face stage.
 - **Head pose:** fills `Face.yaw` and places the forehead, hat and `above_head` anchors in 3D.
@@ -680,7 +679,7 @@ Open: the landmark precision cost of shrinking shows best as jitter on a still c
 
 ### Backlog: `docs/extra_features.md`
 
-**Added:** `docs/extra_features.md`. The game features agreed during the merge, written up for after it, each with owners, inputs from the face stage, a starting design with thresholds, and how to check it:
+**Added:** `docs/extra_features.md`. The game features agreed during the merge, written up for after it, each with its inputs from the face stage, a starting design with thresholds, and how to check it:
 
 1. team colour;
 2. hit reaction;
@@ -709,9 +708,9 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
   - `punch`: one arm straight (elbow > 150°), reaching more than 1 shoulder width, at chest height, with the other arm bent (< 120°). Stays on for 0.5 s after the last detection (`PUNCH_HOLD_S`).
 - **Use in `main.py`:** shield and beam fire on the frame `crossed` / `hands_up` turns on. `game.attack()` is called on every frame the punch is on; the game's 1.8 s cooldown limits how often that fires. `punch_side`, `hand_x` and `hand_y` are computed but not used by the game or renderer.
 
-**Decisions (Task 5 owner, 2026-10-25).**
+**Decisions (2026-10-25).**
 
-- **Smoothing goes to `pose/motion.py` (Task 2),** where the architecture puts it. Gestures, the face stage and the game then all read the same held and smoothed keypoints.
+- **Smoothing goes to `pose/motion.py`,** where the architecture puts it. Gestures, the face stage and the game then all read the same held and smoothed keypoints.
 - **Events on the rising edge** for all three gestures. Shield and beam behave as before. A punch thrown during the 1.8 s cooldown is lost, instead of firing when the cooldown ends.
 - **Punch side dropped.** Nothing uses it yet, and with mirroring the model's `L` is the player's own right; the event is just `punch`.
 - **Punch reach measured sideways (after step 2).** Step 2 showed that the punch rule from `bodypose.py` fires on a straight hanging arm; step 2b fixes it.
@@ -738,7 +737,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 3. `GestureRecognizer`: timers in seconds, rising-edge events `punch`, `hands_up`, `arms_crossed`, reset on loss and re-entry, `draw_debug`, `log_fields`.
 4. Check and record: event counts on the two test clips, Change Overviews, `docs/phase-1/status.md`.
 
-**Verification.** Unit tests for every step; event counts on `data/test_clips/`. The Task 5 owner checks the gestures live on the webcam.
+**Verification.** Unit tests for every step; event counts on `data/test_clips/`. The gestures are checked live on the webcam.
 
 
 
@@ -768,7 +767,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 - **`reset()`:** a new round, keeping positions; `main.py` calls it with key `r` after a win.
 - **What the renderer reads:** `players`, `projectiles`, `beams`, `shields`, `winner_id`, `MAX_HEALTH`, `BEAM_CHARGE_DURATION`, `SHIELD_FADE_DURATION`, `PLAYER_COLORS`.
 
-**Decisions (Task 5 owner, 2026-10-25).**
+**Decisions (2026-10-25).**
 
 - **One sideways punch fires one bolt.** The 1.8 s cooldown goes (`game.bolt_cooldown_s: 0`, the key stays). The gesture stage already sends one event per punch, at most one every 0.5 s. What the bolt looks like was decided later (Task 4 modifications: a fire blast).
 - **The shield blocks.** While it is up (1 s, not counting the fade), bolts and beams that reach the player do no damage and leave no paint. A blocked bolt disappears; a blocked beam does not try that player again.
@@ -799,7 +798,7 @@ It also lists the merge steps still needed first (gestures, game logic, renderer
 8. Debug view and CSV: `--until game` draws bolts, beams, shields, splats, health and the winner as simple shapes until the renderer merge; `log_fields`.
 9. Check and record: run on the clips, `docs/phase-1/status.md`, Change Overviews.
 
-**Verification.** Unit tests for every step. The two clips only produce two `hands_up` events, so they check beams but not bolts or shields. The Task 5 owner checks the full game on the webcam after step 8.
+**Verification.** Unit tests for every step. The two clips only produce two `hands_up` events, so they check beams but not bolts or shields. The full game is checked on the webcam after step 8.
 
 ### Changes
 
@@ -860,7 +859,7 @@ Values are from `Project/bodypose.py`, which `main.py` runs. `garb/rest/pose_det
 
 **Added:** `tests/test_gestures.py` (15 tests on synthetic skeletons): `angle_at`, the hip fallback, standing (no gesture), hands up with and without the nose, crossed (also mirrored, too far apart, overhead), punch left and right, T-pose, unknown guard arm, short reach, raised arm, hanging arm with a guard.
 
-**Found: a hanging arm reads as a punch.** In the jump clip, the runners' arms hang straight (elbow 159–177°), so they pass the straightness check. The wrist is 1.0–1.4 sw from the shoulder, so it passes the reach check. The wrist is just above the hip keypoint, so it passes the height check. Meanwhile the other arm swings bent. `arm_extended()` checks the distance from the shoulder but not the direction, and the lowest allowed wrist position is the hip line. On all 268 false punch frames across both clips, the wrist is at most 0.96 sw to the side of its shoulder (median 0.19–0.23); a sideways punch at the other player reaches at least `punch_min_reach` (1 sw) sideways. Not changed in this step; the decision is for the Task 5 owner.
+**Found: a hanging arm reads as a punch.** In the jump clip, the runners' arms hang straight (elbow 159–177°), so they pass the straightness check. The wrist is 1.0–1.4 sw from the shoulder, so it passes the reach check. The wrist is just above the hip keypoint, so it passes the height check. Meanwhile the other arm swings bent. `arm_extended()` checks the distance from the shoulder but not the direction, and the lowest allowed wrist position is the hip line. On all 268 false punch frames across both clips, the wrist is at most 0.96 sw to the side of its shoulder (median 0.19–0.23); a sideways punch at the other player reaches at least `punch_min_reach` (1 sw) sideways. Not changed in this step.
 
 #### Step 2b · Punch reach measured sideways
 
@@ -1043,7 +1042,7 @@ Done after the identity and renderer merges, so the status describes the game as
 
 ## Task 4: Modifications
 
-Game-design changes by the Task 5 owner after the merge steps above, starting from the webcam tests (2026-10-26). Each entry names the files it touched. The drawing described here (sprites, `_bolt_effect()` and the other loaders, `ring_geometry()`, `bar_geometry()`) and its config keys moved from `Game` and `game:` to `scene/renderer.py` and `render:` in the renderer merge (Task 5: Renderer, step 1).
+Game-design changes after the merge steps above, starting from the webcam tests (2026-10-26). Each entry names the files it touched. The drawing described here (sprites, `_bolt_effect()` and the other loaders, `ring_geometry()`, `bar_geometry()`) and its config keys moved from `Game` and `game:` to `scene/renderer.py` and `render:` in the renderer merge (Task 5: Renderer, step 1).
 
 ### Bolt from the hand, health bar below the body
 
@@ -1087,7 +1086,7 @@ The webcam test still fired punches with a straight arm held low, at chest or be
 
 The beam (hands up) is drawn with the `assets/magic_effect/` frames ("Magic Attack" by NYKNCK, itch.io, credited in the README) instead of a plain line, as in the pack's preview (`magic.gif`, kept out of the repo): a magic ball between the player's hands, and the beam coming out of it. Each team has its own colour.
 
-**Added:** `src/ipcvgame/scene/magic_beam.py`, `MagicBeam` (Task 5, so the renderer can use it later).
+**Added:** `src/ipcvgame/scene/magic_beam.py`, `MagicBeam` (so the renderer can use it later).
 - **Ball (`M5025-1` … `-26`, 512 × 512 px):** drawn on the beam's start point, the wrist midpoint when the hands went up. Its 26 frames play once over the beam's whole life (charge plus firing, 1.15 s), so it grows while charging, swirls while the beam fires, and shrinks to a dot as the beam ends.
 - **Beam (`L5020-1` … `-3`, 256 × 256 px):** the beam's cross-section, thickest first: horizontal stripes, identical in every column. One column is kept and stretched to the beam's length, so any length is exact. After the charge the beam starts at the thinnest band, thickens one step every `beam_ramp_s`, and thins again in its last steps, as in the preview. The full band is as thick as the hit band (2 × `beam_hit_radius_h` × frame height), so what you see is what hits. The beam is drawn under the ball.
 - **Team colour:** the pack's colours (red) belong to `beam_effect_owner` (P1, the red team). For any other player, every pixel's hue is turned by the same angle, so the pack's main hue becomes that player's team colour from `scene/draw.py`. Brightness and saturation stay. P2's copy is blue.
@@ -1125,7 +1124,7 @@ The beam (hands up) is drawn with the `assets/magic_effect/` frames ("Magic Atta
 
 The bolt (punch) is drawn with the 6 fire-blast frames in `assets/beam/` ("Fire Attack FX - Pixel Art Effect - FX061" by NYKNCK, itch.io, credited in the README) instead of a dot. Each team has its own colour.
 
-**Added:** `src/ipcvgame/scene/fire_bolt.py`, `FireBolt` (Task 5, so the renderer can use it later).
+**Added:** `src/ipcvgame/scene/fire_bolt.py`, `FireBolt` (so the renderer can use it later).
 - **The frames:** 131 × 32 px pixel art, a one-shot fire blast drawn to the right: a launch flash (frame 1), the blast in flight (2–3), its break-up into sparks (4–6). The blast moves within the frames.
 - **Split by phase** (`bolt_sprite_launch`, `bolt_sprite_flight`; the rest is the end):
   - launch: shown for one frame time after the punch;
@@ -1214,7 +1213,7 @@ The webcam test sometimes fired the major attack and a normal attack together. R
 
 The shield (arms crossed) is drawn with the frames in `assets/shield/FX019/` instead of an ellipse. Each team has its own colour.
 
-**Added:** `src/ipcvgame/scene/fire_ring.py`, `FireRing` (Task 5, so the renderer can use it later).
+**Added:** `src/ipcvgame/scene/fire_ring.py`, `FireRing` (so the renderer can use it later).
 - **The frames:** 45 frames of 759 × 512 px, a ring of fire at the pack's 10 FPS (`PFX019.gif`).
   - Frames 1–13: whirling arcs that close into the ring.
   - Frames 14–29: the burning ring, looping.
@@ -1274,7 +1273,7 @@ On the webcam, after the players had switched sides, a beam sometimes flew away 
   - `forget_missing_tracks()`: a track that is not in this frame's output loses its link, and its player's pose state is reset (`reset_player()`). When the track comes back, OSNet runs again.
 - **Per frame:** BoT-SORT plus pose processing on each linked track's box; the pose model runs once per player crop.
 
-**Decisions (Task 5 owner, 2026-10-26).**
+**Decisions (2026-10-26).**
 
 - **One model per frame.** BoT-SORT runs on the YOLO-pose boxes that the pose stage already returns, through Ultralytics' `BOTSORT` class; `yolo11n.pt` goes. Measured on `two_people_fitness_challenge.webm`: 0.4 ms per frame.
 - **Occluded, then lost.** A player whose track BoT-SORT still holds (not seen for at most `track_buffer` frames) is `"occluded"`: the link stays, the box is BoT-SORT's prediction, and no state is reset when the same track comes back. Only when BoT-SORT drops the track is the player `"lost"`; when OSNet links a new track to them, `reentered` is True for that frame. `bodypose.py` dropped the link and reset the pose state on every frame without the track.
@@ -1331,7 +1330,7 @@ On the webcam, after the players had switched sides, a beam sometimes flew away 
 5. Fixes from the clip and webcam tests: link check and correction; faces only.
 6. Check and record: Change Overviews, open issues, `docs/phase-1/status.md`.
 
-**Verification.** Unit tests for every step and runs on `data/test_clips/` and the recorded `data/clips/session.mp4`. None of the clips has crossing, occlusion or re-entry, so step 5 uses edited copies of `session.mp4` (one player blacked out for 3.5 s; the two halves of the frame swapped for 3.5 s). ID switches on real crossings can only be counted once such clips are recorded. The Task 5 owner checks re-entry live on the webcam.
+**Verification.** Unit tests for every step and runs on `data/test_clips/` and the recorded `data/clips/session.mp4`. None of the clips has crossing, occlusion or re-entry, so step 5 uses edited copies of `session.mp4` (one player blacked out for 3.5 s; the two halves of the frame swapped for 3.5 s). ID switches on real crossings can only be counted once such clips are recorded. Re-entry is checked live on the webcam.
 
 ### Changes
 
@@ -1363,10 +1362,10 @@ Compared with `bodypose.py`:
 - **Same rules:** a linked track keeps its player without OSNet; a new track's crop (≥ 40 × 20 px) is matched to the most similar stored player at ≥ 0.6, skipping players already used this frame; otherwise it becomes a new player after being seen for a while.
 - **Seconds instead of frames:** `NEW_PLAYER_CONFIRMATION` (5 frames) became `new_player_s` (0.13 s). A pending track must be seen on every frame; a frame without it starts the wait again, as in your `forget_missing_tracks()`.
 - **Two players** instead of 3 (`max_players`). A new player takes the lowest free id, not the next number, so `reset(pid)` frees the id.
-- **Occluded, then lost:** `forget_missing_tracks()` drops a link only when the tracker no longer holds the track at all. While it holds it as lost, the player is `"occluded"` with the tracker's predicted box. Your code dropped the link on the first frame without the track and reset the player's pose state; now nothing is reset until the player is `"lost"`, and `reentered` is True on the frame OSNet links a new track to a lost player.
+- **Occluded, then lost:** `forget_missing_tracks()` drops a link only when the tracker no longer holds the track at all. While it holds it as lost, the player is `"occluded"` with the tracker's predicted box. The teammates' code dropped the link on the first frame without the track and reset the player's pose state; now nothing is reset until the player is `"lost"`, and `reentered` is True on the frame OSNet links a new track to a lost player.
 - **Link moves to a new track:** when OSNet finds a player on a new track while their old track is still held (occluded), the old link is dropped. That is not a re-entry.
 - **Linked tracks first:** `main.py` went through the tracks in detection order, so a new track could take a player whose own track came later in the list; that track then lost its player for the frame. Now linked tracks are handled first and their players are excluded for new tracks.
-- **Slow retry:** in your code a track that found no player while all slots were taken was dropped from `pending_tracks` and tried again on the next frame, so a bystander cost an OSNet run every frame. Now it retries after `retry_s` (0.5 s).
+- **Slow retry:** in the teammates' code a track that found no player while all slots were taken was dropped from `pending_tracks` and tried again on the next frame, so a bystander cost an OSNet run every frame. Now it retries after `retry_s` (0.5 s).
 - **Stored vectors are updated (new):** `_update_embedding()`. One active player per frame, in turn, at most every 0.5 s, and only when their box overlaps no other detection. If the fresh vector's similarity to the stored one is at least 0.5, the stored vector moves 0.1 of the way towards it (and is scaled back to length 1). Your code stored the first vector and never changed it.
 - **Players as `Player`s:** `update(dets, frame)` returns `dict[pid, Player]` from `core/types.py` (box, detection, status, `reentered`); `pos` stays `(0, 0)`.
 - **The left/right stub** stays as `backend: zones`, unchanged except that it reads `max_players` (was `num_players`).
@@ -1461,7 +1460,7 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 
 #### Step 6 · Check and record
 
-**Changed:** `docs/merge_log.md`: Change Overviews for Task 3 (where your code is now, and what changed), and the open issues found before the merge marked as fixed.
+**Changed:** `docs/merge_log.md`: Change Overviews for the identity code (where it is now, and what changed), and the open issues found before the merge marked as fixed.
 
 **Changed:** `docs/phase-1/status.md`
 - "Where we are": `identity/tracker.py` marked as merged; test count 200.
@@ -1492,14 +1491,14 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 - **End of the game looks frozen.** `Game.advance()` stops once someone wins (as in `game.py`), so bolts, their break-up sparks and beams stay where they were, under the winner text, while the camera keeps running. Splats drawn as large circles pile up into blobs.
 - Key `r` resets the whole pipeline, including identity, so P1 and P2 can swap colours in the next round.
 
-**Decisions (Task 5 owner, 2026-10-27).**
+**Decisions (2026-10-27).**
 
-- **The renderer draws the game.** The sprite effects, splats, health bars and HUD move to the renderer (Task 5). `interaction/game.py` keeps only the game logic, so the Task 4 owner explains rules, not drawing. `--until game` goes back to simple shapes (bolt dots, beam lines with their hit band, shield ellipses, health numbers) for debugging the logic; the default view is the game.
+- **The renderer draws the game.** The sprite effects, splats, health bars and HUD move to the renderer. `interaction/game.py` keeps only the game logic, so it holds the rules, not the drawing. `--until game` goes back to simple shapes (bolt dots, beam lines with their hit band, shield ellipses, health numbers) for debugging the logic; the default view is the game.
 - **Health bar below the body** (Task 4 modifications), restyled with `renderer.py`'s outline and "PLAYER N" label.
 - **Splats as `renderer.py`'s pixel crosses** that grow as health drops, instead of the debug circles.
-- **Paint on the torso and a steady health bar (after the Task 5 owner's check in step 3).** The game keeps splats in a band of the body box, and the renderer draws that band on the torso (shoulders to hips), so the paint no longer slides off the body when an arm goes out. The health bar's length is smoothed. Recording where on the torso a hit really landed stays as feature 13 in `docs/extra_features.md`.
+- **Paint on the torso and a steady health bar (after the check in step 3).** The game keeps splats in a band of the body box, and the renderer draws that band on the torso (shoulders to hips), so the paint no longer slides off the body when an arm goes out. The health bar's length is smoothed. Recording where on the torso a hit really landed stays as feature 13 in `docs/extra_features.md`.
 - **Pixel look on:** `render.pixel_size: 2` (`renderer.py`'s half size); 1 turns it off.
-- **End of the game (Task 5 owner):** the panel from `renderer.py`; bolts, sparks and beams in flight are not drawn once there is a winner, and the frame behind the panel is dimmed, so nothing appears frozen. Key `r` starts a new round (`game.reset()`, as in `main.py`) at any time; `R` (shift) resets the whole pipeline, including identity. Restarting by a gesture is part of feature 12.
+- **End of the game:** the panel from `renderer.py`; bolts, sparks and beams in flight are not drawn once there is a winner, and the frame behind the panel is dimmed, so nothing appears frozen. Key `r` starts a new round (`game.reset()`, as in `main.py`) at any time; `R` (shift) resets the whole pipeline, including identity. Restarting by a gesture is part of feature 12.
 - **No skeletons or boxes in the game view** (`renderer.py` drew none): the player is named on their health bar. `render.show_skeleton` brings the skeletons back for testing.
 - **Not merged:** `renderer.py`'s own bolt, beam and shield drawing and the palette picture; the sprites from the Task 4 modifications replace them.
 
@@ -1525,7 +1524,7 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 4. Fixes from the check: paint on the torso; smoothed health-bar length.
 5. Check and record: runs on the clips with `--record-view`, Change Overviews, `docs/phase-1/status.md`, `docs/extra_features.md`.
 
-**Verification.** Unit tests for each step (drawing on made-up frames, keys). Views recorded with `--record-view` on `data/clips/session.mp4` and the test clips. The Task 5 owner checks the game, including the end of a round, on the webcam.
+**Verification.** Unit tests for each step (drawing on made-up frames, keys). Views recorded with `--record-view` on `data/clips/session.mp4` and the test clips. The game, including the end of a round, is checked on the webcam.
 
 ### Changes
 
@@ -1584,7 +1583,7 @@ On the swapped copy, P1 and P2 were on the wrong person for 6 of the 120 frames 
 
 #### Step 4 · Fixes from the check: paint on the torso, steady health bar
 
-Two problems the Task 5 owner saw in the game view after step 3.
+Two problems seen in the game view after step 3.
 
 **The paint moved off the body.** The game keeps splats as fractions of the body box (`game.py`), and the box widens when an arm goes out, so the splats slid with it onto the arm or the background.
 
@@ -1610,7 +1609,7 @@ Runs with `--record-view` on `data/clips/session.mp4` (a full round, to the winn
 
 ## Task 5: Modifications
 
-Design changes by the Task 5 owner after the renderer merge, from the webcam check (2026-10-27). Each entry names the files it touched.
+Design changes after the renderer merge, from the webcam check (2026-10-27). Each entry names the files it touched.
 
 ### Health bars pinned to the bottom
 
@@ -1630,13 +1629,13 @@ The bar below each body (Task 4 modifications) moved with the player and changed
 
 ## Game start: instructions and pose calibration
 
-The first feature built from the backlog in `docs/extra_features.md` (feature 12 there, the "Feature 12:" and "Feature 1:" commits), by the Task 5 owner on 2026-10-28. It touches Task 2 (`pose/measure.py`), Task 3 (`identity/tracker.py`), Task 4 (`interaction/game.py`) and Task 5 (`scene/`, `app/`); each step names the files it touched.
+The first feature built from the backlog in `docs/extra_features.md` (feature 12 there, the "Feature 12:" and "Feature 1:" commits), on 2026-10-28. Each step names the files it touched.
 
 ### Plan
 
 **What.** A game UI around the round. Before, the game started the moment the players were seen. Now there is a start screen, a short phase in which each player learns the moves while the game measures them, a countdown, and a result screen.
 
-**Decisions (Task 5 owner, 2026-10-28).**
+**Decisions (2026-10-28).**
 
 - **Phases:** `waiting` → `calibration` → `countdown` → `playing` → `result`. Damage, bolts and beams only count in `playing`.
 - **Play again:** from `result`, both players with hands up for ~2 s (or key `r`) go straight to `countdown`. The same players keep their calibration, so they do not see the instructions again. Key `R` (full reset) goes back to `waiting`, and identity forgets the players too.
@@ -1650,13 +1649,13 @@ The first feature built from the backlog in `docs/extra_features.md` (feature 12
 
 **Steps.** Each step gets an entry under Changes below.
 
-1. Game phases (Task 4).
-2. Waiting, countdown and result screens (Task 5).
-3. Instruction panels (Task 5).
-4. Pose calibration (Task 2 measurements, Task 4 rules).
-5. Identity at calibration (Task 3).
-6. Depth reference (Task 3, `Player.pos`).
-7. Docs; webcam check by the Task 5 owner.
+1. Game phases.
+2. Waiting, countdown and result screens.
+3. Instruction panels.
+4. Pose calibration.
+5. Identity at calibration.
+6. Depth reference (`Player.pos`).
+7. Docs; webcam check.
 
 ### Changes
 
@@ -1705,7 +1704,7 @@ The first feature built from the backlog in `docs/extra_features.md` (feature 12
 
 #### Step 4 · Pose calibration
 
-**Added:** `src/ipcvgame/pose/measure.py` (Task 2): `shoulder_px()` and `arm_px()` (shoulder to elbow plus elbow to wrist, so a bent arm measures the same as a straight one) from the smoothed keypoints.
+**Added:** `src/ipcvgame/pose/measure.py`: `shoulder_px()` and `arm_px()` (shoulder to elbow plus elbow to wrist, so a bent arm measures the same as a straight one) from the smoothed keypoints.
 
 **Changed:** `src/ipcvgame/interaction/game.py`
 - The neutral pose is the first calibration move (`CALIBRATION_MOVES`), checked by the game every frame (`_neutral_pose()`): the player in view with the head turned at most `neutral_max_yaw_deg`; shoulders, elbows, wrists and hips seen; both wrists at least `neutral_wrist_below_sw` below the shoulder line and slower than `neutral_max_speed_sw`.
@@ -1725,7 +1724,7 @@ The first feature built from the backlog in `docs/extra_features.md` (feature 12
 
 #### Step 5 · Identity at calibration
 
-**Changed:** `src/ipcvgame/identity/tracker.py` (Task 3)
+**Changed:** `src/ipcvgame/identity/tracker.py`
 - `order_left_to_right(xs)`: renumbers the given players by x, lowest number leftmost. Stored vectors, track links and pending refreshes move with them, and both come out as `reentered` on the next update, so motion, face and gestures drop their per-player state. The zones backend ignores it: its P1 is always the left half.
 - `refresh_vector(pid, frame)`: replaces the stored vector with one from this frame's crop. If another person overlaps the crop, it is taken on the first update where the crop is clear.
 - `calibrated`: the players whose vector is from the neutral pose; logged as `identity_p<pid>_calibrated`, and "cal" on the box in `--until identity`.
@@ -1808,41 +1807,41 @@ The arms-crossed rule missed most crosses with the hands on the opposite shoulde
 
 ## Face effects: team colour, hit reaction, status above the head, cheek bulge
 
-The second feature built from the backlog in `docs/extra_features.md` (feature 1 there after the renumbering of 2026-10-28; before that features 1, 2, 3 and 7; the "face effect extra feature" and "Face effect extra features" commits), by the Task 5 owner on 2026-10-28. It touches Task 1 (`face/`), Task 4 (`interaction/game.py`) and Task 5 (`scene/renderer.py`, `app/pipeline.py`); each step names the files it touched.
+The second feature built from the backlog in `docs/extra_features.md` (feature 1 there after the renumbering of 2026-10-28; before that features 1, 2, 3 and 7; the "face effect extra feature" and "Face effect extra features" commits), on 2026-10-28. Each step names the files it touched.
 
 ### Plan
 
 **What.** Effects on and above each player's face that show who is who and what happens to them: the team colour on the face, a reaction to every hit, a name tag and status icons above the head, and puffed cheeks after eating.
 
-**Decisions (Task 5 owner, 2026-10-28).**
+**Decisions (2026-10-28).**
 
 - **Team colour on the face:** the hat's band in the team colour and two stripes of war paint on each cheek. The cheeks are new 3D anchor points on the head model, so they follow tilt and turn like the hat.
 - **Hit reaction:** every hit that does damage knocks the hat off, the way the attack went, and the hat pops back after a moment; the face flashes white, then in the attacker's colour. The game reports hits (`Game.hits`); the face effects keep one animation record per player, timed with `Frame.t`.
 - **Status above the head:** a name tag "P1"/"P2" in the team colour, a crown for the player with more HP and dizzy stars below 25% HP. The health bars stay pinned to the bottom corners.
 - **Dizzy stars:** on an ellipse with a fixed flattening from the config, turned by the head's roll. Following the chin up and down would need the head pitch in `Face`, and `core/types.py` stays as it is.
 - **Cheek bulge:** a real image warp (a radial magnifier with `cv2.remap`) for about a second, not a sticker. Its only trigger is eating a consumable: the consumables feature calls `FaceEffects.bulge(pid, t)`. Puffing the cheeks (MediaPipe's `cheekPuff`) does not start it. Until the consumables are built, the bulge does not appear in the game.
-- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The face effects and the hit event are in Task 1 and Task 4 packages; their owners should check these steps.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved.
 
 **Steps.** Each step gets an entry under Changes below.
 
-1. Team colour (Task 1).
-2. Hit event (Task 4).
-3. Hit reaction (Task 1, wired by Task 5).
-4. Status above the head (Task 5).
-5. Cheek bulge (Task 1).
-6. Docs; webcam check by the Task 5 owner.
+1. Team colour.
+2. Hit event.
+3. Hit reaction.
+4. Status above the head.
+5. Cheek bulge.
+6. Docs; webcam check.
 
 ### Changes
 
 #### Step 1 · Team colour
 
-**Changed:** `src/ipcvgame/face/head_pose.py` (Task 1), `anchor_points_mm()`: `left_cheek` and `right_cheek` as 3D points on the head, `cheek_out` to each side, `cheek_drop` below the eyes and `cheek_depth_mm` behind them. "Left" and "right" are the image sides, like `head_model_mm`'s eyes.
+**Changed:** `src/ipcvgame/face/head_pose.py`, `anchor_points_mm()`: `left_cheek` and `right_cheek` as 3D points on the head, `cheek_out` to each side, `cheek_drop` below the eyes and `cheek_depth_mm` behind them. "Left" and "right" are the image sides, like `head_model_mm`'s eyes.
 
-**Changed:** `src/ipcvgame/face/tracker.py` (Task 1)
+**Changed:** `src/ipcvgame/face/tracker.py`
 - `geometry()` takes the face config and adds the cheeks as 2D offsets, for frames without a head pose.
 - `_smoothed_geometry()` smooths every anchor it is given, in one One Euro filter, so a new anchor needs no change there.
 
-**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+**Changed:** `src/ipcvgame/face/effects.py`
 - `band_mask()`: the band pixels of `hat.png`, by hue (measured around the hue circle, so 178 counts as red), saturation and brightness. Without the brightness limit, dark reddish pixels along the black outline were taken too.
 - `recolor()` turns those pixels to the team colour's hue and keeps their shading. `FaceEffects.team_hat(pid)` makes each team's hat on first use.
 - `war_paint()`: two stripes on each cheek anchor, along the eye line, shortened by cos(yaw) on the cheek turned away. `fill_polys()` fills them anti-aliased, blended only in their box.
@@ -1853,7 +1852,7 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 
 #### Step 2 · Hit event
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+**Changed:** `src/ipcvgame/interaction/game.py`
 - `Hit` dataclass: `target_id`, `owner_id`, `direction` (the way the bolt or beam travelled, +1 to the right, −1 to the left) and `damage`.
 - `_apply_damage()` takes the direction from both callers and adds a `Hit` to `Game.hits`, and the action `hit` for the target (`game_p<pid>_actions`, `--until game`). Only hits that do damage count: a shield block, a hit on a player already at 0 or after the win adds nothing.
 - `Game.hits` is cleared at the start of `update()` and by `_clear_round()`.
@@ -1862,7 +1861,7 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 
 #### Step 3 · Hit reaction
 
-**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+**Changed:** `src/ipcvgame/face/effects.py`
 - `_Anim`: one record per player with the hat knock-off (time, brim point, face width, roll, direction) and the flash (time, attacker).
 - `FaceEffects.update(hits, faces, t)` starts the reaction for players with a visible face. Every hit restarts the flash; the hat is knocked off only while it is on the head, so hits in a row never throw two hats.
 - `flying_hat()`: the hat stays where it was thrown in the frame, not on the moving head. In face widths: x = direction × vx × t, y = −vy × t + g t² / 2, turning by `hat_spin_deg` per second the same way. It is fully visible for the first half of `hat_fly_s`, then fades. The design's throw of 1.5 face widths/s moved the hat only ~0.3 face widths before it faded on `session.mp4` and looked like a wobble, so it is 3 face widths/s sideways and up, with gravity 14.
@@ -1878,7 +1877,7 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 
 #### Step 4 · Status above the head
 
-**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+**Changed:** `src/ipcvgame/scene/renderer.py`
 - `_draw_status()`, right after the face effects: the name tag in every phase; the crown and the dizzy stars from the countdown on, when health counts. While a face fades out, its status is drawn on a copy of the frame and blended in with `alpha`.
 - `crowned()`: the round player with strictly the most HP, or None at a draw or with one player.
 - `_draw_tag()`: "P<pid>" upright at `above_head`, sized by the face width with a minimum, and the crown (`_draw_crown()`) above it. "FACE THE CAMERA" takes the place of both while it is shown (`_hint_shown()`).
@@ -1898,7 +1897,7 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 
 #### Step 5 · Cheek bulge
 
-**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+**Changed:** `src/ipcvgame/face/effects.py`
 - `bulge_map()`: the `cv2.remap` maps. An output pixel at distance ρ < r from the cheek anchor takes the source pixel at ρ' = ρ (ρ/r)^e, with e = k (1 − u²) and u = ρ/r. Since ρ' < ρ, the middle is magnified (about 2× within a quarter of the radius at k = 0.5). The design's ρ (ρ/r)^k left a seam at the rim; the (1 − u²) factor makes the warp meet the unwarped image with slope 1.
 - `warp_bulge()` remaps only the circle's box, in place.
 - `bulge(pid, t)` starts a bulge (the only trigger, for eating); `bulge_strength()` follows half a sine over `bulge_s`. The cheek turned away gets a smaller circle, like the war paint. The warp runs after the war paint, so the paint swells with the cheek, and before the mustache.
@@ -1913,13 +1912,13 @@ The second feature built from the backlog in `docs/extra_features.md` (feature 1
 
 ## Consumables: drinks caught with the mouth
 
-The third feature built from the backlog in `docs/extra_features.md` (feature 2 there after the renumbering of 2026-10-28, feature 3 before that and feature 6 originally; the "extra features consumables", "Extra feature consumable", "Extra features consumables:", "Consumable extra_features", "consumables:" and "Consumables" commits), by the Task 5 owner on 2026-10-28. It touches Task 4 (`interaction/game.py`), Task 1 (`face/effects.py`) and Task 5 (`scene/renderer.py`, `scene/draw.py`, `README.md`); each step names the files it touched.
+The third feature built from the backlog in `docs/extra_features.md` (feature 2 there after the renumbering of 2026-10-28, feature 3 before that and feature 6 originally; the "extra features consumables", "Extra feature consumable", "Extra features consumables:", "Consumable extra_features", "consumables:" and "Consumables" commits), on 2026-10-28. Each step names the files it touched.
 
 ### Plan
 
 **What.** Drinks fall from the sky during the round. A player drinks one by catching it with their open mouth and closing it. Each drink gives one of three buffs: HP, attack or defense. Drinks fall in random sizes, and a bigger drink gives a bigger buff.
 
-**Decisions (Task 5 owner, 2026-10-28).**
+**Decisions (2026-10-28).**
 
 - **Only with the mouth:** a drink that touches an open mouth sticks to it, and closing the mouth drinks it. There is no grabbing with the hands and no drinks on the floor. The first design allowed the mouth or a hand; it was changed before step 1.
 - **Categories:** each buff has its own three drinks from `assets/Fancy Drinks/` in a colour away from the team colours (HP green, attack orange, defense purple), with an icon on a badge (a plus, a lightning bolt, a shield).
@@ -1927,22 +1926,22 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 - **Buffs:** HP is added at once, up to the maximum. Attack and defense are timed multipliers (10 s): damage = base × the attacker's attack × (1 − the target's defense), rounded. A drink of a running buff's category replaces its value and restarts its time.
 - **Cheeks:** drinking starts the cheek bulge (`FaceEffects.bulge()`, from "Face effects"), its only trigger. While a drink is at the mouth, the cheeks already bulge gently (added after step 4).
 - **One player:** everything can be tried alone (`--solo`, or `--no-intro` with one player in view): drinks fall, can be drunk, and their buffs show by the health bar and in the log. Only the buffs' effect on damage needs an opponent; tests cover it. Every step has a test with one player.
-- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The drink rules are in Task 4's package and the held-drink bulge in Task 1's; their owners should check these steps.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved.
 
 **Steps.** Each step gets an entry under Changes below.
 
-1. Falling drinks (Task 4).
-2. Drinking with the mouth (Task 4, from Task 1's face data).
-3. Buffs (Task 4).
-4. Look (Task 5).
+1. Falling drinks.
+2. Drinking with the mouth.
+3. Buffs.
+4. Look.
 5. Fixes from the webcam check: cheeks while holding, the hold time.
-6. Docs; webcam check by the Task 5 owner.
+6. Docs; webcam check.
 
 ### Changes
 
 #### Step 1 · Falling drinks
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+**Changed:** `src/ipcvgame/interaction/game.py`
 - `Drink`: `x`, `y` (centre, px), `kind`, `size`, `value` and `variant` (0–1). With `variant`, the renderer picks one of the category's sprites, so the game needs no sprite list. `DRINK_KINDS`: `hp`, `attack`, `defense`.
 - `_advance_drinks()` runs inside `advance()`, so only while playing and not after a win. It counts `_drink_wait` down and spawns a drink when it is due and fewer than `drink_max` are in the air; when it is full, the next drink comes as soon as there is room. Drinks fall at a constant speed (one frame height in `drink_fall_s`) and are gone below the frame.
 - `_spawn_drink()`: a random category and size; the value is linear in the size; a random x between the `drink_margin_w` margins; the drink starts just above the frame. `drink_height()` gives its height on screen.
@@ -1957,7 +1956,7 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 #### Step 2 · Drinking with the mouth
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+**Changed:** `src/ipcvgame/interaction/game.py`
 - `_track_mouth()` runs every frame for every player. The mouth opens when `jawOpen` is above `drink_mouth_open` (0.5) and closes below `drink_mouth_closed` (0.25). Talking on `session.mp4` and `shield.mp4` stayed under 0.5 (at most 0.44). A frame without a score (MediaPipe runs for each player in turn) keeps the state; a new face starts closed, and no visible face means closed.
 - `_drink_with_mouths()` runs only while playing, before `advance()`.
   - A drink touches the open mouth when its centre is within `drink_catch_fw` face widths of the mouth anchor plus half its height. Then it is held (`Drink.held_by`, `held_t`, action `catch`), it does not fall, and its rim (`drink_hold_rim` of its height above the centre) sits at the mouth.
@@ -1967,7 +1966,7 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 - `reset(pid)` (re-entry) forgets the mouth and lets a held drink fall.
 - In `--until game`: each mouth's catch circle, filled while open; a held drink has a thick outline. Logged as `game_p<pid>_mouth_open` and `_holding` (the held drink's kind).
 
-**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5): `draw()` calls `FaceEffects.bulge()` for each drink in `game.drunk`.
+**Changed:** `src/ipcvgame/scene/renderer.py`: `draw()` calls `FaceEffects.bulge()` for each drink in `game.drunk`.
 
 **Changed:** `configs/default.yaml`, `game:` section: `drink_mouth_open`, `drink_mouth_closed`, `drink_catch_fw`, `drink_hold_rim`, `drink_hold_s` (1 s at first; see step 5).
 
@@ -1975,7 +1974,7 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 #### Step 3 · Buffs
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+**Changed:** `src/ipcvgame/interaction/game.py`
 - `GamePlayer.attack` / `attack_left` and `defense` / `defense_left`: 1 and 0 without a buff.
 - `_apply_drink()` runs as a drink is drunk. HP adds the value, rounded, up to `max_health`; attack and defense take the value and `drink_buff_s`, replacing a running buff of the same kind.
 - `_tick_buffs()` counts the buffs down in `advance()`, so only while playing; an ended buff goes back to no effect.
@@ -1989,9 +1988,9 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 #### Step 4 · Look
 
-**Changed:** `src/ipcvgame/scene/draw.py` (Task 5): `DRINK_COLORS`, the one table of buff colours (green, orange, purple) for the badges, icons, text and `--until game`.
+**Changed:** `src/ipcvgame/scene/draw.py`: `DRINK_COLORS`, the one table of buff colours (green, orange, purple) for the badges, icons, text and `--until game`.
 
-**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+**Changed:** `src/ipcvgame/scene/renderer.py`
 - `drink_sprites(kind)` loads the config's sprites on first use, cropped to their visible part.
 - `_draw_drinks()`: each drink as one of its kind's sprites (`Drink.variant` picks it), scaled to its height with the nearest pixel (pixel art). Without sprites (`drink_sprites: null`) it is a circle. `draw_badge()` puts the buff's icon (`ICONS`: a plus, a lightning bolt, a shield) on a light disc at the drink's upper right.
 - Drinks are drawn after the face effects, so a drink held at the mouth is in front of the mustache. They are not drawn on the result screen.
@@ -1999,7 +1998,7 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 - `_draw_buffs()`: above each health bar (P1 from the left, P2 from the right), each running attack or defense buff as its badge, its value and a time bar, fading over the last `buff_fade_s`. `Game.drink_buff_s` gives the full time.
 - `faded()` blends a box drawn in a `with` block at an opacity.
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4): `Game.drink_buff_s` for the renderer; `--until game` takes its colours from `DRINK_COLORS`.
+**Changed:** `src/ipcvgame/interaction/game.py`: `Game.drink_buff_s` for the renderer; `--until game` takes its colours from `DRINK_COLORS`.
 
 **Changed:** `configs/default.yaml`, `render:` section: `drink_sprites` (three drinks per kind: HP Lime Lemonade, Cucumber Water, Power Up; attack Orange Juice, Tropic Cider, Poolside; defense Midnight, Pomegranate, Neon Night), `drink_badge`, `drink_badge_min_px`, `popup_s`, `popup_rise_h`, `popup_side_fw`, `popup_text_scale`, `buff_icon_h`, `buff_fade_s`.
 
@@ -2009,15 +2008,15 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 #### Step 5 · Fixes from the webcam check: cheeks while holding, the hold time
 
-**Changed:** `src/ipcvgame/face/effects.py` (Task 1)
+**Changed:** `src/ipcvgame/face/effects.py`
 - `FaceEffects.update(hits, faces, t, holding)`: the players holding a drink. Their cheeks bulge gently (`_Anim.hold_level` towards `bulge_hold_k`, half the drinking puff), reached and let go over `bulge_hold_ramp_s`.
 - `bulge()` starts the puff from the current strength (`_Anim.bulge_k0`): it rises from there to `bulge_k` over the first half of `bulge_s` and falls as a half sine over the second half, so after a held drink it does not drop to 0 first. `bulge_strength()` is the larger of the hold level and the puff.
 
-**Changed:** `src/ipcvgame/scene/renderer.py` (Task 5)
+**Changed:** `src/ipcvgame/scene/renderer.py`
 - `draw()` passes the players holding a drink to `FaceEffects.update()`.
 - A drink at a mouth is drawn at most `drink_held_fw` face widths tall, its top `drink_held_drop_fw` below the mouth anchor (the upper lip), without its badge. At ~2.3 m a falling drink is taller than a face, and at full size it covered the cheeks.
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4), `_drink_with_mouths()`: a held drink checks the face, then the closed mouth, then the time limit, so a mouth closing on the frame the time runs out still drinks.
+**Changed:** `src/ipcvgame/interaction/game.py`, `_drink_with_mouths()`: a held drink checks the face, then the closed mouth, then the time limit, so a mouth closing on the frame the time runs out still drinks.
 
 **Changed:** `configs/default.yaml`: `face:` `bulge_hold_k`, `bulge_hold_ramp_s`; `render:` `drink_held_fw`, `drink_held_drop_fw`; `game:` `drink_hold_s` from 1 to 2.5 s. In the first webcam run (`logs/run-20261028-231534.csv`), 3 of 4 caught drinks stuck to the mouth and then fell on: the mouth counted as closed 0.87, 1.00, 1.14 and 2.07 s after the catches, and one closed on the very frame the time ran out.
 
@@ -2029,17 +2028,17 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 #### Step 7 · Slower drinks (2026-11-01)
 
-**Changed:** `configs/default.yaml`, `game:` section: `drink_fall_s` 4 → 6 s, a third slower, so players have time to get their head under a drink (Task 5 owner, before the playtest).
+**Changed:** `configs/default.yaml`, `game:` section: `drink_fall_s` 4 → 6 s, a third slower, so players have time to get their head under a drink (before the playtest).
 
 ## Normal attack: paint blob and splashes on the body
 
-The fourth feature built from the backlog in `docs/extra_features.md` (feature 3 there after the renumbering of 2026-10-29; feature 4 on 2026-10-28 and 13 originally; the "Normal Attack Change:", "Normal Attack Extra Feature:" and "Normal Attack Extra Effect" commits), by the Task 5 owner on 2026-10-29. It touches Task 4 (`interaction/game.py`) and Task 5 (`core/geometry.py`, `scene/`, `app/`, `README.md`); each step names the files it touched.
+The fourth feature built from the backlog in `docs/extra_features.md` (feature 3 there after the renumbering of 2026-10-29; feature 4 on 2026-10-28 and 13 originally; the "Normal Attack Change:", "Normal Attack Extra Feature:" and "Normal Attack Extra Effect" commits), on 2026-10-29. Each step names the files it touched.
 
 ### Plan
 
 **What.** A punch fires a blob of paint instead of the fire bolt. Where it hits, the paint splashes onto the opponent's body and stays there, moving with the body. Both are drawn by an algorithm, not from sprites: every splash has its own shape, and over a round the paint covers more and more of the body, so the damage shows on the player. Before, the game kept each splat as a fraction of the body box inside a fixed band (0.38–0.62), stretched over the torso by the renderer, so every hit landed near the middle of the shirt.
 
-**Decisions (Task 5 owner, 2026-10-29).**
+**Decisions (2026-10-29).**
 
 - **Body coordinates:** each splash is stored as (u, v) on the torso: u from the screen-left shoulder (0) to the right one (1), v from the shoulder line (0) to the hips (1). A bilinear map over the four corners (both shoulders, both hips) puts it back on the body every frame.
 - **Where a splash lands:** at the hit height, on the torso's side facing the attacker, with a random step inward. The blob flies sideways, so it enters the body box at its near edge, often at an outstretched arm. Most punches arrive at shoulder height, so their paint lands at the top of the chest; with the spikes and drips this reads as paint hitting the upper chest and running down, and it is kept that way.
@@ -2050,15 +2049,15 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 - **Hits stay as they are:** the blob still flies sideways and hits the body box; only where the paint goes and how it looks change.
 - **One player:** key `b` throws a test blob at P1 from the far side, in P2's colour, so one player can see the hit, the splash, its drips and the body filling with paint.
 - **Cost:** under ~2 ms per player, logged per frame.
-- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved. The splash's place and the end reason are in Task 4's package; its owner should check steps 1 and 4.
+- **Logging:** the steps are recorded in this log; no entries in Change Overviews, since no teammate's code moved.
 
 **Steps.** Each step gets an entry under Changes below.
 
-1. Splashes in torso coordinates (Task 4; Task 5 for the key).
-2. Paint on the body and body mask (Task 5).
-3. Splash shapes (Task 5).
-4. The blob in flight and the burst (Task 5; Task 4 for the end reason).
-5. Docs; webcam check by the Task 5 owner.
+1. Splashes in torso coordinates.
+2. Paint on the body and body mask.
+3. Splash shapes.
+4. The blob in flight and the burst.
+5. Docs; webcam check.
 
 ### Changes
 
@@ -2066,7 +2065,7 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 **Changed:** `src/ipcvgame/core/geometry.py`: `bilinear(quad, u, v)`, the point at (u, v) in a four-corner quad; between the corners u and v blend linearly, so a point keeps its place on a quad that moves, turns or changes shape.
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4)
+**Changed:** `src/ipcvgame/interaction/game.py`
 - `Game.torso_corners(m)`: `R_SHOULDER`, `L_SHOULDER`, `L_HIP`, `R_HIP`, so u = 0 is the screen-left side for a player facing the camera (the model's `L_*` is on the screen's right, `core/skeleton.py`). With the hips not both seen, the shoulders are moved down to `torso()`'s estimated hip level. `update()` stores it in `GamePlayer.torso` each frame, like `bounds`; None without a usable shoulder width.
 - `PaintSplat(u, v, owner_id, direction, seed, t)`, one per damaging hit (bolt or beam), made by `_splash()`: u at the near edge of `splat_band_u` plus a random 0–`splat_inward_u` inward, v from the hit height between the shoulder line and the hips, kept in `splat_band_v`. The near side comes from the corners' x and the flight direction. Without a torso: v = 0.5. Seeded per target and splash count, so the same hit always gives the same splash.
 - `Game.test_hit(pid)`: a normal bolt from the far frame edge at `test_hit_v` down the player's torso, owned by the other team, action `test_blob`; only while playing with the player in view.
@@ -2082,7 +2081,7 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 #### Step 2 · Paint on the body and body mask
 
-**Added:** `src/ipcvgame/scene/paint.py` (Task 5)
+**Added:** `src/ipcvgame/scene/paint.py`
 - `BodyPaint`, one per player in the renderer: the splashes as polygons in torso coordinates, each point mapped with `bilinear()` every frame, the game's own map. One image warped through the four torso corners (`cv2.warpPerspective`) was the plan; a perspective map treats the torso's trapezoid (hips narrower than shoulders) as a slanted rectangle, and on a test body it put the middle of the torso 42 px too low.
 - `body_mask()`: the torso quad stretched to `mask_torso_u` / `_v` (the keypoints are joints, inside the outline), and a line `mask_arm_sw` / `mask_leg_sw` shoulder widths thick along every arm and leg bone with both keypoints valid; anti-aliased.
 - `_shade()`: factor (1 − `paint_shade`) + `paint_shade` × the camera's brightness over its mean under the paint, the ratio capped at 2. A dark shirt keeps the paint bright; only folds and shadows relative to the shirt show.
@@ -2096,7 +2095,7 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 #### Step 3 · Splash shapes
 
-**Changed:** `src/ipcvgame/scene/paint.py` (Task 5)
+**Changed:** `src/ipcvgame/scene/paint.py`
 - `splash_shapes(seed, cfg)`, in units of the blob's radius with x along the flight and y down:
   - `blob()`: r(a) = R (1 + Σ aₖ sin(k a + φₖ)) for k = 2…5, with aₖ up to `splash_wobble` / k;
   - `splash_spikes` wedges from inside the blob out to 1 + `spike_len` radii, each with a drop at its tip; a share `spike_forward` aims within `spike_spread_rad` of the flight, the rest anywhere;
@@ -2116,11 +2115,11 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 #### Step 4 · The blob in flight and the burst
 
-**Changed:** `src/ipcvgame/scene/paint.py` (Task 5)
+**Changed:** `src/ipcvgame/scene/paint.py`
 - `draw_blob()`: `blob()` with wobble amplitudes `blob_wobble` / k (k = 2…4) whose phases turn at `blob_wobble_hz` × k turns a second, stretched `blob_stretch` along the flight; a darker rim, a highlight towards the front top, and `blob_trail` droplets behind, each `blob_trail_gap` radii further back and sinking `blob_trail_fall` × i² radii. Opaque, anti-aliased, `blob_r_w` frame widths in radius.
 - `draw_burst()`: `burst_drops` drops thrown back and up (within `burst_spread_rad` of 45° up-back) at `burst_speed` radii a second, falling with `burst_gravity` and shrinking to nothing over `game.bolt_end_s`; seeded by where the blob ended.
 
-**Changed:** `src/ipcvgame/interaction/game.py` (Task 4): `BoltEnd.reason`, "hit", "shield" or "edge". The game logic keeps its names (`Projectile`, `bolt_*`, `game_bolts`).
+**Changed:** `src/ipcvgame/interaction/game.py`: `BoltEnd.reason`, "hit", "shield" or "edge". The game logic keeps its names (`Projectile`, `bolt_*`, `game_bolts`).
 
 **Changed:** `src/ipcvgame/scene/renderer.py`: blobs through `draw_blob()`; bursts only on "shield" (at a hit the splash is the effect, at the edge the blob leaves), drawn after the shields: drawn before, the fire ring covered most drops on `shield.mp4`. `CONTROLS`: "PUNCH: PAINT BLOB". `Renderer.bolt_effect()` removed. `src/ipcvgame/scene/instructions.py`: `MOVE_TEXT["punch"]` "FIRES A PAINT BLOB".
 
@@ -2132,11 +2131,96 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 
 #### Step 5 · Docs
 
-**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (Task 5 owner, 2026-10-29); the follow-up for `assets/beam/`. `docs/limitations.md`: "Depth is calibrated, but no game rule uses it" (the line-up in the calibration stays for now). Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.
+**Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (2026-10-29); the follow-up for `assets/beam/`. `docs/limitations.md`: "Depth is estimated, but no game rule uses it" (the line-up in the calibration stays for now). Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.
+
+## Final smash: an orb grabbed by hand unlocks the beam
+
+The fifth feature built from the backlog (feature 1 there, the "Final Smash Extra Feature:" commits), on 2026-10-29. Each step names the files it touched. The full design, a paint rain on the opponent that lasts until the caster blinks, was cut short for a playtest; what was built ends in the interim below, which is the final version. The rest of the design is in [limitations.md](limitations.md), "Future improvements".
+
+### Plan
+
+**What.** The major attack becomes a final smash, like the Smash Ball in Smash Bros: players first collect a paint orb, and only a player holding it can fire. Before, hands up fired the magic beam at any time.
+
+**Decisions (2026-10-29).**
+
+- **The orb:** one at a time on the field; it enters from the top and bounces like a consumable in a band at shoulder and head height, so it drifts past both players. First four parts collected by a punch touching them; then (interim 2) one orb, grabbed by a hand.
+- **Full orb:** the player's body glows in their team colour with "RAISE YOUR ARMS" on the chest (instead of an orb above the head, which collided with the name tag and hat), and hands up fires. Firing empties both players' orbs.
+- **Blinks** for the rain's end: a per-player detector with a baseline, hysteresis, a duration and a looking-down filter; for the last, a new field `Face.pitch` in `core/types.py`.
+- **One player:** key `n` fills P1's orb, so the attack can be tried alone.
+
+**Steps.**
+
+1. Orb parts (game logic).
+2. Orb look (renderer).
+3. Head pitch and blinks.
+4. Interim: the full orb unlocks the beam.
+5. Interim 2: one orb, grabbed by hand.
+
+### Changes
+
+#### Step 1 · Orb parts
+
+**Changed:** `src/ipcvgame/interaction/game.py`
+- `OrbPart(x, y, vx, vy, age)` and `Game.orb_part` (at most one). `_advance_orb()`: a part spawns `orb_every_s` after the last was collected or the round started, just above the top at a random x in the play area, moving at `orb_speed_w` at a random angle in `orb_angle_deg` below the horizontal; it is reflected at the sides (`orb_margin_w` in) and at the band `orb_band_h`, whose top only reflects it once it is inside.
+- `_collect_orb()`: a punch whose hand (`punching_hand()`) is within `orb_reach_sw` shoulder widths of the part's edge collects it; the punch fires its blob as usual. `GamePlayer.orb` counts the parts (0 to `orb_parts`); a full orb collects no more. A new round clears the orbs and the part.
+- `test_orb(pid)`: fills pid's orb while playing (key `n`). `--until game`: the part and its band (dashed), "orb n/4" on each label. CSV: `game_p<pid>_orb`, `game_orb_x`, `game_orb_y`.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: `Pipeline.test_orb()`. `src/ipcvgame/app/main.py`: key `n`. `README.md`: the key.
+
+**Changed:** `configs/default.yaml`, `game:` section: `orb_every_s` [5, 8] s, `orb_parts` 4, `orb_r_h` 0.035, `orb_band_h` [0.25, 0.5] (on `session.mp4` the punching hands were at 0.36–0.49 of the frame height, 5th–95th percentile of 16 punches; the shoulders at 0.37–0.46, the noses at 0.25–0.32), `orb_margin_w`, `orb_speed_w` 0.12, `orb_angle_deg` [15, 40], `orb_reach_sw` 0.5, `orb_seed`.
+
+**Changed:** `tests/test_game.py`: one part at a time from the top, bouncing inside its band, collected by one player's punch, a missing punch, the next part after `orb_every_s`, a full orb collecting no more, key `n` only while playing, cleared by a new round.
+
+**On the clips** (`--no-intro`, `orb_seed: 1`): the first part came at ~5.5 s and stayed in its band; on `session.mp4` one punch collected a part in 110 s (at 19.4 s, the hand ~60 px from its centre). The game stage stayed at ~0.1 ms per frame.
+
+#### Step 2 · Orb look
+
+**Added:** `src/ipcvgame/scene/orb.py`
+- `draw_part()`: a ball split into red and blue by an S-curve (a yin-yang), so it belongs to no team yet, turning at `orb_spin_hz`; a pale halo pulsing at `orb_pulse_hz`, a dark rim and a shine.
+- `draw_pop()`: where a part was collected, a ring and drops in the collector's colour.
+- `draw_slots()`: one small ball per part on the health bar's label row, at its inner end, filled in the team colour, pulsing once full.
+- `draw_body_glow()`: the body paint's `body_mask()` plus a head disc (`glow_head_fw` face widths), at `glow_scale` of the resolution, blurred over `glow_reach_sw` shoulder widths; the blur doubled and capped, so the halo is strongest at the body's edge; the team colour moved `glow_white` towards white; pulsing between `glow_alpha` at `glow_hz`, `glow_inside` of it on the body.
+
+**Changed:** `src/ipcvgame/interaction/game.py`: `Game.orbs_taken`, this frame's collections as (pid, x, y), for the pop.
+
+**Changed:** `src/ipcvgame/scene/renderer.py`: the part and pops in `draw_game()`; the glow after the body paint for a player with a full orb (timed, `render_p<pid>_glow_ms`); "RAISE YOUR ARMS" on the shoulder line (beside the head it ran into the name tag, hat and crown); "ORB n/4" or "FULL ORB!" as a pick-up text (the pop-ups keep a colour now, not a drink kind); the slots by each health bar.
+
+**Changed:** `configs/default.yaml`, `render:` section: `orb_spin_hz`, `orb_halo`, `orb_pulse_hz`, `orb_pop_s`, `orb_pop_ring`, `orb_pop_drops`, `glow_white`, `glow_head_fw`, `glow_reach_sw`, `glow_alpha`, `glow_hz`, `glow_inside`, `glow_scale`, `raise_text_scale`.
+
+**Added:** `tests/test_orb.py`: the part in both colours and turning, the pop growing and vanishing, slots filled in order, the glow brightest just outside the body. **Changed:** `tests/test_renderer.py`: the part drawn, the pop text, the slots, the glow only with a full orb and its time logged.
+
+**On the clips** (key `n` in a script): the first glow (pure team colour, reach 0.3 sw) hardly showed on a red shirt at ~2.3 m on `session.mp4`; a lighter colour and reach 0.5 fixed it. The glow costs 1.8 ms median per player at ~2.3 m and 4.3 ms median close up (`shield.mp4`, where the body is most of the frame). Filling its colour layer with a NumPy broadcast took another 3.4 ms; `cv2.rectangle` fills it.
+
+#### Step 3 · Head pitch and blinks
+
+**Changed:** `src/ipcvgame/core/types.py`: `Face.pitch` (rad, > 0 = chin up; 0 when unknown), the last field. `src/ipcvgame/face/tracker.py` fills it from its smoothed pitch.
+
+**Changed:** `src/ipcvgame/interaction/gestures.py`
+- `blink_score()`: the mean of `eyeBlinkLeft` and `eyeBlinkRight`; None without a current MediaPipe result.
+- `BlinkDetector`, one per face: the baseline is the median score over `blink_baseline_s` (none before `blink_min_samples`); closed above baseline + `blink_on` and above `blink_min_score`, open again under baseline + `blink_off`; a closure of `blink_min_s`–`blink_max_s` is a `blink` (sent when the eyes open), a longer one sends `eyes_closed` once; looking down (pitch under `blink_down_deg`) starts no closure and cancels one; no score drops it.
+- `GestureRecognizer.update(motion, t, faces)` runs the detectors; their events are outside the one-action-at-a-time rule. CSV: `gest_p<pid>_blink_base`, `gest_p<pid>_eyes_closed`.
+
+**Changed:** `src/ipcvgame/app/pipeline.py`: the faces go to the gesture stage. `src/ipcvgame/interaction/game.py`: only `GESTURES` are moves, so a blink never shows "FACE THE CAMERA".
+
+**Changed:** `configs/default.yaml`, `gestures:` section: `blink_baseline_s` 3, `blink_min_samples` 5, `blink_on` 0.35, `blink_min_score` 0.5, `blink_off` 0.15, `blink_min_s` 0.06, `blink_max_s` 0.5, `blink_down_deg` −20; the design's values, not tuned (no clip has deliberate blinks).
+
+**Changed:** `tests/test_gestures.py`: blinks, baselines, low scores, hysteresis, eyes kept closed, a long gap, a one-frame glitch, looking down, no score, no baseline yet, the recognizer. `tests/test_face.py`: `Face.pitch`. `tests/test_game.py`: blinks are not moves.
+
+**On the clips:** at play distance the score hardly moves; the design's values give one blink in 110 s on `session.mp4` (see [limitations.md](limitations.md), "Blinks").
+
+#### Step 4 · Interim: the full orb unlocks the beam
+
+For a playtest, the rain was postponed. **Changed:** `src/ipcvgame/interaction/game.py`: hands up fires the magic beam only with a full orb (otherwise the action `no_orb`, nothing fires); firing it empties every player's orb and removes the part on the field, and the next part comes `orb_every_s` later (`_use_orb()`). `src/ipcvgame/scene/renderer.py`: `CONTROLS` "FULL ORB + HANDS UP: BEAM". `src/ipcvgame/scene/instructions.py`: `MOVE_TEXT["hands_up"]` "BEAM, WITH A FULL ORB". `tests/test_game.py`: the beam only with a full orb, both orbs emptied, solo with key `n`; the earlier beam tests fill the orb first.
+
+#### Step 5 · Interim 2: one orb, grabbed by hand
+
+The punch rarely hit the part, and four parts took too long. **Changed:** `src/ipcvgame/interaction/game.py`: `_grab_orb()`: either wrist within `orb_reach_sw` of the orb's edge (`_hand_on_orb()`) for `orb_grab_s`, with gaps up to `hold_gap_s`, grabs it (`_take_orb()`); a punch no longer collects; no orb spawns while someone holds a full one, so one is in the game at a time. `configs/default.yaml`: `orb_parts` 1 (the parts code stays), `orb_r_h` 0.045, `orb_grab_s` 0.1. `tests/test_game.py`, `tests/test_renderer.py`: grabbing by touch, either hand, out of reach, one orb at a time, a punch no longer collecting.
+
+**On the clips:** on `session.mp4` the right-hand player grabbed the orb at 9.6 s and fired the beam, the other at 78.7 s; on `shield.mp4` the player grabbed it by accident at 12.7 s ([limitations.md](limitations.md), "The orb can be grabbed by accident").
 
 ## Arena and stage guards: the room reacts to the fight, failing modules do not stop the game
 
-Built in a cloud session on 2026-10-31 after a check of the current state against the brief's technical requirements, handed over as a patch (`arena-and-guards.patch`, two commits on top of `5672156`) and applied by the Task 5 owner on 2026-11-01. Not from the backlog in `docs/extra_features.md`. It touches only Task 5 code (`scene/`, `app/`), plus config, tests and docs; each step names the files it touched.
+Built in a cloud session on 2026-10-31 after a check of the current state against the brief's technical requirements, handed over as a patch (`arena-and-guards.patch`, two commits on top of `5672156`) and applied on 2026-11-01. Not from the backlog. Each step names the files it touched.
 
 ### Plan
 
@@ -2157,18 +2241,18 @@ Built in a cloud session on 2026-10-31 after a check of the current state agains
 
 **Steps.** Each step gets an entry under Changes below.
 
-1. Wall paint (Task 5).
-2. Lighting during a beam (Task 5).
-3. Impact shake (Task 5).
-4. The arena in the renderer (Task 5).
-5. Stage guards and stub fallback (Task 5).
+1. Wall paint.
+2. Lighting during a beam.
+3. Impact shake.
+4. The arena in the renderer.
+5. Stage guards and stub fallback.
 6. Docs.
 
 ### Changes
 
 #### Step 1 · Wall paint
 
-**Added:** `src/ipcvgame/scene/arena.py` (Task 5)
+**Added:** `src/ipcvgame/scene/arena.py`
 - `Arena(cfg)`, one in the renderer. `update(state, game, small_shape)` reads this frame's game state; `draw(small, state, game)` puts the wall onto the small camera image in place.
 - New bolt ends: an end is new when its key `(round(x, 1), round(y, 1), owner_id, direction, reason)` was not in the previous frame's set. By `BoltEnd.reason`:
   - "edge": a splash of `arena_edge_r_h` of the frame height, centred `arena_edge_inset_r` radii inside the edge it left, so the blob is on screen and its forward spikes run off;
@@ -2214,7 +2298,7 @@ Built in a cloud session on 2026-10-31 after a check of the current state agains
 
 #### Step 5 · Stage guards and stub fallback
 
-**Changed:** `src/ipcvgame/app/pipeline.py` (Task 5)
+**Changed:** `src/ipcvgame/app/pipeline.py`
 - `_guard(stage, t, fn, empty)`: with `pipeline.catch_errors`, runs the stage; on any `Exception` it adds the stage to `failed`, prints the traceback the first time per stage (then one line at the start of each new run of failures) and returns the stage's empty output: pose `[]`, identity `{}`, motion `{}`, face `{}`, gestures `[]`; the game skips `update()` and `_calibrate_identity()` for the frame (wrapped together); a failing render shows the plain frame.
 - `FALLBACK`: identity → "zones", motion → "stub", face → "stub". A stage that has failed on every frame for `pipeline.fallback_after_s` (by `Frame.t`) is rebuilt with that backend (`_fall_back()`, recorded in `fallen_back`); if the stub cannot be built either, the old module stays.
 - `debug_module` is a property, so a swapped module is picked up; the rendering moved into `_render()` (the `--until` view is unchanged).
@@ -2232,7 +2316,7 @@ The guards cover errors while running, not at startup: a wrong model path still 
 
 ## Arena and stage guards: Modifications
 
-Changes by the Task 5 owner on 2026-11-01, after the first webcam run with the arena.
+Changes on 2026-11-01, after the first webcam run with the arena.
 
 ### No beam stripe on the wall
 
@@ -2240,7 +2324,7 @@ The beam painted a stripe along its path that stayed for the round; on the webca
 
 ### Person mask from MediaPipe's Selfie Segmenter
 
-On the webcam the wall paint beside the players was cut along straight lines with bare wall between it and the body: the keypoint mask (`person_mask()`) is a set of capsules around the bones, wider than a thin arm and with no idea of the real outline. **Decision (Task 5 owner):** a real silhouette from MediaPipe's Selfie Segmenter (mediapipe is already a dependency; one 250 KB model file), the keypoint mask kept as a fallback.
+On the webcam the wall paint beside the players was cut along straight lines with bare wall between it and the body: the keypoint mask (`person_mask()`) is a set of capsules around the bones, wider than a thin arm and with no idea of the real outline. **Decision:** a real silhouette from MediaPipe's Selfie Segmenter (mediapipe is already a dependency; one 250 KB model file), the keypoint mask kept as a fallback.
 
 **Added:** `src/ipcvgame/scene/segment.py`: `PersonSegmenter(model_path, ramp)`, the landscape Selfie Segmenter (256 x 144 input) in IMAGE mode; one soft person mask for everyone in view, at the input image's size, ramped from 0 at `ramp[0]` to 1 at `ramp[1]` so the soft band at the outline gets narrower. The mask is copied out of MediaPipe's result: `numpy_view()` points into a buffer that is freed with the result, and a first version that kept the view read back garbage (values up to ~10^31).
 
@@ -2251,3 +2335,13 @@ On the webcam the wall paint beside the players was cut along straight lines wit
 **Changed:** `tests/test_arena.py`: the keypoint-mask tests set `arena_segmenter: null` (their drawn frames have no real people); a fake segmenter's mask keeps the paint off; a missing model falls back to the keypoints; the segmenter's result stays unchanged after later calls (skipped without the model file).
 
 **On `session.mp4`** (`--no-intro`): at 100 s the paint now meets the right-hand player's raised arm, shoulder and hair; the straight cut and the bare strip are gone. The segmenter alone takes 2.5–4 ms at 640 x 360 (feeding it 256 x 144 and scaling the mask up ourselves was no faster). The arena costs 0.34 ms median with a clean wall, 4.6 ms (95th percentile 5.4 ms) with wall paint and 6.8 ms during a beam, against 1.4 ms with the keypoint mask; `ms_render` 11.0 ms median, a frame 35.8 ms. `docs/limitations.md`, "Scene", is rewritten for the segmenter.
+
+## Performance: the shield ring no longer slows the game (2026-11-01)
+
+**Seen.** On `shield.mp4` the render stage took 57 ms median on frames with the shield up and 3.7 ms without (~51 ms on 2026-10-29), so the game dropped to ~10 FPS while a shield was up. A profile of the clip: 7,629 `cv2.resize` calls in 195 ring draws (~39 per frame), 7.5 s of the 10 s spent in the ring, and 2.6 s in `blend_rgba()` (~6 ms a call).
+
+**Cause.** `FireRing.draw()` kept all the ring's frames resized to the exact pixel height it needed. The height follows the player's shoulder width, which changes by a pixel or two every frame, so the cache missed nearly every frame and all ~40 frames were resized again. `blend_rgba()` blended in three-channel float maths in NumPy, slow for a ring that covers most of a close-up player.
+
+**Changed:** `src/ipcvgame/scene/fire_ring.py`: `draw()` resizes only the frame shown; the cache is gone. `src/ipcvgame/scene/draw.py`: `blend_rgba()` blends with one `cv2.blendLinear` call and the sprite's alpha as the weight (also used for the beam and the drinks).
+
+**On `shield.mp4`** (`--no-intro`): 9.8 ms median (95th percentile 14 ms) on frames with the shield up, 3.3 ms without; the ring looks the same.

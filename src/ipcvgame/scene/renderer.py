@@ -20,7 +20,7 @@ purple shield defense), a drink held at a mouth in front of the face, a
 pick-up text rising beside the drinker's head, and the running attack and
 defense buffs as icons with a time bar above each health bar.
 
-Orb parts for the final smash (docs/extra_features.md §1; drawing in
+Orb parts for the final smash (docs/merge_log.md, "Final smash"; drawing in
 scene/orb.py): the bouncing part in both team colours, a pop and "ORB n/4"
 where a punch collected it, the four orb slots on each health bar's label
 row, and a player whose orb is full glowing in their team colour, with

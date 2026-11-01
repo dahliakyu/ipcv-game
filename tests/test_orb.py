@@ -1,4 +1,4 @@
-"""The final smash's orb (scene/orb.py; extra_features.md §1): part, pop, slots, body glow."""
+"""The final smash's orb (scene/orb.py; merge_log.md, "Final smash"): part, pop, slots, body glow."""
 
 import numpy as np
 

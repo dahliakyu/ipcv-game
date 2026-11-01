@@ -23,7 +23,7 @@ the player deals and defense cuts the damage they take, each for
 drink_buff_s. A second drink of the same kind replaces the value and
 restarts the time.
 
-Orb (final smash, docs/extra_features.md §1): while playing, an orb part
+Orb (final smash, docs/merge_log.md, "Final smash"): while playing, an orb part
 enters from the top of the frame and bounces in a band at shoulder and
 head height (_advance_orb()). A hand that touches it grabs it
 (_grab_orb()); orb_parts of them make a player's full orb (1 for now: one

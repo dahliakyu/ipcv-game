@@ -25,9 +25,6 @@ filterpy==1.4.5                # Kalman filters (Tasks 2, 3)
 # are not needed. Its weights come from Hugging Face (README).
 lap==0.5.13                    # Ultralytics BoT-SORT matching; else auto-installed at runtime
 
-# --- game / rendering ---
-pygame-ce==2.5.8               # final game renderer and sound
-
 # --- config, analysis, dev ---
 PyYAML==6.0.3
 pandas==3.0.6                  # CSV log analysis for the report

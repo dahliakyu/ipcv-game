@@ -342,7 +342,7 @@ def test_log_fields():
     assert row["gest_p1_events"] == "punch"
 
 
-# --- Blinks (final smash, extra_features.md §1) ------------------------------
+# --- Blinks (final smash, merge_log.md, "Final smash") ------------------------------
 
 def eyes(score: float | None, pitch_deg: float = 0.0, valid: bool = True):
     """A face with both eye scores at `score` (None: no current MediaPipe result)."""

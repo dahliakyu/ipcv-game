@@ -70,7 +70,9 @@ def draw_lines(canvas: np.ndarray, lines: list[str], org: tuple[int, int] = (10,
 def blend_rgba(canvas: np.ndarray, sprite: np.ndarray, x0: float, y0: float,
                alpha: float = 1.0) -> None:
     """Alpha-blend a BGRA sprite onto a BGR canvas in place, its top-left
-    corner at (x0, y0) px; the parts outside the canvas are clipped."""
+    corner at (x0, y0) px; the parts outside the canvas are clipped. One
+    cv2.blendLinear call: the same blend in NumPy float maths took ~6 ms
+    for a shield ring close to the camera."""
     h, w = sprite.shape[:2]
     x0, y0 = int(round(x0)), int(round(y0))
     cx0, cy0 = max(x0, 0), max(y0, 0)
@@ -78,9 +80,9 @@ def blend_rgba(canvas: np.ndarray, sprite: np.ndarray, x0: float, y0: float,
     if cx0 >= cx1 or cy0 >= cy1:
         return
     s = sprite[cy0 - y0:cy1 - y0, cx0 - x0:cx1 - x0]
-    a = s[:, :, 3:4].astype(np.float32) * (alpha / 255.0)
+    a = s[:, :, 3].astype(np.float32) * np.float32(alpha / 255.0)
     roi = canvas[cy0:cy1, cx0:cx1]
-    roi[:] = (s[:, :, :3] * a + roi * (1.0 - a)).astype(np.uint8)
+    roi[:] = cv2.blendLinear(np.ascontiguousarray(s[:, :, :3]), roi, a, 1.0 - a)
 
 
 def hue_of(bgr: tuple[int, int, int]) -> int:

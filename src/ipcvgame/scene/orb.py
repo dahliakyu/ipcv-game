@@ -1,4 +1,4 @@
-"""Task 5 — the final smash's orb (docs/extra_features.md §1).
+"""Task 5 — the final smash's orb (docs/merge_log.md, "Final smash").
 
 The bouncing orb part (draw_part()), the pop where a punch collected it
 (draw_pop()), the four orb slots by each health bar (draw_slots()) and the

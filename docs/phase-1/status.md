@@ -164,8 +164,7 @@ pytest                                        # before every PR
 - [x] Head pose with `solvePnP` (5 YuNet landmarks, canonical 3D head): fills `Face.yaw`; forehead, hat and `above_head` are 3D points on the head, so they follow tilt and turn.
 - [x] MediaPipe Face Landmarker on the face, one player per frame in turn: head rotation for the 3D anchors (reliable also for strong up/down tilt) and blendshape scores in the new `Face.blendshapes` (`jawOpen`, `eyeBlinkLeft`/`Right`, `mouthSmileLeft`/`Right`, …).
 - [x] Face effects (`docs/merge_log.md`, "Face effects", 2026-10-28): cheek anchors; the hat band and war paint in the team colour; on a hit, the hat flies off and the face flashes; a cheek bulge (`cv2.remap` warp) when a player drinks one of the consumables, and a gentle one while a drink is at the mouth (`docs/merge_log.md`, "Consumables"). The name tag, crown and dizzy stars above the head are drawn by the renderer.
-- [ ] Webcam check of the face effects (`docs/extra_features.md`, follow-ups).
-- [ ] Next: game features on top of the face stage, see `docs/extra_features.md`.
+- [ ] Webcam check of the face effects (`docs/limitations.md`, "Checks still open").
 
 ### Task 2: Pose and motion — owner: ____________
 
@@ -229,9 +228,10 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 - [x] `log_fields`: `game_p<pid>_health`, `_shield`, `_actions`, `game_bolts`, `game_beams`, `game_winner`.
 - [ ] Balance on the webcam: damage, speeds and the shield time over a few real rounds.
 - [x] Consumables (`docs/merge_log.md`, "Consumables", 2026-10-28): drinks fall while playing; an open mouth catches one and closing it drinks it, for +HP or a 10 s attack or defense buff, bigger drinks giving more. Logged as `game_drinks`, `game_p<pid>_mouth_open`, `_holding`, `_attack`, `_defense`.
-- [ ] Webcam check of the drinks, alone and with two (`docs/extra_features.md`, follow-ups).
+- [ ] Webcam check of the drinks, alone and with two (`docs/limitations.md`, "Checks still open").
 - [x] Normal attack as splashed paint (`docs/merge_log.md`, "Normal attack", 2026-10-29): one splash per hit at its place on the torso (`PaintSplat`, `torso_corners()`), the end reason of every blob (`BoltEnd.reason`), key `b` for a test blob at P1.
-- [ ] Both players attacking at once (`docs/extra_features.md`, feature 2); the final smash is feature 1. The dodge by stepping forward and the aiming of the normal attack were dropped (2026-10-29).
+- [x] Final smash (`docs/merge_log.md`, "Final smash", 2026-10-29): one orb bounces through the frame; a hand grabs it, the player glows, and hands up fires the beam.
+- [ ] Not built (`docs/limitations.md`, "Future improvements"): the final smash's paint rain ending at a blink, both players attacking at once, the dodge by stepping forward. The aiming of the normal attack was dropped (2026-10-29).
 
 ### Task 5: Integration — owner: @el
 

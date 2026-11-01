@@ -1254,7 +1254,7 @@ def test_mouth_closing_as_time_runs_out_still_drinks():
     assert d not in g.drinks and [x.pid for x in g.drunk] == [1]
 
 
-# --- Orb parts (final smash, extra_features.md §1) ---------------------------
+# --- Orb parts (final smash, merge_log.md, "Final smash") ---------------------------
 
 NO_ORB = {"orb_every_s": [1e9, 1e9]}
 

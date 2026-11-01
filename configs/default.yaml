@@ -482,7 +482,7 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   # modifications). 0.3 s is ~9 frames at 30 FPS; lowering and raising the
   # arms on purpose takes longer.
   release_s: 0.3
-  # --- Blinks (BlinkDetector; final smash, docs/extra_features.md §1): the
+  # --- Blinks (BlinkDetector; final smash, docs/merge_log.md, "Final smash"): the
   # caster's first blink ends the paint rain. Score = mean of MediaPipe's
   # eyeBlinkLeft / Right (Face.blendshapes). Values from the design, NOT
   # YET TUNED on deliberate blinks: no clip has them. On session.mp4
@@ -703,7 +703,7 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   # Seed of the drinks' random generator: a number replays the same drinks
   # every run (tests, clip comparisons); null = different every game.
   drink_seed: null
-  # --- Orb for the final smash (docs/extra_features.md §1). Only while
+  # --- Orb for the final smash (docs/merge_log.md, "Final smash"). Only while
   # playing, one orb part at a time: the next comes this long after the
   # last was grabbed or the round started (random in the range, s), and
   # none while someone holds a full orb.
@@ -996,8 +996,8 @@ render:
   # buff_fade_s, so the player sees it is about to end.
   buff_icon_h: 0.045
   buff_fade_s: 2.0
-  # --- Orb parts for the final smash (scene/orb.py; docs/extra_features.md
-  # §1). The part (its radius is game.orb_r_h) is split into both team
+  # --- Orb for the final smash (scene/orb.py; docs/merge_log.md, "Final
+  # smash"). The part (its radius is game.orb_r_h) is split into both team
   # colours, as it belongs to no one yet, and turns this many times a
   # second: slow enough to see the two colours, fast enough to look alive.
   orb_spin_hz: 0.5
