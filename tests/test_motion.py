@@ -35,15 +35,16 @@ def test_first_detection_snaps_in_place(cfg):
 
 
 def test_ema_moves_by_time_constant(cfg):
-    f = MotionFilter(cfg)
+    f = MotionFilter({**cfg, "backend": "ema"})
     f.update(player(0.0), 0.0)
     m = f.update(player(10.0), cfg["tau"])[1]
     # After one time constant the EMA has covered 1 - 1/e of the step.
     np.testing.assert_allclose(m.kpts[:, 0], 10.0 * (1 - math.exp(-1)))
 
 
-def test_missing_keypoint_holds_then_invalid_then_snaps(cfg):
-    f = MotionFilter(cfg)
+@pytest.mark.parametrize("backend", ["ema", "oneeuro"])
+def test_missing_keypoint_holds_then_invalid_then_snaps(cfg, backend):
+    f = MotionFilter({**cfg, "backend": backend})
     low = np.full(sk.K, 0.9)
     low[sk.L_WRIST] = 0.1
     hold = cfg["hold_s"]
@@ -153,3 +154,22 @@ def test_log_counts_held_keypoints(cfg):
     motion = f.update(body(conf=low), 0.05)
     row = f.log_fields(state_of(motion))
     assert row["motion_p1_valid"] == sk.K and row["motion_p1_held"] == 2
+
+
+def run(f: MotionFilter, xs, dt: float = 1 / 30) -> np.ndarray:
+    """Feed x positions at a fixed frame rate; returns the smoothed x of the nose."""
+    return np.array([f.update(player(x), i * dt)[1].kpts[sk.NOSE, 0] for i, x in enumerate(xs)])
+
+
+def test_oneeuro_smooths_a_still_keypoint_more_than_the_ema(cfg):
+    shake = 100.0 + np.where(np.arange(60) % 2 == 0, 1.0, -1.0)       # +-1 px noise, standing still
+    ema = run(MotionFilter({**cfg, "backend": "ema"}), shake)[30:]
+    one = run(MotionFilter({**cfg, "backend": "oneeuro"}), shake)[30:]
+    assert np.std(one) < 0.5 * np.std(ema)
+
+
+def test_oneeuro_lags_less_than_the_ema_on_a_fast_move(cfg):
+    ramp = 1000.0 / 30 * np.arange(60)                                  # 1000 px/s, a punch at 2 m
+    lag_ema = (ramp - run(MotionFilter({**cfg, "backend": "ema"}), ramp))[-1]
+    lag_one = (ramp - run(MotionFilter({**cfg, "backend": "oneeuro"}), ramp))[-1]
+    assert 0 < lag_one < lag_ema

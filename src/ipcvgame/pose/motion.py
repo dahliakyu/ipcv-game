@@ -7,6 +7,11 @@ Task 4). Per player:
 - keypoints under ``kpt_conf_threshold`` count as missing this frame;
 - a missing keypoint keeps its last position, and stays valid, for ``hold_s``;
 - all positions are smoothed by an EMA with time constant ``tau``;
+  or, with backend "oneeuro", by a One Euro filter (core/filters.py, Casiez
+  et al. 2012): an EMA whose cut-off frequency rises with the keypoint's
+  speed (``oneeuro_min_cutoff`` + ``oneeuro_beta`` * speed in px/s), so a
+  still keypoint is smoothed strongly (its movement is noise) and a fast
+  one follows the detection closely (little lag on a punch);
 - a keypoint that comes back after more than ``hold_s`` jumps to the detection
   instead of sliding in from a stale spot;
 - a frame without a detection resets the player.
@@ -36,7 +41,7 @@ import cv2
 import numpy as np
 
 from ipcvgame.core import skeleton as sk
-from ipcvgame.core.filters import EMA
+from ipcvgame.core.filters import EMA, OneEuro
 from ipcvgame.core.types import FrameState, Motion, Player
 from ipcvgame.scene.draw import draw_skeleton, draw_text, player_color, pt
 
@@ -44,8 +49,8 @@ from ipcvgame.scene.draw import draw_skeleton, draw_text, player_color, pt
 class _PlayerState:
     """One player's smoothing state (``KeypointTracker`` in bodypose.py)."""
 
-    def __init__(self, tau: float):
-        self.ema = EMA(tau)
+    def __init__(self, smoother: EMA | OneEuro):
+        self.smoother = smoother
         # Time each keypoint was last above the confidence threshold; -inf =
         # never, so the first good detection snaps in place.
         self.last_good = np.full(sk.K, -np.inf)
@@ -60,13 +65,21 @@ class MotionFilter:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.backend = cfg.get("backend", "ema")
-        if self.backend not in ("ema", "stub"):
+        if self.backend not in ("ema", "oneeuro", "stub"):
             raise ValueError(f"Unknown motion backend {self.backend!r}")
         self.kpt_conf_threshold = float(cfg["kpt_conf_threshold"])
         self.tau = float(cfg["tau"])
         self.hold_s = float(cfg["hold_s"])
         self.min_shoulder_px = float(cfg["min_shoulder_px"])
+        if self.backend == "oneeuro":
+            self.oneeuro = (float(cfg["oneeuro_min_cutoff"]), float(cfg["oneeuro_beta"]),
+                            float(cfg["oneeuro_d_cutoff"]))
         self._state: dict[int, _PlayerState] = {}
+
+    def _new_smoother(self) -> EMA | OneEuro:
+        if self.backend == "oneeuro":
+            return OneEuro(*self.oneeuro)
+        return EMA(self.tau)
 
     def update(self, players: dict[int, Player], t: float) -> dict[int, Motion]:
         out: dict[int, Motion] = {}
@@ -74,12 +87,14 @@ class MotionFilter:
             if p.reentered:
                 self.reset(pid)
             if p.det is None:
-                if self.backend == "ema":
+                if self.backend != "stub":
                     self.reset(pid)
                 continue
-            st = self._state.setdefault(pid, _PlayerState(self.tau))
+            st = self._state.get(pid)
+            if st is None:
+                st = self._state[pid] = _PlayerState(self._new_smoother())
             good = p.det.conf >= self.kpt_conf_threshold
-            if self.backend == "ema":
+            if self.backend != "stub":
                 kpts, valid, snap = self._smooth(st, p.det.kpts, good, t)
             else:
                 kpts, valid, snap = p.det.kpts.copy(), good, np.zeros(sk.K, bool)
@@ -109,9 +124,17 @@ class MotionFilter:
         snap = good & (t - st.last_good > self.hold_s)
         st.last_good[good] = t
         # Missing points hold their last position (never blended with a bad guess).
-        held = st.ema.x if st.ema.x is not None else raw
+        f = st.smoother
+        held = f.x if f.x is not None else raw
         target = np.where(good[:, None], raw, held)
-        kpts = st.ema(target, t, snap)
+        if isinstance(f, EMA):
+            kpts = f(target, t, snap)
+        else:
+            kpts = f(target, t)
+            if snap.any():          # jump back into place, with no speed from the jump
+                f.x[snap] = target[snap]
+                f.dx[snap] = 0.0
+                kpts[snap] = target[snap]
         valid = t - st.last_good <= self.hold_s
         return kpts, valid, snap
 

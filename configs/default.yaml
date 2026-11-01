@@ -161,8 +161,14 @@ identity:                 # Task 3 — Colour Clash identity (bodypose.py Player
 
 motion:                   # Task 2 — keypoint smoothing (Colour Clash KeypointTracker)
   # "ema" = the smoothing from bodypose.py: confidence gate, hold, EMA, snap back.
+  # "oneeuro" = the same, with a One Euro filter instead of the EMA: smooths
+  # still keypoints more and fast ones less (motion.py, oneeuro_* below).
   # "stub" = phase-1 pass-through (no smoothing, no hold).
-  backend: ema
+  # oneeuro since 2026-11-01: on the clips it cut still jitter by 52 % (EMA
+  # 35 %) with half the delay in fast moves, and it keeps smoothing at the CPU
+  # demo's 7-11 FPS, where the EMA's weight per frame is almost 1 (merge_log,
+  # "Evaluation tools and the team clips").
+  backend: oneeuro
   # Keypoints under this confidence count as missing this frame. 0.35 is
   # CONF_T in bodypose.py, which the gesture thresholds were tuned with.
   kpt_conf_threshold: 0.35
@@ -175,6 +181,20 @@ motion:                   # Task 2 — keypoint smoothing (Colour Clash Keypoint
   # in fast arm moves; after that the point is invalid and snaps back to the
   # detection when it returns.
   hold_s: 0.33
+  # One Euro filter (backend "oneeuro"); cut-off = min_cutoff + beta * speed.
+  # Values from a sweep on the clips (min_cutoff 0.5/1/2 Hz x beta
+  # 0.003/0.01/0.03; tools/eval_motion.py, merge_log "Evaluation tools and the
+  # team clips"): 0.5 / 0.03 cut still jitter by 52 % (EMA: 35 %) and halved
+  # the delay in fast moves (15 vs 28.5 ms). Lower beta smooths still poses
+  # even more but lags more than the EMA in punches.
+  # min_cutoff (Hz): the cut-off for a still keypoint (the EMA above equals a
+  # fixed 1 / (2 pi tau) = 3.3 Hz).
+  oneeuro_min_cutoff: 0.5
+  # beta (Hz per px/s): how fast the cut-off rises with speed. A punch moves
+  # the wrist 2.4-5.2 shoulder widths/s, ~150-400 px/s at 2 m: +5-12 Hz.
+  oneeuro_beta: 0.03
+  # d_cutoff (Hz): smoothing of the speed estimate (the One Euro default).
+  oneeuro_d_cutoff: 1.0
   # Wrist speed signals (l_wrist_speed, r_wrist_speed) are in shoulder
   # widths per second; none while the shoulders are closer than this (px):
   # below 10 px a few pixels of keypoint noise change the unit by tens of
@@ -480,6 +500,17 @@ gestures:                 # Task 4 — Colour Clash rules -> events
   # PUNCH_HOLD_S). It bridges frames where the arm briefly fails the rule, so
   # one punch gives one event; punches closer together than this count as one.
   punch_hold_s: 0.5
+  # Punch: no punch while its wrist rose more than this (shoulder widths)
+  # over the last punch_rise_window_s; 0 = off. Tried and switched off
+  # (merge_log, "Evaluation tools and the team clips"): at 0.8 it stopped arm
+  # swings into hands up from firing punches (beams 14 -> 18 of 18), but a
+  # player who punches upward from the hip lost 8 of 25 punches; real punches
+  # rose 0.3-1.28 sw and false swings 0.89-1.55 sw, so no value separates
+  # them (punch recall 88 % off, 73 % at 0.8).
+  punch_max_rise_sw: 0.0
+  # The time over which the wrist's rise is measured (when the check is on);
+  # 0.2 s is about the time an arm takes to swing from the hip to shoulder height.
+  punch_rise_window_s: 0.2
   # Hands up and arms crossed stay on until their rule has failed for this
   # long. Without it, a keypoint dropout of a frame or two, or wrists briefly
   # above the frame (after motion.hold_s), ended the gesture and the next

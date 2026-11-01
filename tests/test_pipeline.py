@@ -46,8 +46,8 @@ def test_runs_end_to_end(pipeline, monkeypatch):
 
 
 def test_velocity_uses_frame_time(monkeypatch):
-    # tau = 0 turns the EMA off, so the velocity is the plain finite difference.
-    pipeline = Pipeline(load_config(overrides=NO_MODELS + ["motion.tau=0"]))
+    # The EMA with tau = 0 does not smooth, so the velocity is the plain finite difference.
+    pipeline = Pipeline(load_config(overrides=NO_MODELS + ["motion.backend=ema", "motion.tau=0"]))
     xs = iter([150.0, 160.0])
     monkeypatch.setattr(pipeline.pose, "detect", lambda f: [fake_det(next(xs))])
     pipeline.step(Frame(np.zeros((H, W, 3), np.uint8), 0, 0.0))

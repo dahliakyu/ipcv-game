@@ -1,6 +1,6 @@
 """tools/eval_face.py metrics on a synthetic run log."""
 
-import importlib.util
+import sys
 
 import numpy as np
 import pandas as pd
@@ -8,9 +8,9 @@ import pytest
 
 from ipcvgame.core.config import REPO_ROOT
 
-_spec = importlib.util.spec_from_file_location("eval_face", REPO_ROOT / "tools" / "eval_face.py")
-eval_face = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(eval_face)
+sys.path.insert(0, str(REPO_ROOT / "tools"))   # the eval scripts import tools/eval_common.py
+import eval_common  # noqa: E402
+import eval_face  # noqa: E402
 
 
 def synthetic_log(n: int = 40) -> pd.DataFrame:
@@ -50,6 +50,6 @@ def test_missing_frames_count_as_no_face():
 
 
 def test_markdown_table():
-    table = eval_face.markdown(eval_face.evaluate(synthetic_log(), "synthetic"))
+    table = eval_common.markdown(eval_face.evaluate(synthetic_log(), "synthetic"))
     assert table.splitlines()[0].startswith("| clip | player | frames | detect %")
     assert "| synthetic | P1 | 40 |" in table

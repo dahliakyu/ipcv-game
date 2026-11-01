@@ -253,15 +253,22 @@ def test_arms_crossed_event_name():
     assert names(g.update(motion(*crossed()), 1 / 30)) == ["arms_crossed"]
 
 
+def guard() -> tuple[np.ndarray, np.ndarray]:
+    """Both arms bent, fists at chest height: where a punch starts from."""
+    k, v = punch_left()
+    k[sk.L_ELBOW], k[sk.L_WRIST] = (380, 280), (340, 230)
+    return k, v
+
+
 def test_one_punch_gives_one_event():
     g = recognizer()
     assert names(g.update(motion(*punch_left()), 0.0)) == ["punch"]  # no confirm time
     # Arm fails the rule for a frame, then passes again: same punch.
-    assert g.update(motion(*standing()), 1 / 30) == []
+    assert g.update(motion(*guard()), 1 / 30) == []
     assert g.update(motion(*punch_left()), 2 / 30) == []
     # Off for longer than punch_hold_s: the next punch is a new event.
     hold = load_config()["gestures"]["punch_hold_s"]
-    g.update(motion(*standing()), 2 / 30 + hold + 0.01)
+    g.update(motion(*guard()), 2 / 30 + hold + 0.01)
     assert names(g.update(motion(*punch_left()), 2 / 30 + hold + 0.05)) == ["punch"]
 
 
@@ -340,3 +347,43 @@ def test_log_fields():
     row = g.log_fields(state)
     assert row["gest_p1_punch"] == 1 and row["gest_p1_hands_up"] == 0
     assert row["gest_p1_events"] == "punch"
+
+
+def veto_recognizer() -> GestureRecognizer:
+    return GestureRecognizer({**load_config()["gestures"], "punch_max_rise_sw": 0.8})
+
+
+def test_rising_wrist_veto_is_off_by_default():
+    g = recognizer()
+    k, v = punch_left()
+    low = k.copy()
+    low[sk.L_WRIST, 1] += 1.5 * SW
+    g.update(motion(low, v), 0.0)
+    assert names(g.update(motion(k, v), 0.2)) == ["punch"]
+
+
+def test_rising_wrist_is_no_punch():
+    """With the veto on: an arm swinging up through the punch pose (into
+    hands up) gives no punch; the same pose reached sideways does."""
+    g = veto_recognizer()
+    k, v = punch_left()
+    low = k.copy()
+    low[sk.L_WRIST, 1] += 1.5 * SW                  # 0.2 s earlier: wrist 1.5 sw lower
+    g.update(motion(low, v), 0.0)
+    assert g.update(motion(k, v), 0.2) == []
+    assert g.log_fields(FrameState(None, {}, {}, {}, [], {}))["gest_p1_vetoed"] == 1
+    # The arm stops, held out: the rise is gone, but it is still the same swing.
+    assert g.update(motion(k, v), 0.3) == []
+    assert g.update(motion(k, v), 0.4) == []
+    # Back to the guard, then a sideways punch: a punch again.
+    g.update(motion(*guard()), 0.5)
+    side = k.copy()
+    side[sk.L_WRIST, 0] -= 1.5 * SW
+    g.update(motion(side, v), 1.2)
+    assert names(g.update(motion(k, v), 1.4)) == ["punch"]
+
+    g = veto_recognizer()
+    side = k.copy()
+    side[sk.L_WRIST, 0] -= 1.5 * SW                 # 0.2 s earlier: wrist 1.5 sw further in, same height
+    g.update(motion(side, v), 0.0)
+    assert names(g.update(motion(k, v), 0.2)) == ["punch"]

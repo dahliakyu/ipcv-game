@@ -1,11 +1,13 @@
 import csv
+import shutil
 
 import cv2
 import numpy as np
+import pytest
 
 from ipcvgame.app.main import main
 from ipcvgame.core.types import Frame, FrameState, Player
-from ipcvgame.io.recorder import ClipRecorder, RunLogger, timestamps_path
+from ipcvgame.io.recorder import ClipRecorder, RunLogger, sidecar_fps, timestamps_path
 from ipcvgame.io.source import VideoFile
 
 W, H = 320, 240
@@ -103,3 +105,21 @@ def test_run_logger_column_order(tmp_path):
     assert header.index("ms_pose") < header.index("ms_total") < header.index("p1_status")
     assert header.index("p1_score") < header.index("p2_status")
     assert header[-1] == "face_p2_roll"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+def test_clip_container_gets_the_real_frame_rate(tmp_path):
+    """Frames arriving at 10 fps into a clip opened at 30: on close the
+    container says 10 fps (players show real speed), frames unchanged."""
+    path = tmp_path / "slow.mp4"
+    with ClipRecorder(path, 30, (W, H), mirrored=False) as rec:
+        for i in range(61):
+            rec.write(gradient_frame(i, 5.0 + i * 0.1))
+    cap = cv2.VideoCapture(str(path))
+    # The container's rate is estimated from its duration: within a frame.
+    assert cap.get(cv2.CAP_PROP_FPS) == pytest.approx(10.0, rel=0.03)
+    assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 61
+    cap.release()
+    assert sidecar_fps(path) == pytest.approx(10.0)
+    frames = list(VideoFile(path, mirror=False, video_time="file"))
+    np.testing.assert_allclose(np.diff([f.t for f in frames]), 0.1, atol=1e-5)

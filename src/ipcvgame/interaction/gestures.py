@@ -13,6 +13,15 @@ for ``punch_hold_s`` after its last detection (``punch_until``). One event is
 sent when a gesture turns on (the rising edge), so one punch gives one ``punch``
 event; punches less than ``punch_hold_s`` apart count as one.
 
+Optional, off by default (``punch_max_rise_sw`` 0): no punch from a rising
+arm, i.e. a punch counts only if its wrist rose less than
+``punch_max_rise_sw`` shoulder widths in the last ``punch_rise_window_s``.
+An arm swinging up into hands up (or into the crossed arms) passes through
+the punch pose on its way, and that fired a punch which then blocked the
+intended beam (docs/project_report.md, Task 4); a real punch moves the
+wrist mostly sideways. A vetoed punch pose stays vetoed until the arm leaves
+the punch pose: an arm that swings up and stops held out is still no punch.
+
 One action at a time: after an event the player must return to a normal
 position, with none of the three gestures on, before any gesture can send an
 event again. A gesture that turns on before that sends nothing, so raising
@@ -21,6 +30,8 @@ gestures turn on in the same frame, only the first in ``GESTURES`` sends one.
 """
 
 from __future__ import annotations
+
+from collections import deque
 
 import numpy as np
 
@@ -161,6 +172,11 @@ class _PlayerState:
         # Last time the rule held, so an active gesture survives short dropouts.
         self.last_seen: dict[str, float] = {"hands_up": -np.inf, "arms_crossed": -np.inf}
         self.punch_until = -np.inf  # the punch counts as on until this time
+        # Recent (t, l_wrist_y, r_wrist_y) of the smoothed keypoints (NaN when
+        # not valid), for the rise of the punching wrist.
+        self.wrists: deque[tuple[float, float, float]] = deque()
+        self.vetoed = False         # this frame's punch pose was dropped: wrist rising
+        self.swing = False          # the current punch pose began as a rising swing
         self.active = dict.fromkeys(GESTURES, False)
         # False after an event, until the player is back in a normal position
         # (no gesture on): only then can the next gesture send an event.
@@ -173,7 +189,24 @@ class GestureRecognizer:
         self.confirm_s = float(cfg["confirm_s"])
         self.release_s = float(cfg["release_s"])
         self.punch_hold_s = float(cfg["punch_hold_s"])
+        self.punch_max_rise_sw = float(cfg["punch_max_rise_sw"])
+        self.punch_rise_window_s = float(cfg["punch_rise_window_s"])
         self._state: dict[int, _PlayerState] = {}
+
+    def _wrist_rise(self, st: _PlayerState, m: Motion, t: float) -> dict[str, float]:
+        """How far each wrist rose (shoulder widths, up is positive) since
+        punch_rise_window_s ago: the oldest sample in the window against
+        now. Keyed by the side labels of detect_punch ('L', 'R'); NaN when
+        unknown."""
+        y = [m.kpts[w][1] if m.valid[w] else np.nan for w in (sk.L_WRIST, sk.R_WRIST)]
+        st.wrists.append((t, *y))
+        while st.wrists and st.wrists[0][0] < t - self.punch_rise_window_s:
+            st.wrists.popleft()
+        sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
+        _, l0, r0 = st.wrists[0]
+        if sw is None:
+            return {"L": np.nan, "R": np.nan}
+        return {"L": (l0 - y[0]) / sw, "R": (r0 - y[1]) / sw}
 
     def update(self, motion: dict[int, Motion], t: float) -> list[GestureEvent]:
         # As in bodypose.py: a player without keypoints starts over.
@@ -184,6 +217,17 @@ class GestureRecognizer:
         for pid, m in sorted(motion.items()):
             st = self._state.setdefault(pid, _PlayerState())
             raw = detect_all(m.kpts, m.valid, self.cfg)
+            rise = self._wrist_rise(st, m, t)
+            st.vetoed = False
+            if raw["punch"]:
+                sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
+                side = detect_punch(m.kpts, m.valid, sw, self.cfg)
+                if self.punch_max_rise_sw > 0 and (
+                        st.swing or (side is not None and rise[side] > self.punch_max_rise_sw)):
+                    raw["punch"] = False
+                    st.vetoed = st.swing = True
+            else:
+                st.swing = False
             on = {}
             for name in ("hands_up", "arms_crossed"):
                 if raw[name]:
@@ -237,13 +281,16 @@ class GestureRecognizer:
 
     def log_fields(self, state: FrameState) -> dict:
         """Per-player CSV columns gest_p<pid>_<gesture> (1 while on),
-        gest_p<pid>_ready (1 when a new gesture can send an event) and
-        gest_p<pid>_events (names of this frame's events, joined by '+')."""
+        gest_p<pid>_ready (1 when a new gesture can send an event),
+        gest_p<pid>_vetoed (1 when a punch pose was dropped this frame because
+        its wrist was rising) and gest_p<pid>_events (names of this frame's
+        events, joined by '+')."""
         row: dict = {}
         for pid, st in sorted(self._state.items()):
             pre = f"gest_p{pid}_"
             for name in GESTURES:
                 row[pre + name] = int(st.active[name])
             row[pre + "ready"] = int(st.ready)
+            row[pre + "vetoed"] = int(st.vetoed)
             row[pre + "events"] = "+".join(e.name for e in state.events if e.pid == pid)
         return row

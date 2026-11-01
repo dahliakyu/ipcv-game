@@ -29,5 +29,7 @@ lap==0.5.13                    # Ultralytics BoT-SORT matching; else auto-instal
 PyYAML==6.0.3
 pandas==3.0.6                  # CSV log analysis for the report
 matplotlib==3.11.2
+psutil==7.2.2                  # tools/eval_pipeline.py: CPU and memory use (also an ultralytics dependency)
+nvidia-ml-py==13.615.71        # tools/eval_pipeline.py: GPU use via NVML (optional; skipped without a driver)
 pytest==9.1.1
 ruff==0.16.9

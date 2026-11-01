@@ -35,7 +35,7 @@ ARMS = {
     # Wrists crossed in front of the chest, each just past the middle. Not
     # the hands on the opposite shoulders: there the pose model puts each
     # wrist back on its own side, and the rule misses the cross
-    # (docs/limitations.md).
+    # (docs/project_report.md, section 7).
     "arms_crossed": {"a": ((-0.65, 0.8), (0.25, 0.4)), "b": ((0.65, 0.8), (-0.25, 0.4))},
 }
 # What each move is called, how to do it and what it does in the game.

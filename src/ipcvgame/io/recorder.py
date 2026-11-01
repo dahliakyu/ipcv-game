@@ -7,6 +7,12 @@ ClipRecorder
     Clips are stored raw (un-mirrored): Frame.image is mirrored at capture, so
     the recorder flips it back, and VideoFile mirrors again on load. This keeps
     clips identical to what the webcam delivers.
+    The container's frame rate is only known at the end: when the frames came
+    in slower than the requested rate (camera in low light, or the game
+    running below it while recording), close() rewrites it to the measured
+    mean rate with ffmpeg (stream copy, frames untouched), so video players
+    play the clip at its real speed. The pipeline does not depend on it: it
+    replays the sidecar times.
 
 RunLogger
     One CSV per run: frame_id, t, per-stage ms (``ms_<stage>``), and per player
@@ -22,6 +28,8 @@ from __future__ import annotations
 
 import csv
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -36,15 +44,48 @@ def timestamps_path(clip_path: str | Path) -> Path:
     return p.with_name(p.stem + ".timestamps.csv")
 
 
+def retime_clip(path: str | Path, fps: float) -> bool:
+    """Set the container frame rate of an mp4 to ``fps`` without re-encoding
+    (ffmpeg -itsscale with stream copy): the frames stay identical, only
+    their presentation times change. Returns False when ffmpeg is missing
+    or fails; the clip is then left as it was."""
+    path = Path(path)
+    ffmpeg = shutil.which("ffmpeg")
+    cap = cv2.VideoCapture(str(path))
+    old = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    if ffmpeg is None or not old or fps <= 0:
+        return False
+    tmp = path.with_name(path.stem + ".retime" + path.suffix)
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-itsscale", f"{old / fps:.6f}",
+           "-i", str(path), "-c", "copy", str(tmp)]
+    if subprocess.run(cmd, check=False).returncode != 0 or not tmp.exists():
+        tmp.unlink(missing_ok=True)
+        return False
+    tmp.replace(path)
+    return True
+
+
+def sidecar_fps(clip_path: str | Path) -> float | None:
+    """Mean frame rate from a clip's timestamps sidecar, or None."""
+    p = timestamps_path(clip_path)
+    if not p.exists():
+        return None
+    t = np.loadtxt(p, delimiter=",", skiprows=1, usecols=1, ndmin=1)
+    return (len(t) - 1) / (t[-1] - t[0]) if len(t) > 1 and t[-1] > t[0] else None
+
+
 def run_stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 class ClipRecorder:
     def __init__(self, path: str | Path, fps: float, size: tuple[int, int],
-                 mirrored: bool = True, fourcc: str = "mp4v"):
+                 mirrored: bool = True, fourcc: str = "mp4v", retime_tolerance: float = 0.05):
         """size is (width, height); mirrored says whether incoming frames are
-        mirrored (then they are flipped back before writing)."""
+        mirrored (then they are flipped back before writing). On close, a
+        measured mean rate more than retime_tolerance (relative) away from
+        fps is written into the container (retime_clip)."""
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.size = size
@@ -57,6 +98,10 @@ class ClipRecorder:
         self._ts = csv.writer(self._ts_file)
         self._ts.writerow(["frame_idx", "t"])
         self.n = 0
+        self.fps = fps
+        self.retime_tolerance = retime_tolerance
+        self._t_first: float | None = None
+        self._t_last: float | None = None
 
     def write(self, frame: Frame) -> None:
         image = frame.image
@@ -64,13 +109,31 @@ class ClipRecorder:
             raise ValueError(f"frame size {image.shape[1]}x{image.shape[0]} != clip size {self.size}")
         self.writer.write(cv2.flip(image, 1) if self.mirrored else image)
         self._ts.writerow([self.n, f"{frame.t:.6f}"])
+        if self._t_first is None:
+            self._t_first = frame.t
+        self._t_last = frame.t
         self.n += 1
+
+    @property
+    def measured_fps(self) -> float | None:
+        """Mean frame rate of the written frames (from their capture times)."""
+        if self.n < 2 or self._t_first is None or self._t_last <= self._t_first:
+            return None
+        return (self.n - 1) / (self._t_last - self._t_first)
 
     def close(self) -> None:
         if self.writer is not None:
             self.writer.release()
             self.writer = None
             self._ts_file.close()
+            real = self.measured_fps
+            if real is not None and abs(real / self.fps - 1.0) > self.retime_tolerance:
+                if retime_clip(self.path, real):
+                    print(f"{self.path}: {real:.1f} fps recorded, container set to that rate")
+                else:
+                    print(f"{self.path}: {real:.1f} fps recorded but the container says {self.fps:g} "
+                          f"(no ffmpeg): players show it sped up; the pipeline replays the real times. "
+                          f"Fix later with tools/retime_clip.py")
 
     def __enter__(self):
         return self

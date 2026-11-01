@@ -31,7 +31,7 @@ paint's clip mask (scene/paint.py body_mask()), but wider (it must cover
 clothes and hair, not stay inside them), plus a disc for the head, softened
 by a blur; a player without a torso this frame is covered by their whole
 box. That mask is coarse: wall paint stops along its straight capsule
-edges, with bare wall between it and a thin arm (docs/limitations.md).
+edges, with bare wall between it and a thin arm (docs/project_report.md, section 7).
 
 The wall and the lighting work on the small image the pixel look shrinks
 the camera frame to (render.pixel_size), so they share its look and cost a
