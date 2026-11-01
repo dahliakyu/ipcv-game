@@ -108,14 +108,21 @@ def draw_slot(canvas: np.ndarray, center: tuple[float, float], r: float, filled:
 
 def draw_body_glow(canvas: np.ndarray, torso: np.ndarray, motion: Motion | None,
                    head: tuple[np.ndarray, float] | None, color: tuple[int, int, int],
-                   strength: float, cfg: dict) -> None:
+                   strength: float, cfg: dict, people: np.ndarray | None = None,
+                   people_scale: float = 1.0) -> None:
     """A player holding the orb glows: a soft halo round the body and a
     lighter tint on it, in their team colour moved glow_white of the way to
     white, so it reads as light, also on a shirt of the same colour.
 
-    The body is the paint's mask (scene/paint.py body_mask(): torso quad and
-    a capsule per arm and leg bone) plus a disc for the head (head: centre
-    and radius px; None = no head). It is drawn at glow_scale of the frame's
+    The body is the real outline of the player: `people` is the Selfie
+    Segmenter's mask of everyone in view (float32 0-1, in an image
+    people_scale times the canvas), kept only within glow_select_sw
+    shoulder widths of the player's keypoint mask, so the glow follows hair,
+    sleeves and clothes but not another player standing apart. The keypoint
+    mask is the paint's (scene/paint.py body_mask(): torso quad and a capsule
+    per arm and leg bone) plus a disc for the head (head: centre and radius
+    px; None = no head); without `people` it is the body itself, a coarser
+    shape. It is drawn at glow_scale of the frame's
     resolution and blurred (Gaussian, sigma half of glow_reach_sw shoulder
     widths), so the glow fades out over about that distance from the body's
     edge. The blur is 0.5 at the edge and 1 inside; doubled and capped at
@@ -148,6 +155,17 @@ def draw_body_glow(canvas: np.ndarray, torso: np.ndarray, motion: Motion | None,
         cv2.circle(mask, _p((np.asarray(head[0]) - o) * k), int(head[1] * k * (1 << SHIFT)), 255, -1,
                    cv2.LINE_AA, SHIFT)
     body = mask.astype(np.float32) / 255.0
+    if people is not None:
+        r = max(1, int(round(cfg["glow_select_sw"] * sw * k)))
+        # A square grow: it only has to say "near this player", and OpenCV
+        # does it in two 1D passes (~0.06 ms where a round one took ~2.5 ms
+        # close up).
+        near = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_RECT, (2 * r + 1, 2 * r + 1)))
+        px0, py0, px1, py1 = (int(round(v * people_scale)) for v in (x0, y0, x1, y1))
+        crop = people[py0:py1, px0:px1]
+        if crop.size:
+            outline = cv2.resize(crop, (small[1], small[0]), interpolation=cv2.INTER_LINEAR)
+            body = outline * (near.astype(np.float32) / 255.0)
     halo = cv2.GaussianBlur(body, (0, 0), max(0.5, 0.5 * reach * k))
     alpha = strength * np.minimum(2.0 * halo, 1.0) * (1.0 - (1.0 - cfg["glow_inside"]) * body)
     alpha = cv2.resize(alpha, (x1 - x0, y1 - y0), interpolation=cv2.INTER_LINEAR)

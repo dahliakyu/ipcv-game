@@ -112,7 +112,7 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 
 ### Rendering cost grows with resolution and wall paint
 
-**Seen.** The pixel look costs ~14 ms per frame on a 4K clip and ~4.5 ms at 720p. The face effects and status add ~0.6 ms at 720p. The arena (wall paint, `scene/arena.py`) costs 0.3 ms with a clean wall and 4.6 ms once it has paint, 6.8 ms during a beam, mostly the Selfie Segmenter on the CPU (see "Scene").
+**Seen.** The pixel look costs ~14 ms per frame on a 4K clip and ~4.5 ms at 720p. The face effects and status add ~0.6 ms at 720p. The arena (wall paint, `scene/arena.py`) costs 0.3 ms with a clean wall and 4.6 ms once it has paint, 6.8 ms during a beam, mostly the Selfie Segmenter on the CPU (see "Scene"). The glow of a player holding the orb follows the segmenter's outline too: ~4 ms close up, plus the segmenter's ~4 ms when the wall has no paint yet (it runs once per frame and is shared).
 
 **Improvement.** Run the webcam at 720p (the default); run the segmenter every other frame or on the GPU.
 

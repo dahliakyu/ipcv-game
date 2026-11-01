@@ -71,3 +71,22 @@ def test_body_glow_is_a_halo_brightest_just_outside_the_body():
 def test_no_glow_at_zero_strength():
     before, canvas = glow(0.0)
     assert (canvas == before).all()
+
+
+def test_body_glow_follows_the_real_outline_of_its_player_only():
+    """A segmenter mask with a wide coat around the keypoint body (torso
+    150-250 px) and another person far to the right: the glow tints the coat
+    and its halo starts at the coat's edge, not at the keypoint capsules,
+    and the other person does not glow."""
+    people = np.zeros((900, 500), np.float32)
+    people[280:700, 100:300] = 1.0                        # the coat: 35 px past the arm capsules
+    people[280:700, 430:480] = 1.0                        # someone else, 1.8 shoulder widths away
+    before = np.full((900, 500, 3), 90, np.uint8)
+    with_outline, keypoints_only = before.copy(), before.copy()
+    draw_body_glow(with_outline, TORSO, arms_down(), None, BLUE, 0.8, CFG, people, 1.0)
+    draw_body_glow(keypoints_only, TORSO, arms_down(), None, BLUE, 0.8, CFG)
+    change = lambda img: np.abs(img.astype(int) - before).sum(axis=2)   # noqa: E731
+    a, b = change(with_outline), change(keypoints_only)
+    assert a[500, 105] < a[500, 85]                        # inside the coat: the lighter tint; past it: halo
+    assert a[500, 105] > 0 and b[500, 105] > a[500, 105]   # keypoints only: halo already there
+    assert a[500, 455] == 0                                # the other person: no glow

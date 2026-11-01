@@ -677,7 +677,7 @@ def test_orb_slot_on_the_health_bar_row(game):
 
 
 def test_holding_the_orb_makes_the_body_glow_and_logs_its_time(game):
-    r = plain()
+    r = renderer(pixel_size=1, show_timings=False, arena_segmenter=None)   # no real people: keypoints
     s = dark(0.0, xs=(200.0,))
     game.update(s)
     without = r.draw(s, game)

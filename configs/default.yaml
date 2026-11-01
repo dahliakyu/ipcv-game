@@ -982,6 +982,12 @@ render:
   # frame's resolution: the halo is a blur, so a quarter is enough and
   # keeps the cost down.
   glow_white: 0.3
+  # The glow follows the player's real outline: the Selfie Segmenter's mask
+  # (arena_segmenter) within this many shoulder widths of their keypoint
+  # mask below, enough to take in loose clothes and hair, little enough to
+  # leave out another player standing a step away. Without the segmenter
+  # the keypoint mask itself glows.
+  glow_select_sw: 0.6
   glow_head_fw: 0.75
   glow_reach_sw: 0.5
   glow_alpha: [0.45, 0.8]

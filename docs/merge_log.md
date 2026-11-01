@@ -2156,6 +2156,7 @@ The fifth feature built from the backlog (feature 1 there, the "Final Smash Extr
 4. Interim: the full orb unlocks the beam.
 5. Interim 2: one orb, grabbed by hand.
 6. Blink detection removed.
+7. The glow around the real outline.
 
 ### Changes
 
@@ -2222,6 +2223,12 @@ The punch rarely hit the part, and four parts took too long. **Changed:** `src/i
 #### Step 6 · Blink detection removed (2026-11-01)
 
 The paint rain that would end at the caster's blink was dropped, so nothing used the blink detector of step 3. **Removed:** `src/ipcvgame/interaction/gestures.py`: `blink_score()`, `BlinkDetector`, the `blink` and `eyes_closed` events, the `faces` argument of `GestureRecognizer.update()` and its CSV columns `gest_p<pid>_blink_base` and `_eyes_closed`. `src/ipcvgame/core/types.py`: `Face.pitch` (the face tracker keeps its own pitch for the head pose and still logs `face_p<pid>_pitch_deg`). `src/ipcvgame/face/tracker.py`: the `face_p<pid>_blink` column; the debug view shows a smile bar instead of a blink bar. `configs/default.yaml`: the `gestures: blink_*` keys. **Changed:** `src/ipcvgame/app/pipeline.py`: the gesture stage gets only the motion again; `src/ipcvgame/interaction/game.py`: every event goes through the facing check again (only gestures are sent). Tests for the detector, `Face.pitch` and blink events removed. The detector's design and clip findings are in [limitations.md](limitations.md), "Future improvements", "Final smash".
+
+#### Step 7 · The glow around the real outline (2026-11-01)
+
+The glow was built from the keypoint mask (a torso quad, a capsule along each bone and a head disc), so a player holding the orb glowed as a stick figure. **Changed:** `src/ipcvgame/scene/orb.py`, `draw_body_glow()`: takes the Selfie Segmenter's mask of everyone in view (`people`) and keeps it within `glow_select_sw` shoulder widths of the player's keypoint mask (a square dilation: ~0.06 ms where a round one took ~2.5 ms close up), so the glow follows hair, sleeves and clothes and leaves out another player standing apart; without the segmenter the keypoint mask still glows. `src/ipcvgame/scene/arena.py`: `Arena.silhouette()` runs the segmenter at most once per frame and keeps the result, shared by the wall paint, the lighting and the glow. `src/ipcvgame/scene/renderer.py`: passes the small image's silhouette to the glow. `configs/default.yaml`, `render:`: `glow_select_sw` 0.6. `tests/test_orb.py`: the glow follows a wide coat and leaves out a second person; `tests/test_renderer.py`: the glow test runs on the keypoint mask (its drawn frames have no real people).
+
+**On the clips** (key `n` in a script): close up on `shield.mp4` the whole jacket and the hair glow instead of capsules inside them. The glow costs 8.1 ms median there, of which 4.0 ms is the segmenter (that clip has no wall paint, so the glow is the first to need it) and ~4 ms the glow itself, as before; on `session.mp4`, 2.2 ms median (95th percentile 6.8 ms on frames where the glow runs the segmenter).
 
 ## Arena and stage guards: the room reacts to the fight, failing modules do not stop the game
 

@@ -70,6 +70,7 @@ class Arena:
         # The Selfie Segmenter, loaded on first use (so the game logic and
         # tests run without it); False = not available, use the keypoints.
         self._segmenter: PersonSegmenter | None | bool = None
+        self._silhouette: tuple[float, tuple, np.ndarray] | None = None   # (Frame.t, shape, mask)
         self.reset()
 
     def reset(self, pid: int | None = None) -> None:
@@ -152,10 +153,11 @@ class Arena:
             target[:] = np.clip(np.float32(self._dim_color) * tint, 0, 255).astype(np.uint8)
             small[:] = cv2.blendLinear(small, target, 1.0 - w, w)
 
-    def person(self, small: np.ndarray, state: FrameState, game: Game) -> np.ndarray:
-        """Where the people are on the small image, float32 0-1: the
-        Selfie Segmenter's mask (render.arena_segmenter), or the keypoint
-        mask (person_mask()) when it is null or its model is missing."""
+    def silhouette(self, small: np.ndarray, t: float) -> np.ndarray | None:
+        """The Selfie Segmenter's person mask of the small image, float32
+        0-1 (render.arena_segmenter); None when it is null or its model is
+        missing. Run at most once per frame (Frame.t): the wall paint, the
+        lighting and the orb glow share it."""
         if self._segmenter is None:
             path = self.cfg.get("arena_segmenter")
             self._segmenter = False
@@ -163,9 +165,20 @@ class Arena:
                 try:
                     self._segmenter = PersonSegmenter(path, self.cfg["arena_segmenter_ramp"])
                 except FileNotFoundError as exc:
-                    print(f"[arena] {exc}; the wall paint uses the keypoint mask")
-        if self._segmenter:
-            return self._segmenter(small)
+                    print(f"[arena] {exc}; the wall paint and glow use the keypoint mask")
+        if not self._segmenter:
+            return None
+        if self._silhouette is None or self._silhouette[:2] != (t, small.shape[:2]):
+            self._silhouette = (t, small.shape[:2], self._segmenter(small))
+        return self._silhouette[2]
+
+    def person(self, small: np.ndarray, state: FrameState, game: Game) -> np.ndarray:
+        """Where the people are on the small image, float32 0-1: the
+        silhouette(), or the keypoint mask (person_mask()) without the
+        segmenter."""
+        mask = self.silhouette(small, state.frame.t)
+        if mask is not None:
+            return mask
         return person_mask(small.shape[:2], self._scale, state, game, self._mask_cfg, self.cfg)
 
     def shake_offset(self, t: float) -> tuple[float, float]:

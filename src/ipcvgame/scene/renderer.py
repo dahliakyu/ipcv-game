@@ -170,7 +170,7 @@ class Renderer:
             for pid in visible:
                 if game.players[pid].has_orb:
                     t0 = time.perf_counter()
-                    self._draw_glow(canvas, pid, state, game)
+                    self._draw_glow(canvas, pid, state, game, small)
                     self.glow_ms[pid] = (time.perf_counter() - t0) * 1000.0
         if phase != "result":
             # After a win the game stops (game.py), so bolts and beams in
@@ -666,18 +666,22 @@ class Renderer:
 
     # ---------------------------------------------------------------- orb
 
-    def _draw_glow(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game) -> None:
+    def _draw_glow(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game,
+                   small: np.ndarray) -> None:
         """pid holds the orb: their body glows in their team colour
         (scene/orb.py draw_body_glow()), pulsing between glow_alpha's two
-        values at glow_hz. The head is a disc glow_head_fw face widths round
-        the face centre (none without a face)."""
+        values at glow_hz, around their real outline from the arena's
+        silhouette() of the small image (the keypoint mask without the
+        segmenter). The head is a disc glow_head_fw face widths round the
+        face centre (none without a face)."""
         cfg, player = self.cfg, game.players[pid]
         f = state.faces.get(pid)
         head = (f.center, cfg["glow_head_fw"] * f.scale) if f is not None and f.valid else None
         lo, hi = cfg["glow_alpha"]
         pulse = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * state.frame.t)
+        people = self.arena.silhouette(small, state.frame.t)
         draw_body_glow(canvas, player.torso, state.motion.get(pid), head, player_color(pid),
-                       lo + (hi - lo) * pulse, cfg)
+                       lo + (hi - lo) * pulse, cfg, people, small.shape[1] / canvas.shape[1])
 
     def _draw_raise_arms(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
         """"RAISE YOUR ARMS" for each visible player holding the orb, in
