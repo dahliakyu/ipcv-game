@@ -655,7 +655,7 @@ class Game:
 
     def test_orb(self, pid: int = 1) -> bool:
         """Fill pid's orb (key n), so one player can try the final smash
-        without collecting the parts. Only while playing; returns if filled."""
+        without grabbing it. Only while playing; returns if filled."""
         if self.phase != "playing" or self.winner_id is not None:
             return False
         self.get_player(pid).orb = self.orb_parts

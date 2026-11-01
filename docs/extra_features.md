@@ -20,10 +20,10 @@ The features build on the Colour Clash game, merged from the teammates' code (or
 | Gesture rules and events | `interaction/gestures.py`: `detect_*()`, `GestureRecognizer` | `gestures:` | `tests/test_gestures.py` |
 | Game phases: start places, calibration, countdown, result | `interaction/game.py`: `Game.phase`, `_next_phase()`, `place_taken()`, `_measure()` (neutral pose), `_check_line_up()`, `_tick()` (moves); `app/pipeline.py`: `_calibrate_identity()`; measurements in `pose/measure.py` | `game:` (`intro`, `round_players`, `ready_s`, `neutral_*`, …) | `tests/test_game.py` |
 | Game rules: actions, hits, damage, round end | `interaction/game.py`: `Game.update()` (torso corners: `torso_corners()`) → `_act()` (events to actions, `facing()`) and `_drink_with_mouths()` (mouths from `_track_mouth()`, buffs by `_apply_drink()`) → `advance()` (movement, drinks falling in `_advance_drinks()`, hits, `_apply_damage()` with the buffs and a splash from `_splash()`, `_tick_buffs()`; `test_hit()` for key `b`); state in `GamePlayer` (also `attack`, `defense`), `Projectile`, `PaintBeam`, `Shield`, `PaintSplat`, `Drink`; this frame's `hits` and `drunk` | `game:` | `tests/test_game.py` (`frame_state()` builds fake frames) |
-| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); paint in `scene/paint.py` (`BodyPaint`, `splash_shapes()`, `body_mask()`, the blob `draw_blob()` and its burst `draw_burst()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
+| How the game looks | `scene/renderer.py`: `Renderer.draw()` (order: camera, the room on the pixel look's small image (`scene/arena.py`, `Arena`: wall paint from `bolt_ends`, dimming during a beam, both off the players by the Selfie Segmenter's mask (`scene/segment.py`; `person_mask()` from the keypoints without the model); merge_log.md, "Arena and stage guards"), paint, `draw_game()`, face effects, `_draw_status()` (name tag, crown, dizzy stars), health bars, `_draw_hud()`, `_draw_game_over()`); sprites in `scene/fire_bolt.py`, `magic_beam.py`, `fire_ring.py` (frames loaded by `scene/animation.py`, `load_frames()`); paint in `scene/paint.py` (`BodyPaint`, `splash_shapes()`, `body_mask()`, the blob `draw_blob()` and its burst `draw_burst()`); helpers in `scene/draw.py` (`player_color()`, `blend_rgba()`, `shift_hue()`); intro screens in `_draw_start_place()`, `_draw_instructions()` (stick figures and move texts in `scene/instructions.py`); drinks in `_draw_drinks()` (sprites from `drink_sprites()`, `draw_badge()`), `_draw_popups()` (pick-up text), `_draw_buffs()` (icons above the health bars), colours in `DRINK_COLORS` | `render:` | `tests/test_renderer.py` |
 | Face effects and face data | `face/effects.py`: `FaceEffects.update()` (game hits, players holding a drink) and `draw()` (war paint, cheek bulge, mustache, flash, team hat, flying hats), per-player `_Anim`, `bulge(pid, t)` on drinking; `face/tracker.py` (`Face`, anchors), `face/head_pose.py` (3D anchor points), `face/landmarker.py` (blendshapes) | `face:` | `tests/test_face.py`, `test_effects.py` |
 | Players and identity | `identity/tracker.py`; `Player.status`, `reentered`, `pos` (`_position()`: x and depth in metres, Task 3's spatial output); P1 on the left at calibration (`order_left_to_right()`) | `identity:` | `tests/test_identity.py` |
-| Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting, `b` test blob at P1; `--no-intro`, `--solo`), `app/pipeline.py` | | `tests/test_pipeline.py` |
+| Keys, flags, pipeline order | `app/main.py` (`q`, `p`, `r` new round from the countdown, `R` full reset to waiting, `b` test blob at P1, `n` fill P1's orb; `--no-intro`, `--solo`), `app/pipeline.py` (each stage in `_guard()`, stub fallback `FALLBACK`) | `pipeline:` | `tests/test_pipeline.py` |
 
 Each module reads only its own config section; the renderer reads game timings from `Game` (`beam_charge_s`, `shield_opacity()`, `torso()`, …), not from `game:`. Try a change with `python -m ipcvgame.app.main --source data/clips/session.mp4` (a full recorded round), `--until game` for the logic as plain shapes, and `--record-view <clip>` to save what the window shows. New CSV columns go in a module's `log_fields()`.
 
@@ -52,9 +52,10 @@ Renumbered five times: twice on 2026-10-28 (the second time when the face effect
 | 1. Final smash | 1 | 1 | 1 | 2 | 4 (super charge, reset by blinking), 15 (orb in four parts), 16 (paint from above) |
 | 2. Both players attacking at once | 3 | 4 | 5 | 6 | 14 |
 | Aiming the normal attack: dropped (2026-10-29) | 2 | 2 | 3 | 4 | 11 |
-| Dodge by stepping forward: dropped (2026-10-29) | — | 5 | 6 | 7 (added on 2026-10-28) | — |
+| Dodge by stepping forward: dropped (2026-10-29); back as part of 3 (2026-10-31) | — | 5 | 6 | 7 (added on 2026-10-28) | — |
+| 3. Calibrated mode (`--calibrated`), with the dodge | — | — | — | — | — |
 
-Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Then the Task 5 owner dropped the aiming of the normal attack (a pointing laser from the hand and blobs flying in 2D towards where the arm points), to focus on the final smash and both players attacking at once: blobs keep flying sideways, towards the nearest other player (`Game.facing()`). The designs of both dropped features are in the git history of this file. The line-up in the calibration was built for the dodge (`merge_log.md`, "Game start: Modifications") and stays for now; the depth is calibrated but unused, see [limitations.md](limitations.md), "Depth is calibrated, but no game rule uses it".
+Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch classifier: the gestures stay rule-based; its limits are in [limitations.md](limitations.md)), 9 (charge bar: the orb unlocks the final smash) and 10 (weapon pick-ups). On 2026-10-29 the Task 5 owner also dropped the dodge by stepping forward (a normal blob missing a player who steps ~0.5 m towards the camera, judged by depth). Then the Task 5 owner dropped the aiming of the normal attack (a pointing laser from the hand and blobs flying in 2D towards where the arm points), to focus on the final smash and both players attacking at once: blobs keep flying sideways, towards the nearest other player (`Game.facing()`). The designs of both dropped features are in the git history of this file. The line-up in the calibration was built for the dodge (`merge_log.md`, "Game start: Modifications") and stays for now; the depth is calibrated but unused, see [limitations.md](limitations.md), "Depth is calibrated, but no game rule uses it". On 2026-10-31 the dodge came back as a candidate, only in a calibrated mode (feature 3).
 
 ### 1. Final smash: a paint orb in four parts, raining until the caster blinks
 
@@ -148,6 +149,43 @@ Dropped (numbers from before the first renumbering): 5 (taunt), 8 (learned punch
 - **Final blows in the same frame:** apply all of a frame's damage first, then decide: if both are at 0, the higher attack level wins; with equal levels it is a draw ("DRAW", both colours). Otherwise the one with health left wins. Needs a `result` instead of only `winner_id` (also used by the game start's result screen, `merge_log.md`).
 
 **Check.** Unit tests: two blobs with equal levels cancel in the middle; a blob with the higher level goes through and hits; two finishing hits in one frame give a draw with equal levels, and a win for the higher level otherwise. On the webcam: both punch at once, with and without a power item.
+
+### 3. Calibrated mode (`--calibrated`), with the dodge by stepping forward
+
+Planned, not built (noted 2026-10-31 by the Task 1 owner).
+
+**What.** A separate command-line argument for running on a camera that has been calibrated (IPCV Tutorial 3: checkerboard, `tools/calibrate_camera.py`; that tool came with the cloud session's hand-over of 2026-10-31 and is not in the repo yet). Only in that mode, a depth-based game action: the dodge by stepping forward, dropped on 2026-10-29. Without the argument, the game runs as now: uncalibrated defaults, no rule that depends on depth. So the shared test clips (recorded on several webcams whose intrinsics are unknown) and other members' webcams keep behaving the same.
+
+**Why a separate mode.** A calibration holds for one camera at one resolution, with autofocus off. The project uses several webcams, so calibrated depth cannot be guaranteed in general. The report says so: calibration improves detection (head pose with `solvePnP`, `Player.pos`) on the calibrated webcam, and the dodge is the only game mechanic that would rely on it, only when `--calibrated` is given.
+
+**Owners.**
+
+- Task 5: the argument in `app/main.py` (and `tools/run_module.py`), the calibration file, `tools/calibrate_camera.py`.
+- Task 4: the dodge state and the hit rule in `interaction/game.py`.
+- Task 3: the depth (`Player.pos`), and a faster depth signal for the dodge.
+- Task 1: the full camera matrix and distortion in `face/head_pose.py` (optional; `face.focal_per_width` alone works without code changes).
+
+**Design: the argument.**
+
+- `--calibrated PATH` loads `PATH` (e.g. `configs/eline-webcam.yaml`) on top of `configs/default.yaml`, as `--config` does, and requires the file to hold a calibration: `identity.camera_hfov_deg` and `face.focal_per_width` from `tools/calibrate_camera.py` (for the game's mirrored frames: cx' = w - 1 - cx and p2' = -p2), plus `game.dodge: true`.
+- The file records the camera, the resolution and the date, and the run log records which calibration file was used, so every number in the report can be traced to its camera.
+- `game.dodge` is `false` in `default.yaml`. A file without a calibration, or a resolution that does not match the file's, stops with an error instead of running with wrong values.
+
+**Design: the dodge** (the design from 2026-10-28, in the git history of this file at `8ad3619`, "5. Dodge by stepping forward"):
+
+- **Line-up and fight line:** the calibration already makes the players stand level (within `line_up_depth_m`, 0.4 m) before measuring the neutral pose. Each player's depth then is their fight line (`depth_cal`).
+- **Dodging** once the player is at least `dodge_step_m` (~0.5 m) closer than their line; **back on the line** under ~0.3 m (hysteresis); **at most ~1 s** per dodge, then back to the line before the next one; no attacking while dodging.
+- **What the camera calibration adds:** depth / depth_cal = torso_cal / torso is a ratio of the player's own measurements, so the dodge works roughly without calibration too. The calibrated focal length makes the threshold mean a real ~0.5 m step at every distance. Without it, the same rule is "about 20% closer". The shoulder width (`identity.shoulder_m`) still has to be assumed. With an ArUco marker held during the neutral pose it could be measured per player (Tutorial 3, tasks 5–7).
+- **Fast enough to react:** a blob crosses the frame in ~1 s and the smoothed depth lags by `identity.pos_tau_s` (0.3 s); the dodge needs its own signal with a ~0.1 s time constant, or the torso ratio directly.
+- **Hit rule:** a normal blob passes a dodging player and flies on (it lands on the wall behind them, `scene/arena.py`). The final smash cannot be dodged by stepping forward.
+- **Look:** the dodging player's outline flashes white; a blob that passes is drawn behind their body (the person mask in `scene/arena.py`), with "MISS!" at `above_head`.
+
+**Check.**
+
+- Depth accuracy first: a marker or a tape measure at 1.5, 2, 2.5 and 3 m against `p<pid>_depth_m`, calibrated and uncalibrated, for the report.
+- On the calibrated webcam: a quick step forward of ~0.5 m during a blob's flight makes it miss. Standing still, punching, turning or leaning forward never counts as a dodge. A dodge ends after ~1 s.
+- Without `--calibrated`, nothing changes: the tests pass unchanged and `game.dodge` stays off.
+- Log the dodge state per player (`log_fields`) and count false dodges on clips.
 
 ## Technical follow-ups from the game and renderer merges
 

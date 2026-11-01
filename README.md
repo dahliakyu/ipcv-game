@@ -43,6 +43,16 @@ wget -P models https://storage.googleapis.com/mediapipe-models/face_landmarker/f
 sha256sum models/face_landmarker.task   # 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
 ```
 
+The MediaPipe Selfie Segmenter (landscape model; the outline of the people,
+so paint on the wall stays behind them, `scene/arena.py`) is not downloaded
+automatically either. Without it the wall paint falls back to a coarser mask
+from the keypoints:
+
+```bash
+wget -P models https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/1/selfie_segmenter_landscape.tflite
+sha256sum models/selfie_segmenter_landscape.tflite   # 490e9ea734313e0de10fa0cd9e3c6133e36ea4db2b7a49bde9ef019f72796b8e
+```
+
 The OSNet person re-identification weights (Task 3: recognising a player who
 comes back) are not downloaded automatically either. They are the MSMT17
 `combineall` model from the authors' Hugging Face repo
@@ -82,10 +92,16 @@ Keys: `q`/`Esc` quit, `p` pause, `r` new round (same players, from the
 countdown), `R` (shift) reset all module state (players are identified again
 and the game goes back to waiting), `b` throw a test blob at P1 while playing
 (to try hits and paint alone), `n` fill P1's orb for the final smash while
-playing (to try it without collecting the parts).
+playing (to try it without grabbing the orb).
 `--until {pose,identity,motion,face,gestures,game}` runs the pipeline up to that
 module and shows only its `draw_debug` overlay. `--headless --max-frames N`
 runs without a window.
+
+A module that raises does not stop the game: its stage gets an empty output
+for that frame, the traceback is printed once and the stage is named at the
+top right; identity, motion and face switch to their stub after failing for
+1 s (`pipeline:` in the config). `--set pipeline.catch_errors=false` raises
+at once instead, to debug your module.
 
 ## Record test clips and logs
 

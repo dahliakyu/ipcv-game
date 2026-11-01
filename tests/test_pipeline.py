@@ -109,3 +109,49 @@ def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
     game.actions = [(2, "learned_neutral"), (1, "learned_punch")]
     pipeline._calibrate_identity(state, "calibration")
     assert rec.refreshed == [2] and rec.refs == {2: (80.0, 150.0)}
+
+
+def boom(*args, **kwargs):
+    raise RuntimeError("module crashed")
+
+
+def test_failing_stage_does_not_stop_the_game(pipeline, monkeypatch, capsys):
+    """A crashing face stage: empty faces that frame, the rest runs; after
+    pipeline.fallback_after_s of failing it is swapped for its stub."""
+    monkeypatch.setattr(pipeline.pose, "detect", lambda f: [fake_det(150), fake_det(500)])
+    monkeypatch.setattr(pipeline.face, "update", boom)
+    state, canvas = pipeline.step(frame(0))
+    assert state.faces == {} and set(state.players) == {1, 2} and canvas.shape == (H, W, 3)
+    assert pipeline.failed == ["face"]
+    assert pipeline.log_fields(state)["pipeline_failed"] == "face"
+    assert "module crashed" in capsys.readouterr().err       # the traceback, once
+    after = pipeline.cfg["pipeline"]["fallback_after_s"]
+    i = 1
+    while not pipeline.fallen_back:
+        state, _ = pipeline.step(frame(i))
+        i += 1
+    assert pipeline.fallen_back == {"face"} and (i - 1) / 30 >= after
+    state, _ = pipeline.step(frame(i))
+    assert pipeline.failed == [] and pipeline.face.backend == "stub" and state.faces
+    assert pipeline.log_fields(state)["pipeline_fallback"] == "face"
+
+
+def test_failing_stage_without_stub_keeps_trying(pipeline, monkeypatch):
+    monkeypatch.setattr(pipeline.pose, "detect", boom)
+    for i in range(60):
+        state, _ = pipeline.step(frame(i))
+    assert state.players == {} or all(p.status == "lost" for p in state.players.values())
+    assert pipeline.failed == ["pose"] and pipeline.fallen_back == set()
+
+
+def test_failing_render_shows_the_frame(pipeline, monkeypatch):
+    monkeypatch.setattr(pipeline.renderer, "draw", boom)
+    state, canvas = pipeline.step(frame(0))
+    assert canvas.shape == (H, W, 3) and canvas.any()        # black frame + "RENDER FAILED"
+
+
+def test_catch_errors_off_raises(monkeypatch):
+    p = Pipeline(load_config(overrides=NO_MODELS + ["pipeline.catch_errors=false"]))
+    monkeypatch.setattr(p.gestures, "update", boom)
+    with pytest.raises(RuntimeError):
+        p.step(frame(0))

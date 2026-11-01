@@ -82,7 +82,8 @@ def test_paint_time_logged_per_player(game):
     game.get_player(1).paint_splats.append(PaintSplat(0.5, 0.5, owner_id=2))
     r.draw(state, game)
     fields = r.log_fields(state)
-    assert set(fields) == {"render_p1_paint_ms", "render_p2_paint_ms"} and fields["render_p1_paint_ms"] > 0
+    paint = {k for k in fields if k.endswith("_paint_ms")}
+    assert paint == {"render_p1_paint_ms", "render_p2_paint_ms"} and fields["render_p1_paint_ms"] > 0
     r.reset(1)
     assert 1 not in r._paint
 

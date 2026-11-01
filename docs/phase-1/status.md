@@ -13,8 +13,8 @@ This document covers what the pipeline looks like right now, what your stub does
 | `core/` contracts, skeleton, filters, timing, config | Task 5 | Done | `types.py` is exactly the agreed contract |
 | `io/source.py` webcam + video file | Task 5 | Done | Mirrored at capture; clips replay real timestamps |
 | `io/recorder.py` clips + CSV logs | Task 5 | Done | One CSV per run in `logs/` |
-| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28); drinks, pick-up text and buff icons (2026-10-28); the paint blob and generated splashes on the body, clipped to it and shaded (`scene/paint.py`, 2026-10-29) |
-| `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging |
+| `scene/` renderer (OpenCV) | Task 5 | Done (merged 2026-10-27) | Colour Clash game view from `renderer.py`: pixel look, sprites, health bars pinned to the bottom, top bar, end panel; name tag, crown and dizzy stars above the head (2026-10-28); drinks, pick-up text and buff icons (2026-10-28); the paint blob and generated splashes on the body, clipped to it and shaded (`scene/paint.py`, 2026-10-29); the room reacts to the fight: paint on the wall behind the players (kept off them by MediaPipe's Selfie Segmenter, `scene/segment.py`), the room dimming during a beam, a shake on every hit (`scene/arena.py`, 2026-10-31; segmenter 2026-11-01) |
+| `app/pipeline.py`, `app/main.py`, `tools/` | Task 5 | Done | `--until <stage>` for per-module debugging; a failing stage no longer stops the game, and one that keeps failing switches to its stub (`pipeline:` config, 2026-10-31) |
 | `pose/estimator.py` | Task 2 | Stub (real model) | YOLO26s-pose (small; nano until 2026-10-28), ~10 ms/frame on the RTX 3070 Ti |
 | `pose/motion.py` | Task 2 | Smoothing done (merged 2026-10-25) | Confidence gate, hold, EMA, snap back; no signals yet |
 | `identity/tracker.py` | Task 3 | Done (merged 2026-10-27) | BoT-SORT on the pose boxes + OSNet re-identification; occluded/lost/re-entry |
@@ -22,7 +22,7 @@ This document covers what the pipeline looks like right now, what your stub does
 | `interaction/gestures.py` | Task 4 | Done (merged 2026-10-25) | Punch, hands up, arms crossed as events |
 | `interaction/game.py` | Task 4 | Done (merged 2026-10-26) | Colour Clash game logic from `game.py`: bolts, beams, blocking shields, paint, winner; drinks caught with the mouth for HP, attack and defense buffs (2026-10-28); drawn by `scene/renderer.py` |
 
-Tests: 298 passing (`pytest`), lint clean (`ruff check src tests tools`).
+Tests: 398 passing (`pytest`), lint clean (`ruff check src tests tools`).
 
 ## Architecture as built
 
@@ -39,6 +39,7 @@ All of this lives in `Pipeline.step()` in `src/ipcvgame/app/pipeline.py`. It run
 - **Keypoints are in canonical COCO-17 order.** Index them by name (`from ipcvgame.core import skeleton as sk; kpts[sk.L_WRIST]`). YOLO outputs COCO-17 directly; `skeleton.FROM_MEDIAPIPE33` maps MediaPipe's 33 points if Task 2 switches models.
 - **Re-entry resets.** When `Player.reentered` is True, `MotionFilter` clears that player's state itself, and the pipeline calls `face.reset(pid)` and `gestures.reset(pid)`. Keep this behaviour when you replace a stub.
 - **Model warm-up.** The pipeline runs one dummy frame through the model at startup, so the ~3 s CUDA initialisation never shows up as a gap between frames 0 and 1.
+- **A failing module does not stop the game.** Every stage runs inside a guard (`Pipeline._guard()`): an exception gives the stage an empty output for that frame (no detections, players, motion, faces or events), the traceback is printed once, and the stage is named on screen and in the log (`pipeline_failed`). Identity, motion and face switch to their stub backend after failing for `pipeline.fallback_after_s` (1 s). While developing, `--set pipeline.catch_errors=false` raises at once.
 
 ### The module interface
 

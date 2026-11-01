@@ -15,7 +15,7 @@ Keys: q / Esc quit, p pause, r new round (same players, from the countdown),
 R (shift) reset all module state (players are identified again and the game
 goes back to waiting), b throw a test blob at P1 while playing (to try hits
 and paint alone), n fill P1's orb for the final smash while playing (to try
-it without collecting the parts).
+it without grabbing the orb).
 
     python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
         # no waiting, calibration or countdown: play from the first frame

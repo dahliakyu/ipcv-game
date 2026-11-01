@@ -1,12 +1,15 @@
 """Task 5 — game renderer, from Colour Clash renderer.py.
 
 The game view, in drawing order: the camera frame (pixelated, as in
-renderer.py), each player's paint (scene/paint.py: splashes in torso
+renderer.py) with the room's reaction to the fight on it (scene/arena.py:
+paint on the wall behind the players, dimmed light during a beam; drawn on
+the pixel look's small image), each player's paint (scene/paint.py: splashes in torso
 coordinates, placed on the body, clipped to it and shaded), the game's
 objects (paint blobs drawn by scene/paint.py, bursting into drops on a
 shield; magic ball and beam and ring of fire shields from sprites), face
 effects, each player's status above the head (name tag, dizzy stars, crown;
-docs/merge_log.md, "Face effects"), health bars pinned to the bottom,
+docs/merge_log.md, "Face effects"), a shake of all of that on a hit
+(scene/arena.py), health bars pinned to the bottom,
 renderer.py's top bar with the controls, the end-of-game panel and a timing HUD. The
 game logic (interaction/game.py) only keeps state; this module decides how it
 looks (renderer merge, docs/merge_log.md, Task 5).
@@ -51,6 +54,7 @@ from ipcvgame.core.filters import OneEuro
 from ipcvgame.core.types import Face, FrameState
 from ipcvgame.face.effects import FaceEffects, load_sprite
 from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
+from ipcvgame.scene.arena import Arena
 from ipcvgame.scene.draw import (
     DRINK_COLORS,
     blend_rgba,
@@ -113,10 +117,13 @@ class Renderer:
         self._paint: dict[int, BodyPaint] = {}    # paint per player
         self.paint_ms: dict[int, float] = {}       # this frame's paint time per player (log)
         self.glow_ms: dict[int, float] = {}        # this frame's full-orb glow time per player (log)
+        self.arena = Arena(cfg)                    # wall paint, light and shake (scene/arena.py)
+        self.arena_ms = 0.0                        # this frame's arena time (log)
 
     def reset(self, pid: int | None = None) -> None:
         """Forget the name tags' smoothing and the paint shapes (one player on
         re-entry, or all)."""
+        self.arena.reset(pid)
         if pid is None:
             self._tags.clear()
             self._paint.clear()
@@ -129,10 +136,20 @@ class Renderer:
         render cost; the glow only while it is drawn."""
         row = {f"render_p{pid}_paint_ms": round(ms, 3) for pid, ms in self.paint_ms.items()}
         row.update({f"render_p{pid}_glow_ms": round(ms, 3) for pid, ms in self.glow_ms.items()})
+        row.update(self.arena.log_fields())
+        row["render_arena_ms"] = round(self.arena_ms, 3)
         return row
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
-        canvas = pixelate(state.frame.image, int(self.cfg.get("pixel_size", 1)))
+        # The room (scene/arena.py) is drawn on the pixel look's small image,
+        # before it is scaled up: wall paint and light behind the players.
+        image = state.frame.image
+        t0 = time.perf_counter()
+        small = shrink(image, int(self.cfg.get("pixel_size", 1)))
+        self.arena.update(state, game, small.shape[:2])
+        self.arena.draw(small, state, game)
+        self.arena_ms = (time.perf_counter() - t0) * 1000.0
+        canvas = grow(small, image.shape[:2])
         if self.show_skeleton:
             for pid, p in state.players.items():
                 if p.status == "active":
@@ -177,6 +194,8 @@ class Renderer:
         if phase == "playing":
             self._draw_raise_arms(canvas, state, game)
         self._draw_popups(canvas, state, game)
+        # Hits shake the picture; the health bars and the top bar stay still.
+        canvas = self.arena.shake(canvas, state.frame.t)
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)
@@ -972,10 +991,24 @@ def fit_scale(text: str, scale: float, thickness: int, max_w: float) -> float:
 def pixelate(image: np.ndarray, size: int) -> np.ndarray:
     """renderer.py's retro look: shrink by `size` and scale back up with the
     nearest pixel, so every size x size block has one colour. 1 = a copy."""
+    return grow(shrink(image, size), image.shape[:2])
+
+
+def shrink(image: np.ndarray, size: int) -> np.ndarray:
+    """The pixel look's first half: the image shrunk by `size` (area
+    average); a copy for size 1."""
     if size <= 1:
         return image.copy()
     h, w = image.shape[:2]
-    small = cv2.resize(image, (max(1, w // size), max(1, h // size)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(image, (max(1, w // size), max(1, h // size)), interpolation=cv2.INTER_AREA)
+
+
+def grow(small: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """The second half: `small` scaled up to shape (h, w) with the nearest
+    pixel; the same array when it already has that size."""
+    h, w = shape[:2]
+    if small.shape[:2] == (h, w):
+        return small
     return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
 
 

@@ -657,7 +657,9 @@ game:                     # Task 4 — Colour Clash game logic (game.py)
   drink_max: 2
   # Time to fall through the whole frame height (s), at a constant speed:
   # slow, so a player sees one coming and can get their head under it.
-  drink_fall_s: 4.0
+  # 4 s was still too fast to get under on the webcam (Task 5 owner,
+  # 2026-11-01): 6 s is a third slower.
+  drink_fall_s: 6.0
   # Base height of a drink as a fraction of the frame height (~1 face
   # height for players at ~2.3 m on session.mp4), times its random size
   # factor from drink_size. Bigger drinks are easier to catch and give more.
@@ -752,6 +754,17 @@ recorder:
   flush_every: 300
   # Codec for recorded clips. mp4v is available in every OpenCV build.
   fourcc: mp4v
+
+pipeline:                 # Task 5 — app/pipeline.py, failing modules
+  # Catch a module's exception, use an empty output for that frame and go on
+  # (the brief asks for module failures handled in a controlled way). false
+  # = raise at once, for debugging a module.
+  catch_errors: true
+  # A stage that fails on every frame for this long is swapped for its stub
+  # backend (identity: zones, motion: stub, face: stub). 1 s rides out a
+  # one-off hiccup (a bad frame, a short CUDA stall) without dropping the
+  # real module, and is short enough that players see the game recover.
+  fallback_after_s: 1.0
 
 render:
   window_name: IPCV game
@@ -1088,3 +1101,76 @@ render:
   # The ring's own colours (orange fire) are P1's (red team); others get a
   # hue-turned copy in their team colour.
   shield_effect_owner: 1
+  # --- Arena: the room reacts to the fight (scene/arena.py) ---
+  # Wall splash sizes, as fractions of the frame height (36 / 25 / 14 px at
+  # 720p). A blob leaving the frame hits the side wall flat, so its splash
+  # is bigger than the flying blob (blob_r_w ~26 px at 1280 wide); paint
+  # spraying past a body has lost some to the body; a bounce off a shield
+  # is a smaller spray again.
+  arena_edge_r_h: 0.05
+  arena_hit_r_h: 0.035
+  arena_bounce_r_h: 0.02
+  # An edge splash's centre sits this many of its radii inside the frame,
+  # so the blob is on screen and its forward spikes run off the edge.
+  arena_edge_inset_r: 0.6
+  # Spray past a hit player: centred arena_behind_sw shoulder widths from
+  # their torso's centre on the far side (the far shoulder is at 0.5, and the
+  # person mask reaches ~0.8 past the torso's middle), arena_hit_r_sw
+  # shoulder widths in radius, so the blob is half hidden behind the body
+  # and its spikes and drops show beside it, at any distance from the
+  # camera. Without a torso: arena_behind_fw frame widths past the hit point
+  # (a torso is ~0.1 frame widths at 2.5 m with identity.camera_hfov_deg 70)
+  # and arena_hit_r_h of the frame height.
+  arena_behind_sw: 0.9
+  arena_hit_r_sw: 0.3
+  arena_behind_fw: 0.12
+  # A bounce off a shield lands this far (frame widths) back towards the shooter.
+  arena_bounce_fw: 0.03
+  # Wall paint opacity: 0.85 lets the wall's own texture and shadows show
+  # a little through, as real paint on a wall.
+  arena_wall_opacity: 0.85
+  # Lighting while a beam is up: the room loses up to arena_dim of its
+  # brightness and gains arena_tint of the caster's colour, fading in and out
+  # over arena_dim_fade_s (shorter than game.beam_charge_s 0.35 s, so the
+  # room is dark before the beam fires). 0.55 keeps the room visible; the
+  # players are excluded by the person mask, so they stand out.
+  arena_dim: 0.55
+  arena_tint: 0.12
+  arena_dim_fade_s: 0.25
+  # The players' spotlight while the room is dim: the person mask blurred by
+  # this fraction of the width (~65 px at 1280), so the light falls off
+  # softly around each player instead of tracing the coarse mask.
+  arena_light_blur_fw: 0.05
+  # Shake on a hit: arena_shake_fw of the frame width (~10 px at 1280),
+  # damped to 0 over arena_shake_s at arena_shake_hz. Short and small, so it
+  # reads as an impact and does not make the players lose their place; 0 =
+  # off.
+  arena_shake_fw: 0.008
+  arena_shake_s: 0.3
+  arena_shake_hz: 12
+  # Person mask that keeps wall paint and dimming off the players: MediaPipe's
+  # Selfie Segmenter (landscape model; README has the download), run on the
+  # pixel look's small image, ~2.5 ms at 640 x 360 on the CPU. It follows the
+  # real outline; the keypoint mask below stopped wall paint along straight
+  # capsule edges with bare wall beside thin arms (webcam, 2026-11-01).
+  # null, or the file missing, = the keypoint mask.
+  arena_segmenter: models/selfie_segmenter_landscape.tflite
+  # The model works at 256 x 144, so its mask has a soft band ~5 px of the
+  # small image wide at the outline (7% of the pixels on session.mp4 were
+  # between 0.05 and 0.95, median 0.54), where wall paint showed half
+  # transparent over hair and shoulders. Ramped from 0 at the first value
+  # to 1 at the second, the band gets narrower but stays anti-aliased.
+  arena_segmenter_ramp: [0.3, 0.7]
+  # Keypoint person mask (fallback): wider
+  # than the body paint's clip mask (mask_* above), because this one must
+  # cover clothes and hair, not stay inside them. Torso quad stretched to
+  # u, v (v -0.35 reaches up over the neck), arm and leg capsules in
+  # shoulder widths (sleeves and trousers are wider than the bones), a head
+  # disc of arena_head_sw shoulder widths around the head keypoints, then a
+  # blur of arena_mask_blur_fw of the width so paint fades out at the edge.
+  arena_mask_torso_u: [-0.3, 1.3]
+  arena_mask_torso_v: [-0.35, 1.15]
+  arena_mask_arm_sw: 0.55
+  arena_mask_leg_sw: 0.7
+  arena_head_sw: 0.55
+  arena_mask_blur_fw: 0.012

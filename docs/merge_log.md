@@ -2027,6 +2027,10 @@ The third feature built from the backlog in `docs/extra_features.md` (feature 2 
 
 **Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, paint splash 3, both attacking 4, dodge 5); follow-ups for the webcam check of the drinks, the shield's render time and the asset pack in the repo. Code comments, config and tests that said "feature 2" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the drinks in the overview table and Task 4's list, the held-drink bulge in Task 1's, and the new feature numbers.
 
+#### Step 7 · Slower drinks (2026-11-01)
+
+**Changed:** `configs/default.yaml`, `game:` section: `drink_fall_s` 4 → 6 s, a third slower, so players have time to get their head under a drink (Task 5 owner, before the playtest).
+
 ## Normal attack: paint blob and splashes on the body
 
 The fourth feature built from the backlog in `docs/extra_features.md` (feature 3 there after the renumbering of 2026-10-29; feature 4 on 2026-10-28 and 13 originally; the "Normal Attack Change:", "Normal Attack Extra Feature:" and "Normal Attack Extra Effect" commits), by the Task 5 owner on 2026-10-29. It touches Task 4 (`interaction/game.py`) and Task 5 (`core/geometry.py`, `scene/`, `app/`, `README.md`); each step names the files it touched.
@@ -2129,3 +2133,121 @@ The fourth feature built from the backlog in `docs/extra_features.md` (feature 3
 #### Step 5 · Docs
 
 **Changed:** `docs/extra_features.md`: the code map rows for the game and the renderer; the feature moved here and the backlog renumbered (final smash 1, aiming 2, both attacking 3), with the dodge by stepping forward dropped (Task 5 owner, 2026-10-29); the follow-up for `assets/beam/`. `docs/limitations.md`: "Depth is calibrated, but no game rule uses it" (the line-up in the calibration stays for now). Code comments, config and tests that said "feature 3" now name this section; references to later features use the new numbers. `docs/phase-1/status.md`: the paint in the overview table, the paint blob and splashes in Task 4's game notes and list, the dropped dodge, and the new feature numbers.
+
+## Arena and stage guards: the room reacts to the fight, failing modules do not stop the game
+
+Built in a cloud session on 2026-10-31 after a check of the current state against the brief's technical requirements, handed over as a patch (`arena-and-guards.patch`, two commits on top of `5672156`) and applied by the Task 5 owner on 2026-11-01. Not from the backlog in `docs/extra_features.md`. It touches only Task 5 code (`scene/`, `app/`), plus config, tests and docs; each step names the files it touched.
+
+### Plan
+
+**What.** Two gaps against the brief (`docs/phase-1/IPCV_2026-1A_Project_Description_v1-1.pdf`, §3.2.5, Task 5):
+
+1. *"Render the background environment ... Modify the scene in response to the actions defined in Task 4."* The renderer drew effects over the camera image, but nothing in the room itself changed with the game.
+2. *"Handle uncertain tracking, temporary player loss, invalid actions, and module failures in a controlled way."* `app/pipeline.py` had no error handling: an exception in any stage stopped the game.
+
+**Decisions.**
+
+- **The camera image is the arena.** Paint that misses a body lands on the wall *behind* the players and stays for the round, in the shooter's team colour; the room dims and takes the caster's colour during a beam; every hit shakes the picture along its direction. Over a round the wall shows who attacked where, and each team's share of it is logged.
+- **Behind the players** needs a person mask: built from the keypoints like the body paint's clip mask (`scene/paint.py`, `body_mask()`), but wider (it must cover clothes and hair, not stay inside them), plus a head disc, blurred. No segmentation model: no second model run per frame. Its limits are in `docs/limitations.md`, "Scene".
+- **On the pixel look's small image:** the room is drawn after the camera image is shrunk (`render.pixel_size`) and before it is scaled up, so the paint matches the pixel look and costs a quarter of the pixels at `pixel_size` 2.
+- **New bolt ends by key, not by age:** after a win `advance()` stops, ages freeze, and an `age == 0` test would paint every frame.
+- **The wall belongs to the round:** kept on the result panel, cleaned on every other phase change.
+- **A failing stage is skipped for the frame, not fixed:** its output is empty, the game goes on, the traceback is printed once. Identity, motion and face have a stub backend and switch to it after failing for 1 s, timed with `Frame.t`; pose, gestures and the game have none and keep trying. `pipeline.catch_errors: false` raises at once, for debugging.
+- **Logging:** the steps are recorded here; no teammate's code moved.
+
+**Steps.** Each step gets an entry under Changes below.
+
+1. Wall paint (Task 5).
+2. Lighting during a beam (Task 5).
+3. Impact shake (Task 5).
+4. The arena in the renderer (Task 5).
+5. Stage guards and stub fallback (Task 5).
+6. Docs.
+
+### Changes
+
+#### Step 1 · Wall paint
+
+**Added:** `src/ipcvgame/scene/arena.py` (Task 5)
+- `Arena(cfg)`, one in the renderer. `update(state, game, small_shape)` reads this frame's game state; `draw(small, state, game)` puts the wall onto the small camera image in place.
+- New bolt ends: an end is new when its key `(round(x, 1), round(y, 1), owner_id, direction, reason)` was not in the previous frame's set. By `BoltEnd.reason`:
+  - "edge": a splash of `arena_edge_r_h` of the frame height, centred `arena_edge_inset_r` radii inside the edge it left, so the blob is on screen and its forward spikes run off;
+  - "hit": `hit_body()` finds the other player whose box holds x and whose torso is known; the splash is centred `arena_behind_sw` shoulder widths past their torso's centre, `arena_hit_r_sw` shoulder widths in radius, so it is half hidden behind the body at any distance. Without a torso: `arena_behind_fw` frame widths past the hit point, `arena_hit_r_h` of the frame height;
+  - "shield": a small splash (`arena_bounce_r_h`) `arena_bounce_fw` back towards the shooter, mirrored.
+- Beams, once charged: a stripe from where the tip was last frame to where it is now, `arena_beam_band` of the beam's hit band thick (`stroke()`).
+- The shapes are the body paint's (`splash_shapes()`, `drip_polygons(drips, 1.0)`, `fill_polygons()`), mirrored by the flight, seeded by where the blob ended as `draw_burst()` is.
+- Storage: colour, coverage and the pid on top per pixel, plus the painted box. New paint goes "over" the old (`out_a = a + old_a (1 − a)`, colour weighted the same way), so soft edges get no dark fringe. `share[pid]` is each team's fraction of the wall.
+- `person_mask()`: per player not lost, `body_mask()` with the wider `arena_mask_*` widths and a head disc of `arena_head_sw` shoulder widths round the mean of the valid head keypoints; a player without a torso this frame is covered by their whole box. Blurred by `arena_mask_blur_fw` of the width. The wall is blended at `arena_wall_opacity` × (1 − mask).
+- `_new_round()`: the wall is cleaned on every phase change except playing → result and countdown → playing; `reset()` (key R) clears everything.
+
+**Changed:** `configs/default.yaml`, `render:` section: `arena_edge_r_h`, `arena_hit_r_h`, `arena_bounce_r_h`, `arena_edge_inset_r`, `arena_behind_sw`, `arena_hit_r_sw`, `arena_behind_fw`, `arena_bounce_fw`, `arena_beam_band`, `arena_wall_opacity`, `arena_mask_torso_u`, `arena_mask_torso_v`, `arena_mask_arm_sw`, `arena_mask_leg_sw`, `arena_head_sw`, `arena_mask_blur_fw`.
+
+**Added:** `tests/test_arena.py`: an edge splash in the shooter's colour and not on the other player's torso, painted once per bolt end, its share logged; a hit's spray on the wall, hidden where the body is and visible just past it; the wall kept for the result and cleaned for the countdown; the person mask at half scale. The test bodies (`tests.test_game.body()`) leave unused keypoints at (0, 0) but valid, so these tests mark only the placed keypoints valid; otherwise the mask draws limbs to the corner.
+
+#### Step 2 · Lighting during a beam
+
+**Changed:** `src/ipcvgame/scene/arena.py`: while any beam exists the light goes down to `arena_dim` over `arena_dim_fade_s` (shorter than the beam's 0.35 s charge, so the room is dark before it fires), then back up. The room is blended towards one fixed colour (the caster's colour × `arena_tint` / `arena_dim`) by `arena_dim` × dim × (1 − lit), in one `cv2.blendLinear` call; `lit` is the person mask blurred by `arena_light_blur_fw`, a soft spotlight per player. The first version, three-channel float maths in NumPy, cost ~7 ms; this one ~2 ms (cloud session). `log_fields()`: `render_dim`.
+
+**Changed:** `configs/default.yaml`, `render:` section: `arena_dim`, `arena_tint`, `arena_dim_fade_s`, `arena_light_blur_fw`.
+
+**Changed:** `tests/test_arena.py`: a beam dims the room but not the caster, leaves a stripe once it fires, and the light comes back after it.
+
+#### Step 3 · Impact shake
+
+**Changed:** `src/ipcvgame/scene/arena.py`: each entry in `game.hits` starts a shake. `shake_offset(t)` sums `arena_shake_fw` × width × (1 − age / `arena_shake_s`)² × sin(2π `arena_shake_hz` age) along each hit's direction, plus half that up and down; `shake()` moves the canvas with `cv2.warpAffine` (edge pixels repeated) and returns the same array when the offset is under 0.5 px.
+
+**Changed:** `configs/default.yaml`, `render:` section: `arena_shake_fw` (0 = off), `arena_shake_s`, `arena_shake_hz`.
+
+**Changed:** `tests/test_arena.py`: the shake goes along the hit's direction and stops after `arena_shake_s`; nothing to shake gives the same array.
+
+#### Step 4 · The arena in the renderer
+
+**Changed:** `src/ipcvgame/scene/renderer.py`
+- `pixelate()` split into `shrink()` and `grow()` (`pixelate()` stays, as `grow(shrink(...))`); `draw()` shrinks the camera image, lets the arena update and draw on the small image, then grows it, and everything else is drawn as before.
+- The shake is applied after the pop-up texts and before the health bars and the top bar, so those stay still.
+- `reset()` passes on to the arena; `log_fields()`: the arena's columns (`render_wall_p<pid>` in %, `render_dim`) and `render_arena_ms`.
+- The module docstring names the arena in the drawing order.
+
+**Changed:** `tests/test_renderer.py`: `test_paint_time_logged_per_player` checks only the `*_paint_ms` keys, since `log_fields()` has more columns now.
+
+**On `session.mp4`** (`--no-intro`, 2026-11-01): the arena took 1.4 ms median per frame (95th percentile 2.0 ms) and 4.1 ms median while a beam dimmed the room, about twice the cloud session's ~2 ms; `ms_render` 7.8 ms median. At the end of the clip the wall was 6.8% blue and 4.0% red. Frames at 15, 63.7 and 100 s show the splashes beside and behind both players, the room dimmed with both players lit, and the beam's stripe at head height behind the right-hand player; no wall paint on the players there.
+
+#### Step 5 · Stage guards and stub fallback
+
+**Changed:** `src/ipcvgame/app/pipeline.py` (Task 5)
+- `_guard(stage, t, fn, empty)`: with `pipeline.catch_errors`, runs the stage; on any `Exception` it adds the stage to `failed`, prints the traceback the first time per stage (then one line at the start of each new run of failures) and returns the stage's empty output: pose `[]`, identity `{}`, motion `{}`, face `{}`, gestures `[]`; the game skips `update()` and `_calibrate_identity()` for the frame (wrapped together); a failing render shows the plain frame.
+- `FALLBACK`: identity → "zones", motion → "stub", face → "stub". A stage that has failed on every frame for `pipeline.fallback_after_s` (by `Frame.t`) is rebuilt with that backend (`_fall_back()`, recorded in `fallen_back`); if the stub cannot be built either, the old module stays.
+- `debug_module` is a property, so a swapped module is picked up; the rendering moved into `_render()` (the `--until` view is unchanged).
+- `_draw_failures()`: "FACE FAILED" or "FACE: STUB" in red at the top right. `log_fields()`: `pipeline_failed` (stages joined by `|`) and `pipeline_fallback`.
+
+**Changed:** `configs/default.yaml`: a new `pipeline:` section before `render:`, `catch_errors: true` and `fallback_after_s: 1.0` (rides out a one-off hiccup, short enough that players see the game recover).
+
+**Changed:** `tests/test_pipeline.py`: a crashing face stage gives empty faces while the game goes on and falls back to the stub after `fallback_after_s`; a crashing pose stage keeps trying (no stub); a crashing render returns the frame; `catch_errors: false` raises.
+
+The guards cover errors while running, not at startup: a wrong model path still fails when the pipeline is built.
+
+#### Step 6 · Docs
+
+**Changed:** `docs/phase-1/status.md`: the renderer and pipeline rows, a convention on failing modules, the test count (395). `docs/limitations.md`: "Scene" (the keypoint mask can let wall paint and dimming spill onto loose clothes or hair; a box-shaped hole for a player without a torso; improvements: YOLO-seg masks or a background plate) with the `session.mp4` check, and "Pipeline" (a failing module is skipped, not fixed; pose, gestures and the game have no stub). `docs/extra_features.md`: the code map rows for the look and the pipeline; new backlog feature 3, a calibrated mode (`--calibrated`) that loads a camera calibration (Tutorial 3) and only then turns on the dodge by stepping forward (planned, not built; the calibration tool is not in the repo yet). `README.md`: the failure handling and `pipeline.catch_errors`; key `n` now fills the one orb.
+
+## Arena and stage guards: Modifications
+
+Changes by the Task 5 owner on 2026-11-01, after the first webcam run with the arena.
+
+### No beam stripe on the wall
+
+The beam painted a stripe along its path that stayed for the round; on the webcam it read as a laser that never switched off. **Changed:** `src/ipcvgame/scene/arena.py`: `_paint_beams()`, `stroke()` and the beam-tip bookkeeping removed, `_cover()` without its `pad`; the room still dims during a beam. `configs/default.yaml`: `render.arena_beam_band` removed. `tests/test_arena.py`: the beam test checks that the room dims and the wall stays clean.
+
+### Person mask from MediaPipe's Selfie Segmenter
+
+On the webcam the wall paint beside the players was cut along straight lines with bare wall between it and the body: the keypoint mask (`person_mask()`) is a set of capsules around the bones, wider than a thin arm and with no idea of the real outline. **Decision (Task 5 owner):** a real silhouette from MediaPipe's Selfie Segmenter (mediapipe is already a dependency; one 250 KB model file), the keypoint mask kept as a fallback.
+
+**Added:** `src/ipcvgame/scene/segment.py`: `PersonSegmenter(model_path, ramp)`, the landscape Selfie Segmenter (256 x 144 input) in IMAGE mode; one soft person mask for everyone in view, at the input image's size, ramped from 0 at `ramp[0]` to 1 at `ramp[1]` so the soft band at the outline gets narrower. The mask is copied out of MediaPipe's result: `numpy_view()` points into a buffer that is freed with the result, and a first version that kept the view read back garbage (values up to ~10^31).
+
+**Changed:** `src/ipcvgame/scene/arena.py`: `Arena.person()` runs the segmenter on the pixel look's small image (640 x 360 at 720p), loaded on first use; null or a missing file prints one line and uses `person_mask()`. `draw()` uses it for both the wall paint and the lighting.
+
+**Changed:** `configs/default.yaml`, `render:` section: `arena_segmenter` (`models/selfie_segmenter_landscape.tflite`) and `arena_segmenter_ramp` [0.3, 0.7] (on `session.mp4`, ~7% of the pixels had a confidence between 0.05 and 0.95, median 0.54: the soft band at the outlines). `README.md`: the download command with its checksum (version 1, the same file as "latest" on 2026-11-01).
+
+**Changed:** `tests/test_arena.py`: the keypoint-mask tests set `arena_segmenter: null` (their drawn frames have no real people); a fake segmenter's mask keeps the paint off; a missing model falls back to the keypoints; the segmenter's result stays unchanged after later calls (skipped without the model file).
+
+**On `session.mp4`** (`--no-intro`): at 100 s the paint now meets the right-hand player's raised arm, shoulder and hair; the straight cut and the bare strip are gone. The segmenter alone takes 2.5–4 ms at 640 x 360 (feeding it 256 x 144 and scaling the mask up ourselves was no faster). The arena costs 0.34 ms median with a clean wall, 4.6 ms (95th percentile 5.4 ms) with wall paint and 6.8 ms during a beam, against 1.4 ms with the keypoint mask; `ms_render` 11.0 ms median, a frame 35.8 ms. `docs/limitations.md`, "Scene", is rewritten for the segmenter.

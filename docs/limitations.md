@@ -115,3 +115,31 @@ Punches (16) and hands up (3) on `session.mp4` were the same with nano and small
 - Use the depth in a game rule: the dropped dodge, or, for example, attack size or damage scaled by distance.
 - If no rule uses it by the final version, remove the line-up from the calibration (`_check_line_up()`, `line_up_hint()`, the "STAND LEVEL" and "STEP BACK" texts, `line_up_depth_m`, `line_up_hysteresis`, the `game_level` and `game_line_gap` columns), so players are measured wherever they stand.
 - To report how reliable the depth is: stand at measured distances (e.g. 1.5, 2, 2.5, 3 m), compare `p<pid>_depth_m` in the log, and set `camera_hfov_deg` from the camera's spec.
+
+## Scene
+
+### Wall paint needs a person mask, which costs ~4 ms a frame
+
+**Seen.** Paint that misses lands on the wall *behind* the players, and during a beam the room dims around them (`scene/arena.py`); both need to know where the people are. The first mask, built from the keypoints, stopped the wall paint along straight capsule edges, with a strip of bare wall between the paint and a thin arm (webcam, 2026-11-01; on `session.mp4` at 100 s, a straight cut beside the raised arm of the right-hand player). With MediaPipe's Selfie Segmenter the paint meets the real outline of arms, shoulders and hair on the same frame. The arena then costs 4.6 ms median per frame once the wall has paint (6.8 ms during a beam; 0.3 ms with a clean wall), on `session.mp4` with the CPU segmenter (2.5–4 ms of it); a frame took 35.8 ms median in total.
+
+**Cause.** The segmenter runs on every frame that has wall paint or a dimmed room, on the CPU, at its own input size (256 x 144); its mask has a soft band of ~5 small-image px at the outline, ramped narrower (`render.arena_segmenter_ramp`). It marks anyone in view as a person, not only the players, and sometimes a patch of furniture (a bag on the sofa at the left edge of `session.mp4`), where the wall then stays bare. Without the model file the arena falls back to the keypoint mask (`person_mask()`): a coat, long hair or a hand past the wrist keypoint count as wall there, and a player without a torso leaves a box-shaped hole.
+
+**Done.** Segmenter mask (`render.arena_segmenter`) with the keypoint mask as fallback; wall paint at 85% opacity on the pixel look's small image; the beam leaves no stripe on the wall.
+
+**Improvement.**
+
+- Run the segmenter every other frame (the players move little between two frames) or with MediaPipe's GPU delegate.
+- Per-player masks from YOLO-seg if a game rule needs to know whose outline it is (costs a second YOLO run per frame).
+- Check on the webcam with two players in different clothes.
+
+## Pipeline
+
+### A failing module is skipped, not fixed
+
+**Seen.** Tested with modules made to raise (`tests/test_pipeline.py`): the game keeps running, the failing stage is named at the top right and logged as `pipeline_failed`.
+
+**Cause.** Each stage runs inside a guard (`Pipeline._guard()`): an exception gives that stage an empty output for the frame. Pose, gestures and the game have no stub, so while they fail there are no players, no gestures, or a frozen game; identity, motion and face switch to their stub backend after `pipeline.fallback_after_s` (1 s) of failing on every frame, and stay on it for the rest of the run.
+
+**Done.** One traceback per stage is printed, then one line per new run of failures; `pipeline_fallback` in the log shows which stages run on a stub. `--set pipeline.catch_errors=false` turns the guard off to debug a module.
+
+**Improvement.** Try the real module again after a while on its stub; a CPU fallback for the pose model if CUDA fails.
