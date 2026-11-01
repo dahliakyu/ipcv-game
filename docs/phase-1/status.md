@@ -246,7 +246,7 @@ A round starts with an intro (`docs/merge_log.md`, "Game start"): start places, 
 - `tools/analyze_log.py`: CSV → FPS and per-stage latency plots for the report.
 - Review PRs, and keep `requirements.txt` pinned when owners add dependencies.
 
-**Later (after the game design):** threaded capture that keeps only the latest frame, a `pygame-ce` renderer, YOLO-seg background replacement, and a TensorRT/ONNX export if FPS on the demo laptop requires it.
+**Later (after the game design):** threaded capture that keeps only the latest frame, a `pygame-ce` renderer, YOLO-seg background replacement, and a TensorRT/ONNX export if FPS on the demo laptop requires it. (None of these was done: the game stayed on OpenCV, and the room's person mask comes from MediaPipe's Selfie Segmenter, `docs/merge_log.md`, "Arena and stage guards: Modifications".)
 
 ## To fill in as a team
 

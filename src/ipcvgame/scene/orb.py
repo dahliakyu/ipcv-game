@@ -1,9 +1,9 @@
 """Task 5 — the final smash's orb (docs/merge_log.md, "Final smash").
 
-The bouncing orb part (draw_part()), the pop where a punch collected it
-(draw_pop()), the four orb slots by each health bar (draw_slots()) and the
-glow of a player whose orb is full (draw_body_glow()). The game logic
-(interaction/game.py: OrbPart, GamePlayer.orb) only keeps state; every size
+The bouncing orb (draw_orb()), the pop where a hand grabbed it
+(draw_pop()), the orb slot by each health bar (draw_slot()) and the glow of
+a player holding the orb (draw_body_glow()). The game logic
+(interaction/game.py: Orb, GamePlayer.has_orb) only keeps state; every size
 and timing here comes from the render: config.
 """
 
@@ -46,9 +46,9 @@ def _halo(canvas: np.ndarray, x: float, y: float, radius: float, color, alpha: f
         cv2.addWeighted(layer, alpha * a, roi, 1.0 - alpha * a, 0.0, dst=roi)
 
 
-def draw_part(canvas: np.ndarray, x: float, y: float, r: float, age: float,
-              colors: tuple[tuple[int, int, int], tuple[int, int, int]], cfg: dict) -> None:
-    """The orb part at (x, y) px, radius r: a ball split into the two team
+def draw_orb(canvas: np.ndarray, x: float, y: float, r: float, age: float,
+             colors: tuple[tuple[int, int, int], tuple[int, int, int]], cfg: dict) -> None:
+    """The orb at (x, y) px, radius r: a ball split into the two team
     colours by an S-curve (a yin-yang: two half discs and a half-size disc
     of each colour on the dividing line), so it belongs to no team yet,
     turning at orb_spin_hz; a pale halo orb_halo radii wide, pulsing at
@@ -71,8 +71,8 @@ def draw_part(canvas: np.ndarray, x: float, y: float, r: float, age: float,
 
 def draw_pop(canvas: np.ndarray, x: float, y: float, r: float, age: float, life: float,
              color: tuple[int, int, int], cfg: dict) -> None:
-    """Where a punch collected a part: a ring in the collector's colour
-    growing from the part's size to orb_pop_ring radii, and orb_pop_drops
+    """Where a hand grabbed the orb: a ring in the player's colour growing
+    from the orb's size to orb_pop_ring radii, and orb_pop_drops
     drops flying out evenly all round, both shrinking to nothing over life
     (s)."""
     k = age / life
@@ -90,27 +90,26 @@ def draw_pop(canvas: np.ndarray, x: float, y: float, r: float, age: float, life:
         cv2.fillPoly(canvas, [fixed(drop)], color, cv2.LINE_AA, SHIFT)
 
 
-def draw_slots(canvas: np.ndarray, centers: list[tuple[float, float]], r: float, filled: int,
-               color: tuple[int, int, int], glow: float) -> None:
-    """The orb slots, one small ball per part: the first `filled` in the
-    team colour with a white shine, the rest dark with an off-white
-    outline. glow (0-1) brightens the filled ones (a full orb pulses)."""
-    lit = _mix(color, (255, 255, 255), 0.45 * glow)
-    for i, (cx, cy) in enumerate(centers):
-        c, ri = _p((cx, cy)), max(1 << SHIFT, int(r * (1 << SHIFT)))
-        if i < filled:
-            cv2.circle(canvas, c, ri, lit, -1, cv2.LINE_AA, SHIFT)
-            cv2.circle(canvas, _p((cx - 0.3 * r, cy - 0.3 * r)), ri // 3, (255, 255, 255), -1,
-                       cv2.LINE_AA, SHIFT)
-        else:
-            cv2.circle(canvas, c, ri, DARK, -1, cv2.LINE_AA, SHIFT)
-        cv2.circle(canvas, c, ri, WHITE, 1, cv2.LINE_AA, SHIFT)
+def draw_slot(canvas: np.ndarray, center: tuple[float, float], r: float, filled: bool,
+              color: tuple[int, int, int], glow: float) -> None:
+    """The orb slot, a small ball: filled in the team colour with a white
+    shine while the player holds the orb, else dark; an off-white outline.
+    glow (0-1) brightens the filled ball (it pulses)."""
+    cx, cy = center
+    c, ri = _p((cx, cy)), max(1 << SHIFT, int(r * (1 << SHIFT)))
+    if filled:
+        cv2.circle(canvas, c, ri, _mix(color, (255, 255, 255), 0.45 * glow), -1, cv2.LINE_AA, SHIFT)
+        cv2.circle(canvas, _p((cx - 0.3 * r, cy - 0.3 * r)), ri // 3, (255, 255, 255), -1,
+                   cv2.LINE_AA, SHIFT)
+    else:
+        cv2.circle(canvas, c, ri, DARK, -1, cv2.LINE_AA, SHIFT)
+    cv2.circle(canvas, c, ri, WHITE, 1, cv2.LINE_AA, SHIFT)
 
 
 def draw_body_glow(canvas: np.ndarray, torso: np.ndarray, motion: Motion | None,
                    head: tuple[np.ndarray, float] | None, color: tuple[int, int, int],
                    strength: float, cfg: dict) -> None:
-    """A player whose orb is full glows: a soft halo round the body and a
+    """A player holding the orb glows: a soft halo round the body and a
     lighter tint on it, in their team colour moved glow_white of the way to
     white, so it reads as light, also on a shirt of the same colour.
 

@@ -7,7 +7,7 @@ optical flow carries it for a while; after that the effect holds and fades.
 
 MediaPipe Face Landmarker runs on the face for one player per frame, in turn.
 It gives the head rotation (for the 3D anchors, see head_pose.py) and the
-blendshape scores (mouth opening, blinks, smile, ...). Between its updates,
+blendshape scores (mouth opening, smile, ...). Between its updates,
 and when it fails, the pose comes from solvePnP on YuNet's landmarks plus the
 pose model's ears.
 
@@ -281,7 +281,7 @@ class FaceTracker:
             faces[pid] = Face(pid=pid, valid=alpha > 0, landmarks=st.landmarks, center=g["center"],
                               scale=g["width"], roll=g["roll"], yaw=st.yaw,
                               anchors=g["anchors"], alpha=alpha,
-                              blendshapes=dict(st.blendshapes) if recent else {}, pitch=st.pitch)
+                              blendshapes=dict(st.blendshapes) if recent else {},)
         return faces
 
     def _landmark(self, image: np.ndarray, st: _FaceState, t: float) -> None:
@@ -409,8 +409,8 @@ class FaceTracker:
         source: detect | flow | hold, or empty while no face was found.
         mouth_x/y is the smoothed mouth anchor; mouth_raw_x/y the unsmoothed
         upper-lip key point, only on detect frames (it is a measurement there).
-        pose: mediapipe | pnp | empty (2D anchors). jaw_open, blink and smile
-        are MediaPipe blendshape scores (blink and smile: mean of both sides).
+        pose: mediapipe | pnp | empty (2D anchors). jaw_open and smile are
+        MediaPipe blendshape scores (smile: mean of both sides).
         """
         row: dict = {}
         for pid, st in sorted(self._state.items()):
@@ -431,7 +431,6 @@ class FaceTracker:
             b = f.blendshapes
             if b:
                 row[pre + "jaw_open"] = b.get("jawOpen", 0.0)
-                row[pre + "blink"] = (b.get("eyeBlinkLeft", 0.0) + b.get("eyeBlinkRight", 0.0)) / 2
                 row[pre + "smile"] = (b.get("mouthSmileLeft", 0.0) + b.get("mouthSmileRight", 0.0)) / 2
             row[pre + "mp"] = int(st.mp_t == state.frame.t)   # 1 = landmarker result this frame
             row[pre + "mouth_x"], row[pre + "mouth_y"] = (float(v) for v in f.anchors["mouth"])
@@ -450,7 +449,7 @@ class FaceTracker:
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
         """Head crop (dashed) labelled with the source (detect + YuNet score,
-        flow, hold), alpha and pose; head axes; jawOpen and blink bars;
+        flow, hold), alpha and pose; head axes; jawOpen and smile bars;
         landmarks; flow points while flowing; face centre, scale circle and
         every anchor with its name."""
         for pid, st in self._state.items():
@@ -478,7 +477,7 @@ class FaceTracker:
                 b = f.blendshapes
                 x0, y0 = pt(f.center + np.array([0.7 * f.scale, -0.3 * f.scale]))
                 bars = [("jaw", b.get("jawOpen", 0.0)),
-                        ("blink", (b.get("eyeBlinkLeft", 0.0) + b.get("eyeBlinkRight", 0.0)) / 2)]
+                        ("smile", (b.get("mouthSmileLeft", 0.0) + b.get("mouthSmileRight", 0.0)) / 2)]
                 for i, (name, v) in enumerate(bars):
                     y = y0 + 16 * i
                     cv2.rectangle(canvas, (x0, y), (x0 + 60, y + 10), (40, 40, 40), -1)

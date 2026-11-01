@@ -85,3 +85,71 @@ def test_stub_passes_through(cfg):
 def test_unknown_backend_raises(cfg):
     with pytest.raises(ValueError):
         MotionFilter({**cfg, "backend": "kalman"})
+
+
+# --- Wrist speed signals and logging ------------------------------------------
+
+def body(dx_wrist: float = 0.0, conf: np.ndarray | None = None, jitter: float = 0.0) -> dict[int, Player]:
+    """A player with shoulders 100 px apart; the screen-right wrist (model's
+    L_WRIST) moved dx_wrist px to the right; every keypoint shifted by jitter px."""
+    kpts = np.zeros((sk.K, 2))
+    kpts[:, 1] = np.linspace(100, 400, sk.K)
+    kpts[:, 0] = 200.0
+    kpts[sk.L_SHOULDER], kpts[sk.R_SHOULDER] = (250.0, 200.0), (150.0, 200.0)
+    kpts[sk.L_WRIST, 0] += dx_wrist
+    kpts += jitter
+    conf = np.full(sk.K, 0.9) if conf is None else conf
+    d = PoseDetection(bbox=np.array([100, 80, 300, 420.0]), kpts=kpts, conf=conf, score=0.9)
+    return {1: Player(pid=1, status="active", det=d, bbox=d.bbox, pos=np.zeros(2), reentered=False)}
+
+
+def test_wrist_speed_in_shoulder_widths_per_second(cfg):
+    f = MotionFilter({**cfg, "backend": "stub"})       # no smoothing: exact numbers
+    f.update(body(), 0.0)
+    m = f.update(body(dx_wrist=20.0), 0.1)[1]          # 20 px in 0.1 s = 200 px/s = 2 sw/s
+    assert m.signals["l_wrist_speed"] == pytest.approx(2.0)
+    assert m.signals["r_wrist_speed"] == pytest.approx(0.0)
+
+
+def test_no_wrist_speed_without_shoulders_or_wrist(cfg):
+    f = MotionFilter({**cfg, "backend": "stub"})
+    low = np.full(sk.K, 0.9)
+    low[sk.R_WRIST] = 0.1
+    assert set(f.update(body(conf=low), 0.0)[1].signals) == {"l_wrist_speed"}
+    low[sk.L_SHOULDER] = 0.1
+    assert f.update(body(conf=low), 0.1)[1].signals == {}
+    narrow = body()
+    narrow[1].det.kpts[sk.L_SHOULDER, 0] = 155.0       # 5 px: under min_shoulder_px
+    assert f.update(narrow, 0.2)[1].signals == {}
+
+
+def state_of(motion):
+    from ipcvgame.core.types import FrameState
+    return FrameState(frame=None, players={}, motion=motion, faces={}, events=[], timings={})
+
+
+def test_log_shows_smoothing_cuts_jitter(cfg):
+    """A still player whose detection jumps 2 px back and forth every frame:
+    the smoothed points move less than the raw ones, and lag behind them."""
+    f = MotionFilter(cfg)
+    rows = []
+    for i in range(30):
+        motion = f.update(body(jitter=2.0 * (i % 2)), i / 30)
+        rows.append(f.log_fields(state_of(motion)))
+    assert rows[0]["motion_p1_raw_step_px"] == ""      # first frame: nothing to compare with
+    last = rows[-1]
+    assert last["motion_p1_raw_step_px"] == pytest.approx(2.0 * np.sqrt(2), abs=1e-3)
+    assert 0 < last["motion_p1_smooth_step_px"] < last["motion_p1_raw_step_px"]
+    assert last["motion_p1_lag_px"] > 0
+    assert last["motion_p1_valid"] == sk.K and last["motion_p1_held"] == 0
+    assert last["motion_p1_l_wrist_speed"] != ""
+
+
+def test_log_counts_held_keypoints(cfg):
+    f = MotionFilter(cfg)
+    f.update(body(), 0.0)
+    low = np.full(sk.K, 0.9)
+    low[[sk.L_WRIST, sk.R_WRIST]] = 0.1
+    motion = f.update(body(conf=low), 0.05)
+    row = f.log_fields(state_of(motion))
+    assert row["motion_p1_valid"] == sk.K and row["motion_p1_held"] == 2

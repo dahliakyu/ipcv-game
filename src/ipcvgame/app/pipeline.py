@@ -125,7 +125,7 @@ class Pipeline:
                 faces = self._guard("face", t, lambda: self.face.update(frame, players), {})
         if self._runs("gestures"):
             with prof("gestures"):
-                events = self._guard("gestures", t, lambda: self.gestures.update(motion, t, faces), [])
+                events = self._guard("gestures", t, lambda: self.gestures.update(motion, t), [])
 
         # Timings of the previous full frame (this one is not finished yet).
         state = FrameState(frame, players, motion, faces, events, prof.last())

@@ -306,34 +306,19 @@ def test_instruction_panels_in_each_half_and_the_reminder_flashes():
     assert np.all(border(canvas, b1) == WHITE_PX, axis=1).all()
 
 
-def test_line_up_hint_replaces_the_reminder(monkeypatch):
-    """Players not level: the nearer player's panel says to step back, in
-    their team colour, instead of "TRY IT NOW!"."""
+def test_neutral_panel_says_what_it_does_and_reminds(monkeypatch):
+    """The neutral pose's panel: how to stand and "= MEASURING YOU"; after
+    remind_s without it, "TRY IT NOW!"."""
     from tests.test_game import run, with_faces
     r, game = plain(), intro_game()
     t = run(game, 0.0, game.cfg["ready_s"], lambda t: with_faces(dark(t)))
-    late = t + r.cfg["remind_s"] + 0.3                      # reminder on, border not flashing
     texts = []
     monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
-    r.draw(dark(late), game)
-    assert "TRY IT NOW!" in texts and "STEP BACK TO LINE UP" not in texts
+    r.draw(dark(t), game)
+    assert "= MEASURING YOU" in texts and "TRY IT NOW!" not in texts
     texts.clear()
-    monkeypatch.setattr(game, "line_up_hint", lambda pid: "back" if pid == 1 else "wait")
-    r.draw(dark(late), game)
-    assert "STEP BACK TO LINE UP" in texts and "WAIT FOR THE OTHER PLAYER" in texts
-    assert "TRY IT NOW!" not in texts
-
-
-def test_neutral_panel_asks_to_stand_level(monkeypatch):
-    from tests.test_game import run, with_faces
-    texts = []
-    monkeypatch.setattr(cv2, "putText", lambda img, text, *a, **k: texts.append(text))
-    for players, shown in ((2, True), (1, False)):
-        r, game = plain(), intro_game(round_players=players)
-        t = run(game, 0.0, game.cfg["ready_s"], lambda t: with_faces(dark(t)))
-        texts.clear()
-        r.draw(dark(t), game)
-        assert ("STAND LEVEL WITH THE OTHER PLAYER" in texts) == shown
+    r.draw(dark(t + r.cfg["remind_s"] + 0.3), game)
+    assert "TRY IT NOW!" in texts
 
 
 def test_face_the_camera_shown_after_a_blocked_gesture(monkeypatch):
@@ -657,56 +642,48 @@ def test_blob_drawn_in_flight_and_burst_only_on_a_shield(game):
         assert red[300:500, 380:620].any() == (reason == "shield")  # drops only off a shield
 
 
-# --- Orb parts (final smash, merge_log.md, "Final smash") -------------------------
+# --- The orb (final smash, merge_log.md, "Final smash") -------------------
 
-def test_orb_part_drawn_in_both_colours(game):
-    from ipcvgame.interaction.game import OrbPart
+def test_orb_drawn_in_both_colours(game):
+    from ipcvgame.interaction.game import Orb
     r = plain()
     s = dark(0.0)
     game.update(s)
-    game.orb_part = OrbPart(500.0, 150.0, 0.0, 0.0)
+    game.orb = Orb(500.0, 150.0, 0.0, 0.0)
     out = r.draw(s, game)[120:180, 470:530]
     assert has_color(out, player_color(1)) and has_color(out, player_color(2))
 
 
 def test_grabbed_orb_pops_with_its_text(game):
-    from tests.test_game import grab, part_at
     r = plain()
-    game.cfg["orb_parts"] = game.orb_parts = 2              # two parts: a count first
     game.update(dark(0.0, xs=(200.0,)))
-    part_at(game, 350.0, 300.0)
-    grab(game, 0.1)
-    s = dark(0.2, xs=(200.0,))
+    game.get_player(1).has_orb = True
     game.orbs_taken = [(1, 350.0, 300.0)]                  # this frame's grab, for drawing
-    r.draw(s, game)
-    assert [p[1] for p in r._popups] == ["ORB 1/2"] and len(r._pops) == 1
-    game.get_player(1).orb = 2
-    r.draw(dark(0.3, xs=(200.0,)), game)
-    assert r._popups[-1][1] == "FULL ORB!"
+    r.draw(dark(0.2, xs=(200.0,)), game)
+    assert [p[1] for p in r._popups] == ["FULL ORB!"] and len(r._pops) == 1
 
 
-def test_orb_slots_fill_on_the_health_bar_row(game):
+def test_orb_slot_on_the_health_bar_row(game):
     r = plain()
     s = dark(0.0)
     game.update(s)
     h, w = s.frame.image.shape[:2]
     row = slice(h - 60, h - 12 - max(4, int(r.cfg["bar_h"] * h)))   # the label row above the bar
-    inner = slice(int(0.2 * w), int(0.35 * w))                      # P1's slots, at the bar's inner end
-    game.orb_parts = 4                                   # 2 of 4: filled, not pulsing
+    inner = slice(int(0.2 * w), int(0.35 * w))                      # P1's slot, at the bar's inner end
     assert not has_color(r.draw(s, game)[row, inner], player_color(1))
-    game.get_player(1).orb = 2
-    assert has_color(r.draw(dark(0.0), game)[row, inner], player_color(1))
+    game.get_player(1).has_orb = True
+    filled = r.draw(dark(0.0), game)[row, inner]
+    assert (np.abs(filled.astype(int) - player_color(1)) < 60).all(axis=2).any()   # team colour, pulsing
 
 
-def test_full_orb_makes_the_body_glow_and_logs_its_time(game):
+def test_holding_the_orb_makes_the_body_glow_and_logs_its_time(game):
     r = plain()
     s = dark(0.0, xs=(200.0,))
     game.update(s)
-    game.get_player(1).orb = game.orb_parts - 1
-    not_full = r.draw(s, game)
+    without = r.draw(s, game)
     assert r.glow_ms == {} and "render_p1_glow_ms" not in r.log_fields(s)
-    game.get_player(1).orb = game.orb_parts
-    full = r.draw(dark(0.0, xs=(200.0,)), game)
+    game.get_player(1).has_orb = True
+    holding = r.draw(dark(0.0, xs=(200.0,)), game)
     beside = (slice(400, 500), slice(60, 90))          # just outside P1's body box (100-300)
-    assert not not_full[beside].any() and full[beside].any()
+    assert not without[beside].any() and holding[beside].any()
     assert set(r.glow_ms) == {1} and "render_p1_glow_ms" in r.log_fields(s)

@@ -2155,6 +2155,7 @@ The fifth feature built from the backlog (feature 1 there, the "Final Smash Extr
 3. Head pitch and blinks.
 4. Interim: the full orb unlocks the beam.
 5. Interim 2: one orb, grabbed by hand.
+6. Blink detection removed.
 
 ### Changes
 
@@ -2206,7 +2207,7 @@ The fifth feature built from the backlog (feature 1 there, the "Final Smash Extr
 
 **Changed:** `tests/test_gestures.py`: blinks, baselines, low scores, hysteresis, eyes kept closed, a long gap, a one-frame glitch, looking down, no score, no baseline yet, the recognizer. `tests/test_face.py`: `Face.pitch`. `tests/test_game.py`: blinks are not moves.
 
-**On the clips:** at play distance the score hardly moves; the design's values give one blink in 110 s on `session.mp4` (see [limitations.md](limitations.md), "Blinks").
+**On the clips:** at play distance the score hardly moves; the design's values give one blink in 110 s on `session.mp4` (see [limitations.md](limitations.md), "Future improvements"); the detector was removed in step 6.
 
 #### Step 4 · Interim: the full orb unlocks the beam
 
@@ -2214,9 +2215,13 @@ For a playtest, the rain was postponed. **Changed:** `src/ipcvgame/interaction/g
 
 #### Step 5 · Interim 2: one orb, grabbed by hand
 
-The punch rarely hit the part, and four parts took too long. **Changed:** `src/ipcvgame/interaction/game.py`: `_grab_orb()`: either wrist within `orb_reach_sw` of the orb's edge (`_hand_on_orb()`) for `orb_grab_s`, with gaps up to `hold_gap_s`, grabs it (`_take_orb()`); a punch no longer collects; no orb spawns while someone holds a full one, so one is in the game at a time. `configs/default.yaml`: `orb_parts` 1 (the parts code stays), `orb_r_h` 0.045, `orb_grab_s` 0.1. `tests/test_game.py`, `tests/test_renderer.py`: grabbing by touch, either hand, out of reach, one orb at a time, a punch no longer collecting.
+The punch rarely hit the part, and four parts took too long. **Changed:** `src/ipcvgame/interaction/game.py`: `_grab_orb()`: either wrist within `orb_reach_sw` of the orb's edge (`_hand_on_orb()`) for `orb_grab_s`, with gaps up to `hold_gap_s`, grabs it (`_take_orb()`); a punch no longer collects; no orb spawns while someone holds a full one, so one is in the game at a time. `configs/default.yaml`: `orb_parts` 1, `orb_r_h` 0.045, `orb_grab_s` 0.1. `tests/test_game.py`, `tests/test_renderer.py`: grabbing by touch, either hand, out of reach, one orb at a time, a punch no longer collecting.
 
 **On the clips:** on `session.mp4` the right-hand player grabbed the orb at 9.6 s and fired the beam, the other at 78.7 s; on `shield.mp4` the player grabbed it by accident at 12.7 s ([limitations.md](limitations.md), "The orb can be grabbed by accident").
+
+#### Step 6 · Blink detection removed (2026-11-01)
+
+The paint rain that would end at the caster's blink was dropped, so nothing used the blink detector of step 3. **Removed:** `src/ipcvgame/interaction/gestures.py`: `blink_score()`, `BlinkDetector`, the `blink` and `eyes_closed` events, the `faces` argument of `GestureRecognizer.update()` and its CSV columns `gest_p<pid>_blink_base` and `_eyes_closed`. `src/ipcvgame/core/types.py`: `Face.pitch` (the face tracker keeps its own pitch for the head pose and still logs `face_p<pid>_pitch_deg`). `src/ipcvgame/face/tracker.py`: the `face_p<pid>_blink` column; the debug view shows a smile bar instead of a blink bar. `configs/default.yaml`: the `gestures: blink_*` keys. **Changed:** `src/ipcvgame/app/pipeline.py`: the gesture stage gets only the motion again; `src/ipcvgame/interaction/game.py`: every event goes through the facing check again (only gestures are sent). Tests for the detector, `Face.pitch` and blink events removed. The detector's design and clip findings are in [limitations.md](limitations.md), "Future improvements", "Final smash".
 
 ## Arena and stage guards: the room reacts to the fight, failing modules do not stop the game
 
@@ -2345,3 +2350,24 @@ On the webcam the wall paint beside the players was cut along straight lines wit
 **Changed:** `src/ipcvgame/scene/fire_ring.py`: `draw()` resizes only the frame shown; the cache is gone. `src/ipcvgame/scene/draw.py`: `blend_rgba()` blends with one `cv2.blendLinear` call and the sprite's alpha as the weight (also used for the beam and the drinks).
 
 **On `shield.mp4`** (`--no-intro`): 9.8 ms median (95th percentile 14 ms) on frames with the shield up, 3.3 ms without; the ring looks the same.
+
+## Motion: wrist speed and smoothing log (2026-11-01)
+
+**What.** The motion stage gave smoothed keypoints and velocities, but `Motion.signals` stayed empty and the stage logged nothing, so the effect of the smoothing could not be shown.
+
+**Changed:** `src/ipcvgame/pose/motion.py`
+- `Motion.signals`: `l_wrist_speed` and `r_wrist_speed`, the wrist's smoothed velocity divided by the smoothed shoulder width (shoulder widths per second, independent of the distance to the camera); only for a valid wrist with both shoulders valid and at least `min_shoulder_px` apart. `l_` is the model's label, the player's own right wrist on the mirrored frame.
+- `log_fields()`: per player, `motion_p<pid>_valid` and `_held` (keypoints valid, and of those held at their last position); `_raw_step_px` and `_smooth_step_px`, the mean distance the keypoints moved since the last frame in the raw detection and in the smoothed output, over the keypoints trusted in both frames; `_lag_px`, the mean distance between smoothed and raw keypoints; `_l_wrist_speed`, `_r_wrist_speed`.
+- `draw_debug()` (`--until motion`): each wrist's speed beside it.
+
+**Changed:** `configs/default.yaml`, `motion:` section: `min_shoulder_px` 10 (as `gestures.min_shoulder_px`). `tests/test_motion.py`: the speed in shoulder widths per second, no speed without shoulders or wrist, smoothing cutting the step of a jittering still player, held keypoints counted.
+
+**On the clips** (`--no-intro`):
+
+| Clip, player | Step raw → smoothed (px, median) | Still frames (both wrists < 0.5 sw/s) | Lag (px, median / 95th pct.) | Held keypoints per frame |
+| --- | --- | --- | --- | --- |
+| `session.mp4`, P1 | 3.04 → 2.29 (−25%) | 730 frames: 1.53 → 1.06 (−31%) | 1.08 / 6.41 | 0.17 |
+| `session.mp4`, P2 | 2.70 → 2.13 (−21%) | 535 frames: 1.34 → 0.98 (−27%) | 0.96 / 3.43 | 0.14 |
+| `shield.mp4`, P1 (close up) | 9.39 → 7.76 (−17%) | 79 frames: 4.58 → 4.08 (−11%) | 3.29 / 14.1 | 0.45 |
+
+The light EMA (`tau` 0.048 s) cuts the frame-to-frame jitter of a still player by about a quarter to a third at ~2.3 m, at a lag of about 1 px; the lag reaches several px only in fast moves. Wrist speeds around punches are in [limitations.md](limitations.md), "Punch: decided per frame from the pose".

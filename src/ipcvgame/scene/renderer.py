@@ -20,11 +20,11 @@ purple shield defense), a drink held at a mouth in front of the face, a
 pick-up text rising beside the drinker's head, and the running attack and
 defense buffs as icons with a time bar above each health bar.
 
-Orb parts for the final smash (docs/merge_log.md, "Final smash"; drawing in
-scene/orb.py): the bouncing part in both team colours, a pop and "ORB n/4"
-where a punch collected it, the four orb slots on each health bar's label
-row, and a player whose orb is full glowing in their team colour, with
-"RAISE YOUR ARMS" beside the head.
+The orb for the final smash (docs/merge_log.md, "Final smash"; drawing in
+scene/orb.py): the bouncing orb in both team colours, a pop and "FULL
+ORB!" where a hand grabbed it, an orb slot on each health bar's label row,
+and a player holding the orb glowing in their team colour, with "RAISE
+YOUR ARMS" on the chest.
 
 Around the round (game start, docs/merge_log.md), the game's phase
 decides what else is drawn: the players' start places while waiting, an
@@ -68,7 +68,7 @@ from ipcvgame.scene.draw import (
 from ipcvgame.scene.fire_ring import FireRing
 from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
 from ipcvgame.scene.magic_beam import MagicBeam
-from ipcvgame.scene.orb import draw_body_glow, draw_part, draw_pop, draw_slots
+from ipcvgame.scene.orb import draw_body_glow, draw_orb, draw_pop, draw_slot
 from ipcvgame.scene.paint import BodyPaint, draw_blob, draw_burst
 
 WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
@@ -79,10 +79,6 @@ DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and pan
 GREY = (120, 115, 105)      # moves still to do, in the instruction panels
 STAR = (60, 220, 255)       # dizzy stars (BGR yellow)
 GOLD = (40, 190, 255)       # the crown (BGR gold)
-# Calibration panel while the players do not stand level (Game.line_up_hint()).
-LINE_UP_TEXT = {"back": "STEP BACK TO LINE UP", "wait": "WAIT FOR THE OTHER PLAYER"}
-# Neutral pose with two players: the standing instruction for the line-up.
-STAND_LEVEL_TEXT = "STAND LEVEL WITH THE OTHER PLAYER"
 # The top bar's text in the phases around the round (playing: CONTROLS).
 PHASE_TEXT = {
     "waiting": "STAND IN YOUR PLACE",
@@ -112,7 +108,7 @@ class Renderer:
         self._drink_sprites: dict[str, list[np.ndarray]] = {}   # per buff kind, on first use
         # Pick-up texts: (pid, text, colour, Frame.t it started).
         self._popups: list[tuple[int, str, tuple[int, int, int], float]] = []
-        # Orb pops where a part was collected: (pid, x, y, Frame.t it started).
+        # Orb pops where the orb was grabbed: (pid, x, y, Frame.t it started).
         self._pops: list[tuple[int, float, float, float]] = []
         self._paint: dict[int, BodyPaint] = {}    # paint per player
         self.paint_ms: dict[int, float] = {}       # this frame's paint time per player (log)
@@ -172,7 +168,7 @@ class Renderer:
         self.glow_ms = {}
         if phase == "playing":
             for pid in visible:
-                if game.players[pid].orb >= game.orb_parts:
+                if game.players[pid].has_orb:
                     t0 = time.perf_counter()
                     self._draw_glow(canvas, pid, state, game)
                     self.glow_ms[pid] = (time.perf_counter() - t0) * 1000.0
@@ -199,7 +195,7 @@ class Renderer:
         if phase in ("countdown", "playing", "result"):
             for pid in sorted(game.players):
                 self._draw_player_health(canvas, pid, game)
-                self._draw_orb_slots(canvas, pid, game, state.frame.t)
+                self._draw_orb_slot(canvas, pid, game, state.frame.t)
                 self._draw_buffs(canvas, pid, game)
         top = self._draw_hud(canvas, status_text(phase, has_player=bool(visible)),
                              game_over=phase == "result")
@@ -349,10 +345,7 @@ class Renderer:
         flashes and "TRY IT NOW!" appears. The neutral pose has a bar that
         fills while it is held (game.neutral_fraction()); a player whose arm
         measured short for the punch rule (game.short_arm()) is told to
-        stretch it fully on the punch panel. With two players, the neutral
-        pose also asks them to stand level; while it waits for that
-        (game.line_up_hint()), the nearer player is told to step back and
-        the other to wait, instead of that line and the reminder."""
+        stretch it fully on the punch panel."""
         x1, y1, x2, y2 = self.instruction_box(pid, len(game.round_players), canvas.shape)
         x1, y1 = max(x1, 0), max(y1, 0)
         x2, y2 = min(x2, canvas.shape[1]), min(y2, canvas.shape[0])
@@ -390,21 +383,11 @@ class Renderer:
             draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
         else:
             title, how, effect = MOVE_TEXT[move]
-            # With two players the neutral pose asks them to stand level, in
-            # place of "= MEASURING YOU" (the bar shows that), so the panel
-            # still fits a reminder.
-            level = move == "neutral" and len(game.round_players) > 1
-            lines = [how] if level else [how, "= " + effect]
+            lines = [how, "= " + effect]
             if move == "punch" and game.short_arm(pid):
                 lines.append("STRETCH YOUR ARM ALL THE WAY")
-            hint = LINE_UP_TEXT.get(game.line_up_hint(pid))
-            if hint:
-                lines.append(hint)        # more useful than a reminder
-            else:
-                if level:
-                    lines.append(STAND_LEVEL_TEXT)
-                if remind:
-                    lines.append("TRY IT NOW!")
+            if remind:
+                lines.append("TRY IT NOW!")
             draw_figure(canvas, move, fig_center, fig, color, mirror=pid == 2)
 
         tx, text_w = x1 + 2 * pad + fig, x2 - x1 - 3 * pad - fig
@@ -644,8 +627,8 @@ class Renderer:
 
     def _draw_popups(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
         """For popup_s after a drink: "+18 HP", "ATTACK x1.4" or "DEFENSE
-        35%" in the buff's colour; after an orb part: "ORB 2/4" in the team
-        colour ("FULL ORB!" for the last). Beside the player's head on the side
+        35%" in the buff's colour; after grabbing the orb: "FULL ORB!" in the
+        team colour. Beside the player's head on the side
         towards the middle of the frame, rising by popup_rise_h of the frame
         height and fading over the last third. It starts at the mouth and
         follows the player; without a face, at the top of the body box."""
@@ -655,9 +638,7 @@ class Renderer:
                     "defense": f"DEFENSE {d.value:.0%}"}[d.kind]
             self._popups.append((d.pid, text, DRINK_COLORS[d.kind], t))
         for pid, _, _ in game.orbs_taken:
-            n = game.players[pid].orb
-            text = "FULL ORB!" if n >= game.orb_parts else f"ORB {n}/{game.orb_parts}"
-            self._popups.append((pid, text, player_color(pid), t))
+            self._popups.append((pid, "FULL ORB!", player_color(pid), t))
         self._popups = [p for p in self._popups if 0 <= t - p[3] < cfg["popup_s"]]
         h, w = canvas.shape[:2]
         scale = self._scale(canvas, "popup_text_scale")
@@ -686,7 +667,7 @@ class Renderer:
     # ---------------------------------------------------------------- orb
 
     def _draw_glow(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game) -> None:
-        """pid's orb is full: their body glows in their team colour
+        """pid holds the orb: their body glows in their team colour
         (scene/orb.py draw_body_glow()), pulsing between glow_alpha's two
         values at glow_hz. The head is a disc glow_head_fw face widths round
         the face centre (none without a face)."""
@@ -699,7 +680,7 @@ class Renderer:
                        lo + (hi - lo) * pulse, cfg)
 
     def _draw_raise_arms(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
-        """"RAISE YOUR ARMS" for each visible player whose orb is full, in
+        """"RAISE YOUR ARMS" for each visible player holding the orb, in
         their team colour, centred on the shoulder line (beside the head it
         ran into the name tag, hat and crown), growing and shrinking a
         little at glow_hz with the glow. Without shoulders: at the top of
@@ -711,7 +692,7 @@ class Renderer:
         thick = max(1, int(round(scale)))
         for pid, player in sorted(game.players.items()):
             p = state.players.get(pid)
-            if player.orb < game.orb_parts or p is None or p.status != "active":
+            if not player.has_orb or p is None or p.status != "active":
                 continue
             m = state.motion.get(pid)
             torso = game.torso(m) if m is not None else None
@@ -727,11 +708,11 @@ class Renderer:
             cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
                         cv2.LINE_AA)
 
-    def _draw_orb_slots(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
-        """pid's orb parts as game.orb_parts small balls on their health bar's
-        label row, at the end towards the middle of the frame (the label
-        "PLAYER N" is at the outer end): filled in the team colour per part
-        collected; all pulsing at glow_hz once the orb is full."""
+    def _draw_orb_slot(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
+        """pid's orb slot, a small ball on their health bar's label row, at
+        the end towards the middle of the frame (the label "PLAYER N" is at
+        the outer end): filled in the team colour and pulsing at glow_hz
+        while they hold the orb."""
         if pid not in (1, 2) or pid not in game.players:
             return
         cfg = self.cfg
@@ -743,13 +724,10 @@ class Renderer:
         right = left + length
         r = max(3.0, 0.4 * label_h)
         cy = h - 12 - bar_h - label_h / 2.0 - 1
-        step = 2.6 * r
-        n = game.orb_parts
-        xs = [right - r - 1 - (n - 1 - i) * step for i in range(n)] if pid == 1 else \
-             [left + r + 1 + i * step for i in range(n)]
-        filled = game.players[pid].orb
-        glow = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * t) if filled >= n else 0.0
-        draw_slots(canvas, [(x, cy) for x in xs], r, filled, player_color(pid), glow)
+        x = right - r - 1 if pid == 1 else left + r + 1
+        held = game.players[pid].has_orb
+        glow = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * t) if held else 0.0
+        draw_slot(canvas, (x, cy), r, held, player_color(pid), glow)
 
     def _draw_buffs(self, canvas: np.ndarray, pid: int, game: Game) -> None:
         """The running attack and defense buffs above the player's health
@@ -835,7 +813,7 @@ class Renderer:
     # ----------------------------------------------------------- game objects
 
     def draw_game(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
-        """The orb part and the pops where parts were collected (under
+        """The orb and the pops where it was grabbed (under
         everything else: the attacks fly in front), bolts (the paint blob,
         the normal attack, and its burst into
         drops where a shield stopped it; at a hit the splash on the body
@@ -843,14 +821,14 @@ class Renderer:
         and beam) and shields (ring of fire on the chest)."""
         cfg = self.cfg
         t = state.frame.t
-        part_r = game.orb_radius()
-        if game.orb_part is not None:
-            o = game.orb_part
-            draw_part(canvas, o.x, o.y, part_r, o.age, (player_color(1), player_color(2)), cfg)
+        orb_r = game.orb_radius()
+        if game.orb is not None:
+            o = game.orb
+            draw_orb(canvas, o.x, o.y, orb_r, o.age, (player_color(1), player_color(2)), cfg)
         self._pops += [(pid, x, y, t) for pid, x, y in game.orbs_taken]
         self._pops = [p for p in self._pops if 0 <= t - p[3] < cfg["orb_pop_s"]]
         for pid, x, y, t0 in self._pops:
-            draw_pop(canvas, x, y, part_r, t - t0, cfg["orb_pop_s"], player_color(pid), cfg)
+            draw_pop(canvas, x, y, orb_r, t - t0, cfg["orb_pop_s"], player_color(pid), cfg)
         radius = cfg["blob_r_w"] * canvas.shape[1]
         for b in game.projectiles:
             draw_blob(canvas, b.x, b.y, b.direction, b.age, radius, player_color(b.owner_id), cfg)

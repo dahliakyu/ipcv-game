@@ -8,15 +8,15 @@ Two players stand in front of one webcam and fight with their bodies. A punch th
 
 | Task (project brief §3) | What it does in the game | Code | Owner |
 | --- | --- | --- | --- |
-| 1 Face tracking and augmented effects | Finds each player's face (YuNet on a head crop from the pose, MediaPipe Face Landmarker for head rotation and expressions); draws a team hat, war paint and a mustache that follow the head; the hat flies off on a hit; cheeks bulge when drinking; mouth opening and blinks for the game | `src/ipcvgame/face/` | `<name>` |
+| 1 Face tracking and augmented effects | Finds each player's face (YuNet on a head crop from the pose, MediaPipe Face Landmarker for head rotation and expressions); draws a team hat, war paint and a mustache that follow the head; the hat flies off on a hit; cheeks bulge when drinking; the mouth opening catches drinks | `src/ipcvgame/face/` | `<name>` |
 | 2 Body pose estimation and motion tracking | YOLO26s-pose: 17 keypoints for every person in one pass; smoothing, short dropouts held, velocities; body measurements for the calibration | `src/ipcvgame/pose/` | `<name>` |
 | 3 Multiplayer detection and identity tracking | Stable Player 1 and Player 2 through crossing, occlusion and re-entry (BoT-SORT on the pose boxes, OSNet re-identification); position in metres | `src/ipcvgame/identity/` | `<name>` |
-| 4 Player interaction and game control | Rule-based gestures (punch, hands up, arms crossed; blinks) and the game rules: attacks, shield, damage, drinks, the orb, rounds | `src/ipcvgame/interaction/` | `<name>` |
+| 4 Player interaction and game control | Rule-based gestures (punch, hands up, arms crossed) and the game rules: attacks, shield, damage, drinks, the orb, rounds | `src/ipcvgame/interaction/` | `<name>` |
 | 5 Scene processing and real-time integration | The pipeline and its failure handling, webcam and clip input, logging; the game view: pixel look, paint on the bodies, the room reacting to the fight (wall paint, light, shake), sprites, health bars and screens | `src/ipcvgame/core/`, `io/`, `scene/`, `app/`, `tools/` | `<name>` |
 
 ## How to play
 
-1. **Start.** Both players stand in their start place (P1 left, P2 right) until the game sees them. Each player then learns the moves one at a time while the game measures them: standing still with the arms down (shoulder width and arm length), a punch, hands up and crossed arms. Stand side by side at the same distance from the camera, about 2–2.5 m away, and face the camera. A 3-2-1 countdown starts the round.
+1. **Start.** Both players stand in their start place (P1 left, P2 right) until the game sees them. Each player then learns the moves one at a time while the game measures them: standing still with the arms down (shoulder width and arm length), a punch, hands up and crossed arms. Stand about 2–2.5 m from the camera and face it. A 3-2-1 countdown starts the round.
 2. **Fight.** Gestures count only while facing the camera, and after each one return to a normal position (arms down) before the next.
 
    | Move | Effect |
@@ -62,7 +62,7 @@ Model weights are not in the repository or the ZIP. Download them into `models/`
 | --- | --- | --- |
 | `yolo26s-pose.pt` | Body pose (task 2), Ultralytics assets release v8.4.0 | AGPL-3.0 |
 | `face_detection_yunet_2023mar.onnx` | Face detection (task 1), OpenCV model zoo | MIT |
-| `face_landmarker.task` | Head rotation, mouth opening, blinks (task 1), MediaPipe model version 1 | Apache 2.0 |
+| `face_landmarker.task` | Head rotation, mouth opening (task 1), MediaPipe model version 1 | Apache 2.0 |
 | `osnet_x1_0_msmt17_combineall.pth` | Recognising a player who comes back (task 3), OSNet MSMT17 `combineall` from the authors' Hugging Face repo | MIT |
 | `selfie_segmenter_landscape.tflite` | Outline of the people, so wall paint stays behind them (task 5), MediaPipe model version 1 | Apache 2.0 |
 
@@ -141,7 +141,7 @@ src/ipcvgame/
     recorder.py            clip recording and per-frame CSV logs
   pose/                    task 2
     estimator.py           YOLO-pose wrapper
-    motion.py              keypoint smoothing, dropout hold, velocities
+    motion.py              keypoint smoothing, dropout hold, velocities, wrist speeds; jitter logging
     measure.py             shoulder width, arm and torso length
   identity/                task 3
     tracker.py             BoT-SORT tracks to persistent players, re-entry, position in metres
@@ -152,13 +152,13 @@ src/ipcvgame/
     landmarker.py          MediaPipe Face Landmarker (head rotation, blendshapes)
     effects.py             face effects: hat, war paint, mustache, hit reaction, cheek bulge
   interaction/             task 4
-    gestures.py            gesture rules and blink detection -> events
+    gestures.py            gesture rules -> events
     game.py                game rules, phases, drinks, orb, damage, paint positions
   scene/                   task 5: how the game looks
     renderer.py            the game view, in drawing order
     arena.py, segment.py   the room reacting to the fight; person mask (Selfie Segmenter)
     paint.py               paint splashes on the bodies, the paint blob
-    orb.py                 the orb, its slots and the full-orb glow
+    orb.py                 the orb, its slot and the glow of the player holding it
     fire_ring.py, magic_beam.py, animation.py   sprite effects (shield, beam)
     instructions.py, draw.py   intro figures and texts; colours and drawing helpers
   app/

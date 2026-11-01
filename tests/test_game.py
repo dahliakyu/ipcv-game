@@ -391,9 +391,9 @@ def test_punch_without_wrists_fires_from_the_box_edge(game):
 
 
 def full_orb(game, *pids) -> Game:
-    """Give the players a full orb: hands up fires the beam only then."""
+    """Give the players the orb: hands up fires the beam only then."""
     for pid in pids:
-        game.get_player(pid).orb = game.orb_parts
+        game.get_player(pid).has_orb = True
     return game
 
 
@@ -782,11 +782,7 @@ def test_not_neutral(intro, change):
         return s
     measured(intro, t, make)
     assert intro.current_move(1) == "neutral" and intro.get_player(1).shoulder_px is None
-    if change == "no_face":
-        # P1 not in view: the line-up cannot be checked, so P2 waits too.
-        assert intro.current_move(2) == "neutral" and intro.line_up_hint(2) == "wait"
-    else:
-        assert intro.current_move(2) == "punch"                     # P2 stood still
+    assert intro.current_move(2) == "punch"                         # P2 stood still
 
 
 def test_neutral_hold_starts_over_after_a_long_break(intro):
@@ -815,60 +811,6 @@ def test_short_arm_is_flagged(intro):
     assert intro.arm_sw(1) == pytest.approx(1.2) and intro.short_arm(1)
 
 
-# --- Line-up in the calibration (merge_log.md, "Game start: Modifications")
-
-def depths(state: FrameState, d: dict[int, float]) -> FrameState:
-    for pid, depth in d.items():
-        state.players[pid].pos = np.array([0.0, depth])
-    return state
-
-
-def test_level_by_depth_allows_measuring(intro):
-    t = to_calibration(intro)
-    measured(intro, t, lambda t: depths(standing(t), {1: 2.5, 2: 2.7}))
-    assert intro.current_move(1) == intro.current_move(2) == "punch"
-    assert intro.level and intro.line_gap == pytest.approx(0.2)
-
-
-def test_not_level_sends_the_nearer_player_back(intro):
-    t = to_calibration(intro)
-    measured(intro, t, lambda t: depths(standing(t), {1: 2.0, 2: 2.6}))
-    assert intro.current_move(1) == intro.current_move(2) == "neutral"
-    assert not intro.level and intro.nearer == 1
-    assert intro.line_up_hint(1) == "back" and intro.line_up_hint(2) == "wait"
-    assert intro.log_fields(standing(t))["game_level"] == 0
-    t = measured(intro, t + 3, lambda t: depths(standing(t), {1: 2.4, 2: 2.6}))
-    assert intro.level and intro.current_move(1) == intro.current_move(2) == "punch"
-    assert intro.line_up_hint(1) is None                                   # nobody needs the line-up now
-
-
-def test_measured_player_still_told_to_step_back(intro):
-    """P1 is measured; P2 still needs the neutral pose and P1 steps forward:
-    P1's (punch) panel tells them to step back."""
-    t = to_calibration(intro)
-    t = measured(intro, t, lambda t: neutral(with_faces(frame_state(t)), pids=(1,)))
-    assert intro.current_move(1) == "punch" and intro.current_move(2) == "neutral"
-    intro.update(depths(standing(t + 0.1), {1: 1.9, 2: 2.6}))
-    assert intro.line_up_hint(1) == "back" and intro.line_up_hint(2) == "wait"
-
-
-def test_solo_has_no_line_up():
-    g = Game({**load_config()["game"], "intro": True, "round_players": 1, **NO_FACING})
-    t = run(g, 0.0, g.cfg["ready_s"], in_place)
-    measured(g, t, lambda t: depths(standing(t), {1: 1.0, 2: 3.0}))
-    assert g.level and g.current_move(1) == "punch"
-
-
-def test_line_up_hysteresis(intro):
-    """Not level at 0.5 m; at 0.35 m (under 0.4 m, but over 0.75 x 0.4 m)
-    still not level; at 0.25 m level again."""
-    t = to_calibration(intro)
-    for gap, level in ((0.5, False), (0.35, False), (0.25, True), (0.35, True)):
-        t += 0.1
-        intro.update(depths(standing(t), {1: 2.0, 2: 2.0 + gap}))
-        assert intro.level == level, gap
-
-
 # --- Gestures count only facing the camera (merge_log.md, "Game start: Modifications")
 
 def facing_game(**over) -> Game:
@@ -886,14 +828,6 @@ def test_gesture_counts_only_facing_the_camera():
     g.update(s)
     assert g.actions == [(1, "bolt"), (2, "not_facing_punch")]
     assert facing_game(act_facing_camera=False).facing_camera(frame_state(0.0), 1)
-
-
-def test_blink_events_are_not_moves():
-    """Blinks come from the gesture stage too, but are not actions: no
-    facing check, no FACE THE CAMERA hint."""
-    g = facing_game()
-    g.update(frame_state(0.0, events=[(1, "blink"), (2, "eyes_closed")]))
-    assert g.actions == [] and g.not_facing_t == {}
 
 
 def test_body_turn_from_shoulders_against_torso_with_arms_down():
@@ -1254,7 +1188,7 @@ def test_mouth_closing_as_time_runs_out_still_drinks():
     assert d not in g.drinks and [x.pid for x in g.drunk] == [1]
 
 
-# --- Orb parts (final smash, merge_log.md, "Final smash") ---------------------------
+# --- The orb (final smash, merge_log.md, "Final smash") ---------------------
 
 NO_ORB = {"orb_every_s": [1e9, 1e9]}
 
@@ -1265,11 +1199,11 @@ def orb_game(**over) -> Game:
     return g
 
 
-def part_at(g: Game, x: float, y: float):
-    """Put a still orb part at (x, y) px."""
-    from ipcvgame.interaction.game import OrbPart
-    g.orb_part = OrbPart(x, y, 0.0, 0.0)
-    return g.orb_part
+def orb_at(g: Game, x: float, y: float):
+    """Put a still orb at (x, y) px."""
+    from ipcvgame.interaction.game import Orb
+    g.orb = Orb(x, y, 0.0, 0.0)
+    return g.orb
 
 
 def touch_at(t: float, hand: tuple[float, float], xs=(200.0,), pid: int = 1) -> FrameState:
@@ -1285,51 +1219,49 @@ def grab(g: Game, t: float, hand=(350.0, 300.0), **kw) -> None:
     g.update(touch_at(t + g.cfg["orb_grab_s"] + 0.01, hand, **kw))
 
 
-def test_one_orb_part_at_a_time_enters_from_the_top():
+def test_the_orb_enters_from_the_top():
     g = orb_game(orb_every_s=[1.0, 1.0])
     g.advance(0.9)
-    assert g.orb_part is None
+    assert g.orb is None
     g.advance(0.2)
-    part = g.orb_part
+    orb = g.orb
     lo, hi = g.cfg["orb_margin_w"], 1 - g.cfg["orb_margin_w"]
-    assert lo * W <= part.x <= hi * W
-    assert part.y == pytest.approx(-g.orb_radius())          # just above the frame
-    assert part.vy > 0                                     # moving down into the frame
-    speed = np.hypot(part.vx, part.vy)
-    assert speed == pytest.approx(g.cfg["orb_speed_w"] * W)
+    assert lo * W <= orb.x <= hi * W
+    assert orb.y == pytest.approx(-g.orb_radius())          # just above the frame
+    assert orb.vy > 0                                     # moving down into the frame
+    assert np.hypot(orb.vx, orb.vy) == pytest.approx(g.cfg["orb_speed_w"] * W)
     for _ in range(100):
         g.advance(0.1)
-    assert g.orb_part is part                              # no second part while it is there
+    assert g.orb is orb                                   # no second orb while it is there
 
 
-def test_orb_part_bounces_inside_its_band():
+def test_the_orb_bounces_inside_its_band():
     g = orb_game(orb_every_s=[0.0, 0.0])
     g.advance(0.0)
-    part = g.orb_part
+    orb = g.orb
     top, bottom = g.orb_band()
     margin = g.cfg["orb_margin_w"] * W
-    step = g.cfg["orb_speed_w"] * W * 0.05                 # one frame's movement
+    step = g.cfg["orb_speed_w"] * W * 0.05                # one frame's movement
     ys = []
-    while part.y < top:                                    # entering from above
+    while orb.y < top:                                    # entering from above
         g.advance(0.05)
-    for _ in range(2000):                                  # 100 s
+    for _ in range(2000):                                 # 100 s
         g.advance(0.05)
-        assert top - step <= part.y <= bottom + step
-        assert margin - step <= part.x <= W - margin + step
-        ys.append(part.y)
+        assert top - step <= orb.y <= bottom + step
+        assert margin - step <= orb.x <= W - margin + step
+        ys.append(orb.y)
     assert min(ys) < top + 0.1 * (bottom - top) and max(ys) > bottom - 0.1 * (bottom - top)
 
 
 def test_one_player_grabs_the_orb_by_touching_it():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
-    sw = 100.0                                             # body(): shoulders 100 px apart
-    reach = g.orb_radius() + g.cfg["orb_reach_sw"] * sw
-    part_at(g, 350.0 + reach - 1, 300.0)
+    reach = g.orb_radius() + g.cfg["orb_reach_sw"] * 100.0   # body(): shoulders 100 px apart
+    orb_at(g, 350.0 + reach - 1, 300.0)
     g.update(touch_at(0.1, (350.0, 300.0)))
-    assert g.get_player(1).orb == 0                        # a single frame is not a grab
+    assert not g.get_player(1).has_orb                    # a single frame is not a grab
     g.update(touch_at(0.1 + g.cfg["orb_grab_s"], (350.0, 300.0)))
-    assert g.get_player(1).orb == 1 and g.orb_part is None and g.actions == [(1, "orb")]
+    assert g.get_player(1).has_orb and g.orb is None and g.actions == [(1, "orb")]
     assert g.log_fields(frame_state(0.3, xs=(200.0,)))["game_p1_orb"] == 1
 
 
@@ -1337,123 +1269,102 @@ def test_hand_out_of_reach_does_not_grab():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
     reach = g.orb_radius() + g.cfg["orb_reach_sw"] * 100.0
-    part = part_at(g, 350.0 + reach + 1, 300.0)
+    orb = orb_at(g, 350.0 + reach + 1, 300.0)
     for i in range(1, 10):
         g.update(touch_at(0.1 * i, (350.0, 300.0)))
-    assert g.get_player(1).orb == 0 and g.orb_part is part
+    assert not g.get_player(1).has_orb and g.orb is orb
 
 
 def test_either_hand_grabs():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
-    part_at(g, 60.0, 300.0)                                # left of P1
+    orb_at(g, 60.0, 300.0)                                # left of P1
     for t in (0.1, 0.1 + g.cfg["orb_grab_s"]):
         s = frame_state(t, xs=(200.0,))
         s.motion[1].kpts[sk.R_WRIST] = (60.0, 300.0)
         g.update(s)
-    assert g.get_player(1).orb == 1
+    assert g.get_player(1).has_orb
 
 
-def test_one_orb_at_a_time_none_while_someone_holds_it():
+def test_no_new_orb_while_someone_holds_it():
     g = orb_game(orb_every_s=[2.0, 2.0])
     g.update(frame_state(0.0, xs=(200.0,)))
-    part_at(g, 350.0, 300.0)
+    orb_at(g, 350.0, 300.0)
     grab(g, 0.1)
-    for i in range(3, 100):                                # 10 s: no new orb while P1 holds it
+    for i in range(3, 100):                               # 10 s
         g.update(frame_state(0.1 * i, xs=(200.0,)))
-    assert g.orb_part is None
+    assert g.orb is None
 
 
-def test_next_part_comes_orb_every_s_after_a_grab_when_parts_need_collecting():
-    g = orb_game(orb_every_s=[2.0, 2.0], orb_parts=4)
-    g.update(frame_state(0.0, xs=(200.0,)))
-    part_at(g, 350.0, 300.0)
-    grab(g, 0.1)
-    assert g.get_player(1).orb == 1
-    for i in range(3, 21):                                 # up to 2.0 s (the grabbing frame counts)
-        g.update(frame_state(0.1 * i, xs=(200.0,)))
-        assert g.orb_part is None
-    for t in (2.1, 2.2, 2.3):                              # steps are capped at max_dt_s
-        g.update(frame_state(t, xs=(200.0,)))
-    assert g.orb_part is not None
-
-
-def test_full_orb_grabs_no_more_but_the_other_player_can():
+def test_the_other_player_can_grab_it():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0))
-    g.get_player(1).orb = g.orb_parts
-    part = part_at(g, 350.0, 300.0)
-    grab(g, 0.1, xs=(200.0, 800.0))
-    assert g.get_player(1).orb == g.orb_parts and g.orb_part is part
-    grab(g, 0.5, hand=(360.0, 300.0), xs=(200.0, 800.0), pid=2)   # P2 reaches over to it
-    assert g.get_player(2).orb == 1 and g.orb_part is None
+    orb_at(g, 360.0, 300.0)
+    grab(g, 0.1, hand=(360.0, 300.0), xs=(200.0, 800.0), pid=2)   # P2 reaches over to it
+    assert g.get_player(2).has_orb and not g.get_player(1).has_orb and g.orb is None
 
 
-def test_punch_no_longer_collects():
+def test_punch_does_not_grab():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
-    part_at(g, 350.0, 300.0)
+    orb_at(g, 350.0, 300.0)
     s = frame_state(0.1, events=[(1, "punch")], xs=(200.0,))
     s.motion[1].kpts[sk.L_WRIST] = (350.0, 300.0)
     g.update(s)
-    assert g.get_player(1).orb == 0 and (1, "bolt") in g.actions
+    assert not g.get_player(1).has_orb and (1, "bolt") in g.actions
 
 
-def test_test_orb_fills_p1_only_while_playing():
+def test_test_orb_gives_p1_the_orb_only_while_playing():
     g = orb_game()
     g.update(frame_state(0.0, xs=(200.0,)))
-    assert g.test_orb(1) and g.get_player(1).orb == g.orb_parts
+    assert g.test_orb(1) and g.get_player(1).has_orb
     assert (1, "test_orb") in g.actions
     waiting = Game({**load_config()["game"], **NO_FACING})
     waiting.update(frame_state(0.0, xs=(200.0,)))
-    assert not waiting.test_orb(1) and waiting.get_player(1).orb == 0
+    assert not waiting.test_orb(1) and not waiting.get_player(1).has_orb
 
 
-def test_new_round_clears_the_orbs_and_the_part():
+def test_new_round_clears_the_orb():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0))
-    g.get_player(1).orb, g.get_player(2).orb = 3, 1
-    part_at(g, 500.0, 300.0)
+    g.get_player(1).has_orb = True
+    orb_at(g, 500.0, 300.0)
     g.new_round()
-    assert (g.get_player(1).orb, g.get_player(2).orb, g.orb_part) == (0, 0, None)
+    assert not g.get_player(1).has_orb and g.orb is None
 
 
-def test_orb_parts_only_while_playing():
+def test_orb_only_while_playing():
     g = Game({**load_config()["game"], "orb_every_s": [0.0, 0.0], **NO_FACING})   # intro: waiting
     for i in range(5):
         g.update(frame_state(i * 0.1))
-    assert g.phase == "waiting" and g.orb_part is None
+    assert g.phase == "waiting" and g.orb is None
     row = g.log_fields(frame_state(0.5))
     assert (row["game_orb_x"], row["game_orb_y"]) == ("", "")
 
 
-def test_hands_up_fires_the_beam_only_with_a_full_orb():
+def test_hands_up_fires_the_beam_only_with_the_orb():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, events=[(1, "hands_up")], xs=(200.0,)))
     assert g.beams == [] and g.actions == [(1, "no_orb")]
-    g.get_player(1).orb = g.orb_parts - 1
-    g.update(frame_state(0.1, events=[(1, "hands_up")], xs=(200.0,)))
-    assert g.beams == [] and g.get_player(1).orb == g.orb_parts - 1   # nothing used up
 
 
-def test_firing_the_beam_empties_both_orbs_and_restarts_the_parts():
+def test_firing_the_beam_uses_the_orb_and_the_next_comes_later():
     g = orb_game(orb_every_s=[2.0, 2.0])
     g.update(frame_state(0.0))
-    g.get_player(1).orb, g.get_player(2).orb = g.orb_parts, 3
-    part_at(g, 500.0, 300.0)
+    g.get_player(1).has_orb = True
     g.update(frame_state(0.1, events=[(1, "hands_up")]))
     assert len(g.beams) == 1 and (1, "beam") in g.actions
-    assert (g.get_player(1).orb, g.get_player(2).orb, g.orb_part) == (0, 0, None)
-    for i in range(2, 20):    # next part orb_every_s later (firing frame counts)
+    assert not g.get_player(1).has_orb and g.orb is None
+    for i in range(2, 20):    # next orb orb_every_s later (firing frame counts)
         g.update(frame_state(0.1 * i))
-    assert g.orb_part is None
+    assert g.orb is None
     g.update(frame_state(2.25))
-    assert g.orb_part is not None
+    assert g.orb is not None
 
 
-def test_one_player_fills_the_orb_with_key_n_and_fires():
+def test_one_player_gets_the_orb_with_key_n_and_fires():
     g = orb_game(**NO_ORB)
     g.update(frame_state(0.0, xs=(200.0,)))
     g.test_orb(1)
     g.update(frame_state(0.1, events=[(1, "hands_up")], xs=(200.0,)))
-    assert len(g.beams) == 1 and g.get_player(1).orb == 0
+    assert len(g.beams) == 1 and not g.get_player(1).has_orb

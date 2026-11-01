@@ -405,7 +405,7 @@ class FakeLandmarker:
 
     def __call__(self, crop_bgr):
         FakeLandmarker.calls += 1
-        return {"blendshapes": {"jawOpen": 0.8, "eyeBlinkLeft": 0.1, "eyeBlinkRight": 0.1},
+        return {"blendshapes": {"jawOpen": 0.8, "mouthSmileLeft": 0.1, "mouthSmileRight": 0.1},
                 "matrix": mp_matrix(chin_up_deg=30)}
 
 
@@ -437,7 +437,6 @@ def test_landmarker_takes_turns_and_drives_pose(tmp_path, monkeypatch):
         assert f.blendshapes["jawOpen"] == pytest.approx(0.8)
         assert tr._state[f.pid].pose_src == "mediapipe"
         assert np.degrees(tr._state[f.pid].pitch) > 10                          # smoothed towards 30
-        assert f.pitch == tr._state[f.pid].pitch      # Face.pitch: blink filter
 
 
 @pytest.mark.parametrize("bad", ["nan", "collapsed"])

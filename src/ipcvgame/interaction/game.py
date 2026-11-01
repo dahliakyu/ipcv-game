@@ -23,15 +23,12 @@ the player deals and defense cuts the damage they take, each for
 drink_buff_s. A second drink of the same kind replaces the value and
 restarts the time.
 
-Orb (final smash, docs/merge_log.md, "Final smash"): while playing, an orb part
+Orb (final smash, docs/merge_log.md, "Final smash"): while playing, an orb
 enters from the top of the frame and bounces in a band at shoulder and
 head height (_advance_orb()). A hand that touches it grabs it
-(_grab_orb()); orb_parts of them make a player's full orb (1 for now: one
-orb, no parts). The next part comes orb_every_s after the last was
-grabbed, but none while someone holds a full orb. For now (a playtest,
-2026-10-29) the full orb unlocks the magic beam: hands up fires it only
-with a full orb, and firing it empties both players' orbs (_use_orb());
-the paint rain that ends at a blink comes later.
+(_grab_orb()), and only a player holding the orb can fire the magic beam
+(hands up); firing uses it up (_use_orb()). One orb is in the game at a
+time: the next comes orb_every_s after the last was used.
 
 ``update(state)`` is the game part of the ``main.py`` loop: it reads each player's
 body box and position from the frame state, turns gesture events into actions
@@ -71,7 +68,7 @@ import numpy as np
 from ipcvgame.core import skeleton as sk
 from ipcvgame.core.geometry import bilinear
 from ipcvgame.core.types import FrameState, Motion
-from ipcvgame.interaction.gestures import GESTURES, detect_hands_up, lower_body_y, shoulder_width
+from ipcvgame.interaction.gestures import detect_hands_up, lower_body_y, shoulder_width
 from ipcvgame.pose.measure import arm_px, shoulder_px, torso_px
 from ipcvgame.scene.draw import DRINK_COLORS, draw_bbox, draw_lines, draw_skeleton, player_color, pt
 
@@ -146,8 +143,8 @@ class GamePlayer:
     attack_left: float = 0.0
     defense: float = 0.0
     defense_left: float = 0.0
-    # Orb parts collected for the final smash, 0 to orb_parts (full orb).
-    orb: int = 0
+    # Holding the orb (final smash): hands up fires the beam.
+    has_orb: bool = False
 
 
 @dataclass
@@ -214,9 +211,9 @@ class Drunk:
 
 
 @dataclass
-class OrbPart:
-    """The bouncing orb part (final smash): a small orb, collected by a punch
-    that touches it. At most one is on the field."""
+class Orb:
+    """The bouncing orb (final smash), grabbed by a hand that touches it.
+    At most one is on the field."""
     x: float          # centre, px
     y: float
     vx: float         # px/s
@@ -293,12 +290,6 @@ class Game:
         # Each player's body turn (degrees) the last time their arms were
         # down (_track_body_yaw()); gestures move the shoulders.
         self.body_yaw: dict[int, float] = {}
-        # Line-up this frame (calibration, _check_line_up()): the round
-        # players stand level; else the one nearer the camera (None when
-        # someone is not in view) and the depth gap (m; None when unknown).
-        self.level = True
-        self.nearer: int | None = None
-        self.line_gap: float | None = None
         # Phase lengths and the beam's hit band, for drawing (the renderer
         # reads them here instead of from the game: config).
         self.beam_charge_s = float(cfg["beam_charge_s"])
@@ -312,14 +303,13 @@ class Game:
         self.drink_buff_s = float(cfg["drink_buff_s"])   # for drawing the time left
         self._rng = random.Random(cfg["drink_seed"])
         self._drink_wait = self._rng.uniform(*cfg["drink_every_s"])
-        # Orb parts (final smash): the part on the field (None = none), its own
-        # random generator (orb_seed), and the time to the next one (s).
-        self.orb_parts = int(cfg["orb_parts"])
-        self.orb_part: OrbPart | None = None
-        # Each player's hand on the part: how long it has touched (_grab_orb()).
+        # The orb (final smash) on the field (None = none), its own random
+        # generator (orb_seed), and the time to the next one (s).
+        self.orb: Orb | None = None
+        # Each player's hand on the orb: how long it has touched (_grab_orb()).
         self._grab: dict[int, _Hold] = {}
-        # Parts collected this frame (cleared by update()) as (pid, x, y):
-        # who, and where the part was, for the renderer's pop.
+        # Orbs grabbed this frame (cleared by update()) as (pid, x, y): who,
+        # and where the orb was, for the renderer's pop.
         self.orbs_taken: list[tuple[int, float, float]] = []
         self._orb_rng = random.Random(cfg["orb_seed"])
         self._orb_wait = self._orb_rng.uniform(*cfg["orb_every_s"])
@@ -551,16 +541,16 @@ class Game:
                 self.actions.append((best, "catch"))
 
     def orb_radius(self) -> float:
-        """The orb part's radius on screen (px)."""
+        """The orb's radius on screen (px)."""
         return self.cfg["orb_r_h"] * self.frame_h
 
     def orb_band(self) -> tuple[float, float]:
-        """Top and bottom (px) of the band the part's centre bounces in."""
+        """Top and bottom (px) of the band the orb's centre bounces in."""
         top, bottom = self.cfg["orb_band_h"]
         return top * self.frame_h, bottom * self.frame_h
 
-    def _spawn_orb(self) -> OrbPart:
-        """A new part just above the top of the frame, at a random x in the
+    def _spawn_orb(self) -> Orb:
+        """A new orb just above the top of the frame, at a random x in the
         play area, moving at orb_speed_w down and to a random side, at a
         random angle in orb_angle_deg below the horizontal."""
         cfg, rng = self.cfg, self._orb_rng
@@ -568,62 +558,62 @@ class Game:
         angle = math.radians(rng.uniform(*cfg["orb_angle_deg"]))
         speed = cfg["orb_speed_w"] * self.frame_w
         side = rng.choice((-1, 1))
-        return OrbPart(rng.uniform(margin, 1.0 - margin) * self.frame_w, -self.orb_radius(),
-                       side * speed * math.cos(angle), speed * math.sin(angle))
+        return Orb(rng.uniform(margin, 1.0 - margin) * self.frame_w, -self.orb_radius(),
+                   side * speed * math.cos(angle), speed * math.sin(angle))
 
     def _advance_orb(self, dt: float) -> None:
-        """Spawn a part when one is due, none is on the field and nobody
-        holds a full orb (so one orb is in the game at a time), else move
+        """Spawn an orb when one is due, none is on the field and nobody
+        holds one (so one orb is in the game at a time), else move
         it in a straight line, reflected at the band's edges: the sides
         orb_margin_w in from the frame edges, the top and bottom from
         orb_band(). It enters from above moving down, so the band's top
         only reflects it once it is inside."""
-        part = self.orb_part
-        if part is None:
-            if any(p.orb >= self.orb_parts for p in self.players.values()):
+        orb = self.orb
+        if orb is None:
+            if any(p.has_orb for p in self.players.values()):
                 return
             self._orb_wait -= dt
             if self._orb_wait <= 0:
-                self.orb_part = self._spawn_orb()
+                self.orb = self._spawn_orb()
             return
-        part.age += dt
-        part.x += part.vx * dt
-        part.y += part.vy * dt
+        orb.age += dt
+        orb.x += orb.vx * dt
+        orb.y += orb.vy * dt
         margin = self.cfg["orb_margin_w"] * self.frame_w
         left, right = margin, self.frame_w - margin
         top, bottom = self.orb_band()
-        if (part.x < left and part.vx < 0) or (part.x > right and part.vx > 0):
-            edge = left if part.vx < 0 else right
-            part.x, part.vx = 2 * edge - part.x, -part.vx
-        if (part.y < top and part.vy < 0) or (part.y > bottom and part.vy > 0):
-            edge = top if part.vy < 0 else bottom
-            part.y, part.vy = 2 * edge - part.y, -part.vy
+        if (orb.x < left and orb.vx < 0) or (orb.x > right and orb.vx > 0):
+            edge = left if orb.vx < 0 else right
+            orb.x, orb.vx = 2 * edge - orb.x, -orb.vx
+        if (orb.y < top and orb.vy < 0) or (orb.y > bottom and orb.vy > 0):
+            edge = top if orb.vy < 0 else bottom
+            orb.y, orb.vy = 2 * edge - orb.y, -orb.vy
 
     def _hand_on_orb(self, m: Motion) -> float | None:
-        """How far (px) the nearer valid wrist is past touching the part: <= 0
-        when it is within orb_reach_sw shoulder widths of the part's edge.
-        None without a part, a shoulder width or a valid wrist."""
-        part = self.orb_part
+        """How far (px) the nearer valid wrist is past touching the orb: <= 0
+        when it is within orb_reach_sw shoulder widths of the orb's edge.
+        None without an orb, a shoulder width or a valid wrist."""
+        orb = self.orb
         sw = shoulder_width(m.kpts, m.valid, self.cfg["min_shoulder_px"])
         wrists = [w for w in (sk.L_WRIST, sk.R_WRIST) if m.valid[w]]
-        if part is None or sw is None or not wrists:
+        if orb is None or sw is None or not wrists:
             return None
-        d = min(math.hypot(m.kpts[w][0] - part.x, m.kpts[w][1] - part.y) for w in wrists)
+        d = min(math.hypot(m.kpts[w][0] - orb.x, m.kpts[w][1] - orb.y) for w in wrists)
         return d - self.orb_radius() - self.cfg["orb_reach_sw"] * sw
 
     def _grab_orb(self, state: FrameState, t: float) -> None:
-        """A hand grabs the part: a wrist (smoothed keypoint) touching it
+        """A hand grabs the orb: a wrist (smoothed keypoint) touching it
         (_hand_on_orb()) for orb_grab_s, with gaps up to hold_gap_s allowed,
-        so a keypoint glitch of one frame does not grab it. Players in view
-        whose orb is not full; if two have held long enough in the same
-        frame, the hand nearer the part gets it."""
-        if self.orb_part is None:
+        so a keypoint glitch of one frame does not grab it. Players in view;
+        if two have held long enough in the same frame, the hand nearer the
+        orb gets it."""
+        if self.orb is None:
             self._grab.clear()
             return
         best, best_d = None, np.inf
         for pid, m in sorted(state.motion.items()):
             p, player = state.players.get(pid), self.players.get(pid)
-            if p is None or p.status != "active" or player is None or player.orb >= self.orb_parts:
+            if p is None or p.status != "active" or player is None:
                 continue
             d = self._hand_on_orb(m)
             touching = d is not None and d <= 0
@@ -634,31 +624,28 @@ class Game:
             self._take_orb(best)
 
     def _take_orb(self, pid: int) -> None:
-        """pid gets the part: one more in their orb; the next part comes
-        orb_every_s later."""
-        part, player = self.orb_part, self.get_player(pid)
+        """pid holds the orb; it leaves the field."""
+        orb, player = self.orb, self.get_player(pid)
         self._grab.clear()
-        player.orb += 1
-        self.orbs_taken.append((pid, part.x, part.y))
-        self.orb_part = None
-        self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
+        player.has_orb = True
+        self.orbs_taken.append((pid, orb.x, orb.y))
+        self.orb = None
         self.actions.append((pid, "orb"))
 
     def _use_orb(self) -> None:
-        """A final smash was fired: every player's orb goes back to 0 and the
-        part on the field goes, so the parts start coming in again, the next
-        one orb_every_s from now."""
+        """A final smash was fired: nobody holds the orb any more and none is
+        on the field; the next one comes orb_every_s from now."""
         for player in self.players.values():
-            player.orb = 0
-        self.orb_part = None
+            player.has_orb = False
+        self.orb = None
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
 
     def test_orb(self, pid: int = 1) -> bool:
-        """Fill pid's orb (key n), so one player can try the final smash
-        without grabbing it. Only while playing; returns if filled."""
+        """Give pid the orb (key n), so one player can try the final smash
+        without grabbing it. Only while playing; returns if given."""
         if self.phase != "playing" or self.winner_id is not None:
             return False
-        self.get_player(pid).orb = self.orb_parts
+        self.get_player(pid).has_orb = True
         self.actions.append((pid, "test_orb"))
         return True
 
@@ -797,10 +784,8 @@ class Game:
         for pid in state.players:
             self._track_mouth(state, pid)
         if self.phase == "playing":
-            # Only the moves; blink events are not actions (final smash, step 4).
             for e in state.events:
-                if (e.name in GESTURES and e.pid in positions
-                        and self._facing_or_blocked(state, e.pid, e.name, t)):
+                if e.pid in positions and self._facing_or_blocked(state, e.pid, e.name, t):
                     self._act(e.pid, e.name, state.motion[e.pid], positions)
             if self.winner_id is None:
                 self._grab_orb(state, t)
@@ -812,7 +797,6 @@ class Game:
             for e in state.events:
                 if e.name == self.current_move(e.pid) and self._facing_or_blocked(state, e.pid, e.name, t):
                     self._tick(e.pid, e.name, t)
-            self._check_line_up(state)
             for pid in self.round_players:
                 if self.current_move(pid) == "neutral":
                     self._measure(state, pid, t)
@@ -822,7 +806,6 @@ class Game:
 
     def _enter(self, phase: str, t: float | None) -> None:
         self.phase, self.phase_t, self._hold, self._held = phase, t, _Hold(), 0.0
-        self.level, self.nearer, self.line_gap = True, None, None
         if phase == "calibration":
             for pid in self.round_players:
                 player = self.get_player(pid)
@@ -881,10 +864,9 @@ class Game:
         """Calibration, neutral pose: one (shoulder, arm, torso) sample (px)
         per frame in the pose. Once the pose has held neutral_s (gaps up to
         hold_gap_s allowed), the medians are stored and the move is ticked
-        off. A hold that starts again starts with no samples. The pose only
-        counts while the players stand level (_check_line_up())."""
+        off. A hold that starts again starts with no samples."""
         hold = self._neutral.setdefault(pid, _Hold())
-        on = self.level and self._neutral_pose(state, pid)
+        on = self._neutral_pose(state, pid)
         held = self._neutral_held[pid] = hold.update(on, t, self.cfg["hold_gap_s"])
         if hold.since == t:
             self._samples[pid] = []
@@ -921,49 +903,6 @@ class Game:
         low = (m.kpts[wrists, 1] > shoulder_y + cfg["neutral_wrist_below_sw"] * sw).all()
         still = (np.linalg.norm(m.vel[wrists], axis=1) < cfg["neutral_max_speed_sw"] * sw).all()
         return bool(low and still)
-
-    def _check_line_up(self, state: FrameState) -> None:
-        """Calibration: do the two round players stand level, side by side at
-        the same distance from the camera? Then a later change in a
-        player's depth starts from one line for both.
-
-        - By depth (Player.pos, identity: from the shoulder width in px, the
-          players face the camera in the neutral pose): level when less than
-          line_up_depth_m apart. The smaller depth is the nearer player.
-          Without a depth for both, nothing to check.
-        - Someone not in view: not level, and no one to send back.
-        - Hysteresis: once not level, the gap must shrink under
-          line_up_hysteresis of the tolerance before the players are level
-          again, so a gap near the tolerance does not flicker.
-        With one round player there is no one to line up with."""
-        was_level = self.level
-        self.level, self.nearer, self.line_gap = True, None, None
-        if len(self.round_players) < 2:
-            return
-        a, b = self.round_players[:2]
-        if not (self.in_view(state, a) and self.in_view(state, b)):
-            self.level = False
-            return
-        da, db = state.players[a].pos[1], state.players[b].pos[1]
-        if da <= 0 or db <= 0:
-            return
-        k = 1.0 if was_level else self.cfg["line_up_hysteresis"]
-        self.line_gap = abs(db - da)
-        self.level = self.line_gap < k * self.cfg["line_up_depth_m"]
-        if not self.level:
-            self.nearer = a if da < db else b
-
-    def line_up_hint(self, pid: int) -> str | None:
-        """Calibration panel: "back" when pid has to step back to stand
-        level, "wait" when pid's neutral pose waits for the line-up; None
-        when the players are level or nobody needs the neutral pose any more."""
-        if self.phase != "calibration" or self.level:
-            return None
-        if not any(self.current_move(p) == "neutral" for p in self.round_players):
-            return None
-        if pid == self.nearer:
-            return "back"
-        return "wait" if self.current_move(pid) == "neutral" else None
 
     def neutral_fraction(self, pid: int) -> float:
         """How far pid's neutral-pose hold has got, 0-1 (for the panel)."""
@@ -1164,8 +1103,8 @@ class Game:
             if self.attack(x, y, direction, pid):
                 self.actions.append((pid, "bolt"))
         elif gesture == "hands_up":
-            # The beam is the final smash for now: only with a full orb.
-            if player.orb < self.orb_parts:
+            # The beam is the final smash: only while holding the orb.
+            if not player.has_orb:
                 self.actions.append((pid, "no_orb"))
                 return
             if not (m.valid[sk.L_WRIST] and m.valid[sk.R_WRIST]):
@@ -1217,7 +1156,7 @@ class Game:
         self.drinks.clear()
         self.drunk.clear()
         self._drink_wait = self._rng.uniform(*self.cfg["drink_every_s"])
-        self.orb_part = None
+        self.orb = None
         self._grab.clear()
         self.orbs_taken.clear()
         self._orb_wait = self._orb_rng.uniform(*self.cfg["orb_every_s"])
@@ -1230,7 +1169,7 @@ class Game:
         player.paint_splats.clear()
         player.attack, player.attack_left = 1.0, 0.0
         player.defense, player.defense_left = 0.0, 0.0
-        player.orb = 0
+        player.has_orb = False
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
         """The game state as plain shapes, for checking the logic (the game's
@@ -1239,7 +1178,7 @@ class Game:
         they ended; beams as a line with their hit band (a growing circle while
         charging); shields as an ellipse beside the player (thin while
         fading); drinks as a circle of their size with the category's
-        letter; the orb part with its band (dashed lines); this frame's
+        letter; the orb with its band (dashed lines); this frame's
         actions and the winner."""
         unit = max(canvas.shape[1] / 100.0, 2.0)  # 1% of the frame width, px
         for pid, m in state.motion.items():
@@ -1253,7 +1192,8 @@ class Game:
                 label += f" atk x{player.attack:.2f} {player.attack_left:.0f}s"
             if player.defense_left > 0:
                 label += f" def {player.defense:.0%} {player.defense_left:.0f}s"
-            label += f" orb {player.orb}/{self.orb_parts}"
+            if player.has_orb:
+                label += " orb"
             draw_bbox(canvas, player.bounds, player_color(pid), label, dashed=True)
             if player.torso is not None:
                 cv2.polylines(canvas, [np.round(player.torso).astype(np.int32)], True,
@@ -1297,15 +1237,15 @@ class Game:
             width = 2 if d.held_by is None else 4                # thick while held at a mouth
             cv2.circle(canvas, pt((d.x, d.y)), r, DRINK_COLORS[d.kind], width, cv2.LINE_AA)
             draw_lines(canvas, [f"{d.kind[0].upper()} {d.value:.2f}"], (int(d.x) - r, int(d.y) + 5))
-        if self.phase == "playing":                  # the orb part's band and the part
+        if self.phase == "playing":                  # the orb's band
             top, bottom = self.orb_band()
             margin = self.cfg["orb_margin_w"] * self.frame_w
             for y in (top, bottom):
                 for x in np.arange(margin, self.frame_w - margin, 4 * unit):
                     cv2.line(canvas, pt((x, y)), pt((min(x + 2 * unit, self.frame_w - margin), y)),
                              (200, 200, 200), 1, cv2.LINE_AA)
-        if self.orb_part is not None:
-            o = self.orb_part
+        if self.orb is not None:
+            o = self.orb
             cv2.circle(canvas, pt((o.x, o.y)), int(self.orb_radius()), (255, 255, 255), 2, cv2.LINE_AA)
             cv2.line(canvas, pt((o.x, o.y)), pt((o.x + 0.5 * o.vx, o.y + 0.5 * o.vy)), (255, 255, 255), 1,
                      cv2.LINE_AA)
@@ -1321,11 +1261,6 @@ class Game:
                 move = self.current_move(pid)
                 extra = f" {self.neutral_fraction(pid):.0%}" if move == "neutral" else ""
                 lines.append(f"P{pid} next: {move or 'done'}{extra}")
-            if self.line_gap is not None:
-                line = f"line-up: {self.line_gap:.2f} m apart"
-                lines.append(line + (" level" if self.level else f", P{self.nearer} step back"))
-            elif not self.level:
-                lines.append("line-up: waiting for both players")
         for pid in self.round_players:
             arm = self.arm_sw(pid)
             if arm is not None:
@@ -1343,11 +1278,10 @@ class Game:
         done), game_p<pid>_shoulder_px, game_p<pid>_arm_px,
         game_p<pid>_torso_px and game_p<pid>_arm_sw (the calibration, empty
         before it); game_p<pid>_body_yaw (degrees, the last arms-down
-        body_yaw_deg(); empty before the calibration); game_p<pid>_orb (orb
-        parts held); game_level (1 while the players stand
-        level) and game_line_gap (m); game_bolts and game_beams (in flight),
-        game_orb_x / game_orb_y (the orb part's centre, px; empty without
-        one), game_winner (pid or empty)."""
+        body_yaw_deg(); empty before the calibration); game_p<pid>_orb (1
+        while holding the orb); game_bolts and game_beams (in flight),
+        game_orb_x / game_orb_y (the orb's centre, px; empty without one),
+        game_winner (pid or empty)."""
         row: dict = {"game_phase": self.phase}
         for pid, player in sorted(self.players.items()):
             pre = f"game_p{pid}_"
@@ -1368,13 +1302,11 @@ class Game:
             row[pre + "defense"] = round(player.defense, 3)
             row[pre + "defense_left"] = round(player.defense_left, 2)
             row[pre + "holding"] = next((d.kind for d in self.drinks if d.held_by == pid), "")
-            row[pre + "orb"] = player.orb
-        row["game_level"] = int(self.level)
-        row["game_line_gap"] = "" if self.line_gap is None else round(self.line_gap, 3)
+            row[pre + "orb"] = int(player.has_orb)
         row["game_bolts"] = len(self.projectiles)
         row["game_beams"] = len(self.beams)
         row["game_drinks"] = len(self.drinks)
-        row["game_orb_x"] = "" if self.orb_part is None else round(self.orb_part.x, 1)
-        row["game_orb_y"] = "" if self.orb_part is None else round(self.orb_part.y, 1)
+        row["game_orb_x"] = "" if self.orb is None else round(self.orb.x, 1)
+        row["game_orb_y"] = "" if self.orb is None else round(self.orb.y, 1)
         row["game_winner"] = self.winner_id if self.winner_id is not None else ""
         return row

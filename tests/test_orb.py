@@ -1,10 +1,10 @@
-"""The final smash's orb (scene/orb.py; merge_log.md, "Final smash"): part, pop, slots, body glow."""
+"""The final smash's orb (scene/orb.py; merge_log.md, "Final smash"): orb, pop, slot, body glow."""
 
 import numpy as np
 
 from ipcvgame.core.config import load_config
 from ipcvgame.scene.draw import player_color
-from ipcvgame.scene.orb import DARK, draw_body_glow, draw_part, draw_pop, draw_slots
+from ipcvgame.scene.orb import DARK, draw_body_glow, draw_orb, draw_pop, draw_slot
 from tests.test_paint import TORSO, arms_down
 
 CFG = load_config()["render"]
@@ -15,17 +15,17 @@ def near(img: np.ndarray, color, tol: int = 2) -> np.ndarray:
     return np.all(np.abs(img.astype(int) - color) <= tol, axis=2)
 
 
-def part(age: float) -> np.ndarray:
+def orb(age: float) -> np.ndarray:
     canvas = np.zeros((200, 200, 3), np.uint8)
-    draw_part(canvas, 100.0, 100.0, 30.0, age, (RED, BLUE), CFG)
+    draw_orb(canvas, 100.0, 100.0, 30.0, age, (RED, BLUE), CFG)
     return canvas
 
 
-def test_part_shows_both_team_colours_and_turns():
-    a = part(0.0)
+def test_orb_shows_both_team_colours_and_turns():
+    a = orb(0.0)
     assert near(a, RED).sum() > 300 and near(a, BLUE).sum() > 300
     assert abs(int(near(a, RED).sum()) - int(near(a, BLUE).sum())) < 0.25 * near(a, RED).sum()
-    half = part(0.5 / CFG["orb_spin_hz"])                 # half a turn: the colours swap sides
+    half = orb(0.5 / CFG["orb_spin_hz"])                 # half a turn: the colours swap sides
     probe = (100, 85)                                     # (y, x) inside the ball, left of centre
     assert near(a, RED)[probe] != near(half, RED)[probe]
 
@@ -37,17 +37,16 @@ def test_pop_grows_and_vanishes():
         return near(canvas, RED)
     early, late = pop(0.05), pop(0.3)
     ys, xs = np.nonzero(late)
-    assert early.any() and np.hypot(xs - 150, ys - 150).max() > 2 * 20   # flies out past the part
+    assert early.any() and np.hypot(xs - 150, ys - 150).max() > 2 * 20   # flies out past the orb
     assert not pop(CFG["orb_pop_s"]).any()
 
 
-def test_slots_filled_in_team_colour_in_order():
-    canvas = np.zeros((40, 120, 3), np.uint8)
-    centres = [(15.0 + 25 * i, 20.0) for i in range(4)]
-    draw_slots(canvas, centres, 8.0, 2, RED, 0.0)
-    filled = [near(canvas[12:28, int(x) - 3:int(x) + 4], RED).any() for x, _ in centres]
-    assert filled == [True, True, False, False]
-    assert near(canvas[20:21, 90:91], DARK).all()         # the third slot's middle is dark
+def test_slot_filled_in_team_colour_only_while_held():
+    held, empty = np.zeros((40, 40, 3), np.uint8), np.zeros((40, 40, 3), np.uint8)
+    draw_slot(held, (20.0, 20.0), 8.0, True, RED, 0.0)
+    draw_slot(empty, (20.0, 20.0), 8.0, False, RED, 0.0)
+    assert near(held[18:24, 20:24], RED).any() and not near(empty, RED).any()
+    assert near(empty[20:21, 20:21], DARK).all()          # an empty slot's middle is dark
 
 
 def glow(strength: float = 0.8, **over) -> tuple[np.ndarray, np.ndarray]:
