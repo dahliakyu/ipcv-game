@@ -11,7 +11,7 @@ Conventions:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -59,6 +59,9 @@ class Face:                    # Task 1 output, per player
     roll: float
     yaw: float
     anchors: dict[str, np.ndarray]   # "above_head", "forehead", "mouth"
+    alpha: float = 1.0               # effect opacity: 1 while tracked, fades to 0 once lost
+    blendshapes: dict[str, float] = field(default_factory=dict)  # MediaPipe scores 0-1:
+                                     # "jawOpen", "mouthSmileLeft", ...; empty when not measured
 
 
 @dataclass

@@ -19,12 +19,17 @@ numpy==2.5.2
 scipy==1.18.1                  # Task 3 Hungarian (linear_sum_assignment)
 filterpy==1.4.5                # Kalman filters (Tasks 2, 3)
 
-# --- game / rendering ---
-pygame-ce==2.5.8               # final game renderer and sound
+# --- identity (Task 3, from Colour Clash Project/) ---
+# OSNet re-id is vendored as identity/osnet.py (MIT, from
+# KaiyangZhou/deep-person-reid), so torchreid and its gdown/tensorboard imports
+# are not needed. Its weights come from Hugging Face (README).
+lap==0.5.13                    # Ultralytics BoT-SORT matching; else auto-installed at runtime
 
 # --- config, analysis, dev ---
 PyYAML==6.0.3
 pandas==3.0.6                  # CSV log analysis for the report
 matplotlib==3.11.2
+psutil==7.2.2                  # tools/eval_pipeline.py: CPU and memory use (also an ultralytics dependency)
+nvidia-ml-py==13.615.71        # tools/eval_pipeline.py: GPU use via NVML (optional; skipped without a driver)
 pytest==9.1.1
 ruff==0.16.9

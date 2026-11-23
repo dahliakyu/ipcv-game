@@ -27,9 +27,13 @@ pose:                     # Task 2 — detection
   # "yolo" = real pretrained model; "none" = no detections (for tests
   # without weights or GPU).
   backend: yolo
-  # Nano model: fast enough for real time on a laptop GPU. Downloaded into
+  # Small model (merge_log "Game start: Modifications"). On the arms-crossed
+  # attempts of data/clips/shield.mp4 and session.mp4 it found 13 real
+  # crosses with no false ones, where nano (yolo26n-pose.pt) found 8 with 2
+  # false; punches and hands up were the same. Both take ~10 ms per frame
+  # on the GPU (fp16); on a CPU the small model is slower. Downloaded into
   # models/ on first run (gitignored).
-  weights: models/yolo26n-pose.pt
+  weights: models/yolo26s-pose.pt
   # "auto" = cuda:0 if available, else cpu.
   device: auto
   # Inference size (long side). 640 is the size the model was trained at.
@@ -46,28 +50,688 @@ pose:                     # Task 2 — detection
   # the threshold Ultralytics uses when drawing keypoints.
   debug_kpt_conf: 0.5
 
-identity:                 # Task 3 — phase-1 stub: left half = P1, right half = P2
-  # Frames can contain bystanders; the stub keeps only the best-scoring
-  # detection per half.
-  num_players: 2
+identity:                 # Task 3 — Colour Clash identity (bodypose.py PlayerIdentityTracker)
+  # "reid" = tracker + OSNet re-identification (bodypose.py, main.py).
+  # "zones" = phase-1 stub: P1 = best detection in the left half, P2 = best
+  # in the right half; no model needed (tests).
+  backend: reid
+  # Players the tracker creates (bodypose.py MAX_PLAYERS = 3). The game is
+  # 1v1, so a third person (a bystander) never becomes a player.
+  max_players: 2
+  # OSNet re-identification (Colour Clash Project/osnet_embedding.py).
+  # MSMT17 "combineall" weights from Hugging Face; not in the repo, the README
+  # has the download command. Same network and training data as Project/'s
+  # osnet_x1_0_msmt17.pth (merge_log, Task 3 plan).
+  reid_weights: models/osnet_x1_0_msmt17_combineall.pth
+  # "auto" = cuda if available, else cpu. ~10 ms per crop on the GPU.
+  reid_device: auto
+  # A new track becomes a known player when its cosine similarity to that
+  # player's stored vector is at least this (bodypose.py REID_THRESHOLD).
+  reid_threshold: 0.6
+  # A track that matches no player becomes a new player after being seen
+  # this long (bodypose.py NEW_PLAYER_CONFIRMATION = 5 frames: the 5th comes
+  # 4 frames = 0.13 s after the 1st at 30 FPS). Filters out one-off
+  # detections of furniture or reflections.
+  new_player_s: 0.13
+  # OSNet runs only on person crops at least this tall and wide (px)
+  # (bodypose.py MIN_PERSON_HEIGHT / MIN_PERSON_WIDTH). Smaller crops carry
+  # too little detail for its 256 x 128 input.
+  min_crop_h: 40
+  min_crop_w: 20
+  # A track that matched no player while every player slot is taken (a
+  # bystander, or a player OSNet does not recognise yet) tries again after
+  # this long. bodypose.py tried every frame: ~10 ms of OSNet each time.
+  retry_s: 0.5
+  # A track is identified (OSNet, new player) only when its best face
+  # keypoint (nose or eyes) has at least this confidence. On the session
+  # clip, real players had 1.00 (5th percentile 0.97) and the extra
+  # detections (a coat, a chair) a median of 0.15, while their shoulders were
+  # as confident as a player's. Players face the camera in the game.
+  min_face_conf: 0.5
+  # Check of linked tracks and stored vector update (new; merge_log, Task 3).
+  # One active player per frame, in turn, at most this often: a track the
+  # tracker carried onto the other player is found within about this long.
+  # Every 0.5 s keeps OSNet at about one crop per 15 frames per player.
+  update_every_s: 0.5
+  # The stored vector moves this fraction of the way towards the fresh one:
+  # with an update every 0.5 s it follows a change (lighting, a jacket off)
+  # over ~5 s, while a single odd crop moves it only a little.
+  update_weight: 0.1
+  # Only update when the fresh vector is at least this similar to the stored
+  # one, so a crop of the wrong person (a swapped track) is not blended in.
+  update_min_sim: 0.5
+  # Only update when the player's box overlaps no other detection (IoU above
+  # this): the other person would be in the crop.
+  update_max_iou: 0.0
+  # Player.pos, (x, depth) in metres, by the pinhole model (game start, step
+  # 6; identity/tracker.py): depth = f * shoulder_m / shoulder width in px.
+  # Horizontal field of view of the webcam (degrees), which gives the focal
+  # length f = (width / 2) / tan(hfov / 2) in px. ~70 is typical for a
+  # 720p/1080p webcam (Logitech C920: 78 diagonal, ~70 horizontal); set it
+  # to the demo camera's value from its spec.
+  camera_hfov_deg: 70.0
+  # Real shoulder width (m), assumed the same for every player: adult
+  # surveys give about 0.37 m for women and 0.41 m for men (biacromial
+  # breadth), so a player's depth can be off by ~5% either way, and more if
+  # the pose model's shoulder points sit inside the shoulder tips. Check it
+  # once on the webcam at a measured distance.
+  shoulder_m: 0.39
+  # Shoulder and hip keypoints count for the position at this confidence or
+  # more: the same as motion.kpt_conf_threshold for the smoothed keypoints.
+  pos_kpt_conf: 0.35
+  # Time constant (s) of the EMA on the position: the keypoints jitter by a
+  # few px per frame, a few percent of the depth; 0.3 s still follows a step.
+  pos_tau_s: 0.3
+  # BoT-SORT on the pose boxes (identity/tracks.py), from Colour Clash
+  # Project/botsort.yaml (Ultralytics' defaults) with two changes, marked.
+  botsort:
+    tracker_type: botsort
+    # First matching round: detections at least this confident. The pose
+    # stage already drops boxes under pose.det_conf (0.35), so every box
+    # passes, and the second round below never gets a box.
+    track_high_thresh: 0.25
+    # Second round for weaker boxes (track_low_thresh..track_high_thresh):
+    # unused here, see above. Kept so the botsort.yaml values stay visible.
+    track_low_thresh: 0.1
+    # Changed (botsort.yaml: 0.25): a box must score this to start a new
+    # track, like main.py's person detector (IDENTITY_CONFIDENCE = 0.5),
+    # while boxes from 0.35 still continue an existing track. main.py
+    # dropped every box under 0.5 before BoT-SORT.
+    new_track_thresh: 0.5
+    # Frames a lost track is kept (and its player "occluded") before it is
+    # removed (player "lost"). Ultralytics counts frames, not seconds: 1 s at
+    # 30 FPS, 1.7 s at the ~17 FPS of the recorded session clip.
+    track_buffer: 30
+    # Matching cost limit (1 - IoU, fused with the score): a box overlapping
+    # a track's prediction by less than ~0.2 IoU does not continue it.
+    match_thresh: 0.8
+    # Fuse the detection score into the matching cost.
+    fuse_score: true
+    # Changed (botsort.yaml: sparseOptFlow): no camera-motion compensation;
+    # the webcam does not move. Same track ids on the test clip, 4.4 -> 0.4 ms
+    # per frame.
+    gmc_method: none
+    # BoT-SORT's own appearance matching stays off (with_reid: false); OSNet
+    # above does re-identification. proximity/appearance thresholds and
+    # model are only read when it is on.
+    proximity_thresh: 0.5
+    appearance_thresh: 0.8
+    with_reid: false
+    model: auto
 
-motion:                   # Task 2 — motion filtering (stub: pass-through)
-  # Keypoints under this confidence are marked invalid. 0.5 matches the
-  # threshold Ultralytics uses when drawing keypoints.
+motion:                   # Task 2 — keypoint smoothing (Colour Clash KeypointTracker)
+  # "ema" = the smoothing from bodypose.py: confidence gate, hold, EMA, snap back.
+  # "oneeuro" = the same, with a One Euro filter instead of the EMA: smooths
+  # still keypoints more and fast ones less (motion.py, oneeuro_* below).
+  # "stub" = phase-1 pass-through (no smoothing, no hold).
+  # oneeuro since 2026-11-01: on the clips it cut still jitter by 52 % (EMA
+  # 35 %) with half the delay in fast moves, and it keeps smoothing at the CPU
+  # demo's 7-11 FPS, where the EMA's weight per frame is almost 1 (merge_log,
+  # "Evaluation tools and the team clips").
+  backend: oneeuro
+  # Keypoints under this confidence count as missing this frame. 0.35 is
+  # CONF_T in bodypose.py, which the gesture thresholds were tuned with.
+  kpt_conf_threshold: 0.35
+  # EMA time constant (s). bodypose.py used alpha = 0.5 per frame at about
+  # 30 FPS; tau = -dt / ln(1 - alpha) = 0.033 / 0.693 = 0.048 s. Light
+  # smoothing, so a punch still reads within a frame or two.
+  tau: 0.048
+  # A missing keypoint keeps its last position, and stays valid, this long
+  # (bodypose.py: MISSING_FRAMES = 10 at 30 FPS). Rides out one-frame dropouts
+  # in fast arm moves; after that the point is invalid and snaps back to the
+  # detection when it returns.
+  hold_s: 0.33
+  # One Euro filter (backend "oneeuro"); cut-off = min_cutoff + beta * speed.
+  # Values from a sweep on the clips (min_cutoff 0.5/1/2 Hz x beta
+  # 0.003/0.01/0.03; tools/eval_motion.py, merge_log "Evaluation tools and the
+  # team clips"): 0.5 / 0.03 cut still jitter by 52 % (EMA: 35 %) and halved
+  # the delay in fast moves (15 vs 28.5 ms). Lower beta smooths still poses
+  # even more but lags more than the EMA in punches.
+  # min_cutoff (Hz): the cut-off for a still keypoint (the EMA above equals a
+  # fixed 1 / (2 pi tau) = 3.3 Hz).
+  oneeuro_min_cutoff: 0.5
+  # beta (Hz per px/s): how fast the cut-off rises with speed. A punch moves
+  # the wrist 2.4-5.2 shoulder widths/s, ~150-400 px/s at 2 m: +5-12 Hz.
+  oneeuro_beta: 0.03
+  # d_cutoff (Hz): smoothing of the speed estimate (the One Euro default).
+  oneeuro_d_cutoff: 1.0
+  # Wrist speed signals (l_wrist_speed, r_wrist_speed) are in shoulder
+  # widths per second; none while the shoulders are closer than this (px):
+  # below 10 px a few pixels of keypoint noise change the unit by tens of
+  # percent (the same value as gestures.min_shoulder_px).
+  min_shoulder_px: 10.0
+
+face:                     # Task 1 — YuNet face detection on per-player head crops
+  # "yunet" = real detector; "stub" = above_head anchor above the nose
+  # keypoint (no model file needed, used by the tests).
+  backend: yunet
+  # YuNet face detector from the OpenCV model zoo. Not in the repo; the
+  # README has the download command.
+  model: models/face_detection_yunet_2023mar.onnx
+  # Detection score threshold. Lower than OpenCV's 0.9 default so blurry or
+  # distant faces are still found (Task 1 script value).
+  score_threshold: 0.6
+  # YuNet's own non-maximum suppression: overlapping boxes above this IoU
+  # count as one face (OpenCV default 0.3).
+  nms_threshold: 0.3
+  # Candidates kept before NMS. A head crop holds one or two faces, so 50
+  # is plenty (OpenCV default 5000).
+  top_k: 50
+  # Ignore detections narrower than this (px): too small to place effects.
+  # Task 1 script value at 640x480; re-check at 1280x720.
+  min_face: 20
+  # Reject a detection whose width differs from the player's last face width
+  # by more than this fraction: a jump that large in one frame is a wrong
+  # detection, not the same face (Task 1 script: MAX_SIZE_JUMP).
+  max_size_jump: 0.5
+
+  # Head crop per player, from the pose keypoints. Keypoints under this
+  # confidence are not used to place it; 0.5 matches motion.kpt_conf_threshold.
   kpt_conf_threshold: 0.5
+  # Crop side in shoulder widths (person-box widths when a shoulder is not
+  # visible). A face is roughly 0.4 shoulder widths wide, so 1.5 leaves room
+  # for keypoint error and head tilt; YuNet's cost grows with the crop area.
+  crop_size: 1.5
+  # Crops larger than this (px, longest side) are shrunk before YuNet runs;
+  # null = never shrink. A face is ~0.27 of the crop width, so at 192 it is
+  # still ~50 px for YuNet. Measured on a 4K clip (480 px crops): face stage
+  # 23.4 -> 9.2 ms, detections 99.2% -> 98.9%; below 192 the gain flattens.
+  crop_max_px: 192
 
-face:                     # Task 1 — stub: above_head anchor above the nose
-  # above_head sits this many shoulder-widths above the nose. ~0.9 clears
-  # the top of the head for an average adult.
+  # One Euro filter on the 4 face key points (Task 1 script values).
+  # min_cutoff (Hz): lower = steadier hat when the head is still.
+  filter_min_cutoff: 1.5
+  # beta: higher = less lag when the head moves fast.
+  filter_beta: 0.1
+  # d_cutoff (Hz): smoothing of the speed estimate (One Euro default).
+  filter_d_cutoff: 1.0
+  # Forget a player's face state (filter, last width) after this long
+  # without any update (detection or flow), so a returning face starts fresh
+  # instead of sliding in. The effect has faded to 0 by then. Task 1
+  # script: MAX_MISSED = 30 frames at 30 FPS.
+  lost_after_s: 1.0
+  # Keep the effect fully visible this long after the last update, then fade
+  # it out until lost_after_s. Covers single missed frames without a visible
+  # flicker. Task 1 script: HOLD_FRAMES = 3 frames at 30 FPS.
+  hold_s: 0.1
+
+  # Optical-flow fallback when YuNet misses a face (Task 1 script values).
+  # Follow a face with flow for at most this long after its last detection;
+  # longer and the points drift off the face. Task 1 script: FLOW_FRAMES = 40
+  # frames at 30 FPS.
+  flow_max_s: 1.3
+  # Flow points: an n x n grid on the face, in face widths from the face
+  # centre (x along the eye line, y down the face). Covers eyes to mouth and
+  # stays off the background at the face edges.
+  flow_grid_x: [-0.35, 0.35]
+  flow_grid_y: [-0.35, 0.45]
+  flow_grid_n: 6
+  # Lucas-Kanade window (px) and pyramid levels: a large window and 4 levels
+  # follow fast head moves.
+  flow_win: 31
+  flow_levels: 4
+  # Lucas-Kanade stopping rule per point: [max iterations, min step in px].
+  flow_criteria: [20, 0.01]
+  # Fit a similarity transform to the tracked points with RANSAC: need at
+  # least flow_min_points tracked points and flow_min_inliers within
+  # flow_ransac_px of the fit, otherwise the face is not followed this frame.
+  flow_min_points: 8
+  flow_min_inliers: 6
+  flow_ransac_px: 3.0
+  # Reject a fit that scales the face outside this range between two frames:
+  # a real head does not zoom that fast, so the points have drifted.
+  flow_scale_range: [0.7, 1.4]
+
+  # Face geometry from YuNet's 5 landmarks, in face widths (YuNet box
+  # width); Task 1 script values, tuned by eye.
+  # Face centre this far below the eye midpoint (cheek level).
+  center_drop: 0.20
+  # Forehead point this far above the eye midpoint.
+  forehead_rise: 0.50
+  # Upper-lip point: this fraction of the way from the mouth centre to the
+  # nose, where a mustache sits.
+  lip_to_nose: 0.35
+  # Hat brim this far above the forehead point (the effect hangs the hat
+  # from its visible brim). 0.11 keeps the Task 1 script's look: it placed the
+  # sprite's bottom 0.40 below the forehead point, and the sprite has 34%
+  # transparent padding below the brim at 1.5 face widths: -0.40 + 0.51.
+  hat_rise: 0.11
+  # above_head anchor this far above the hat brim. The visible hat is ~0.6
+  # face widths tall, so this clears it; the Task 1 script drew the player name
+  # here (1.6 above the eyes, as now).
+  above_head_rise: 1.0
+  # Cheek anchors (war paint, cheek bulge; merge_log.md, "Face effects"):
+  # this far to each side of the face's centre line and below the eye midpoint. 0.33 and 0.22 are
+  # the design's 45 mm and 30 mm on a 136 mm face: on the cheekbone, below
+  # the outer eye corners, about level with the nose tip.
+  cheek_out: 0.33
+  cheek_drop: 0.22
+
+  # Head pose: forehead, hat and above_head are 3D points on a
+  # canonical head, projected into the image with the head's rotation, so
+  # they follow it when it tilts up/down or turns. The rotation comes from
+  # MediaPipe (below), else from solvePnP on the YuNet landmarks and the
+  # ears. false = 2D anchors from the offsets above only.
+  head_pose: true
+  # Canonical head (mm; origin between the eyes, x image-right, y down,
+  # z into the head). Eyes 63 mm apart (adult average); nose tip and mouth
+  # corners match YuNet's average layout on 73 test detections (nose 0.54,
+  # mouth 0.99 eye distances below the eyes, mouth 0.85 wide); depths from a
+  # generic face model (nose tip 27 mm in front of the eyes).
+  head_model_mm:
+    left_eye: [-31.5, 0.0, 0.0]
+    right_eye: [31.5, 0.0, 0.0]
+    nose: [0.0, 34.0, -27.0]
+    left_mouth: [-27.0, 62.0, -2.0]
+    right_mouth: [27.0, 62.0, -2.0]
+    # Ears for the solvePnP fallback (pose model keypoints): ~72 mm to the
+    # side, at the level of the ear canal just below the eyes, ~85 mm behind
+    # them. Their depth gives the fit leverage on up/down tilt, which YuNet's
+    # near-frontal landmarks alone underestimate.
+    left_ear: [-72.0, 20.0, 85.0]
+    right_ear: [72.0, 20.0, 85.0]
+  # YuNet box width in eye distances (median of the same 73 detections), to
+  # turn the face-width offsets above into millimetres on the head.
+  box_per_eye: 2.16
+  # The hat and above_head points sit this far behind the eyes, between the
+  # front of the forehead and the centre of the head, so they drop towards
+  # the eyes when the chin goes up and rise when it goes down. Tune by eye.
+  hat_depth_mm: 50.0
+  # The cheek points sit this far behind the eyes: the face curves back
+  # from the eyes towards the ears (85 mm), so a turned-away cheek moves in
+  # towards the nose. Tune by eye.
+  cheek_depth_mm: 10.0
+  # Uncalibrated webcam: focal length = this many image widths (1.0 = ~53 deg
+  # horizontal field of view, typical for laptop webcams).
+  focal_per_width: 1.0
+  # Ignore a pose beyond this yaw or pitch (deg): YuNet's landmarks get
+  # unreliable there, so the 2D anchors are used for that frame instead.
+  pose_max_deg: 60
+  # MediaPipe Face Landmarker on a crop around the face: head
+  # rotation for the 3D anchors, and blendshape scores (jawOpen, ...)
+  # in Face.blendshapes. false = pose from solvePnP only, no blendshapes.
+  landmarker: true
+  # Model file; not in the repo, the README has the download command.
+  landmarker_model: models/face_landmarker.task
+  # Detection and presence confidence (MediaPipe default 0.5).
+  landmarker_min_conf: 0.5
+  # Crop side in face widths: the whole face with forehead and chin, plus a
+  # margin for movement since the face position was measured.
+  landmarker_crop: 2.0
+  # Crops are shrunk to this side (px) first; the model works at 256 px.
+  landmarker_max_side: 256
+  # Players measured per frame, taking turns. Each run costs ~7.5 ms on the
+  # CPU, so 1 keeps two players at ~15 Hz each, enough for the mouth that
+  # catches a drink (open for a second or more). 2 = every player every frame.
+  landmarker_per_frame: 1
+  # A result counts as current for this long: covers the turn-taking gap
+  # (one frame at 30 FPS) with margin. Older: blendshapes are empty and the
+  # pose falls back to solvePnP.
+  landmarker_max_age_s: 0.25
+  # One Euro filter on yaw and pitch (rad). Angles from 5 landmarks are
+  # noisy, so a lower cutoff than for points; beta from the update guide.
+  pose_filter_min_cutoff: 1.0
+  pose_filter_beta: 0.5
+
+  # Effect sprites: RGBA PNGs, relative to the repo root.
+  hat_sprite: assets/face/hat.png
+  mustache_sprite: assets/face/mustache.png
+  # Hat width in face widths; tuned by eye in the Task 1 script.
+  hat_width: 1.5
+  # Mustache width in face widths; tuned by eye in the Task 1 script.
+  mustache_width: 0.8
+  # Face effects (merge_log.md, "Face effects").
+  # Team colour on the hat: the band pixels of hat.png are those
+  # less than hat_band_hue_tol from hat_band_hue (OpenCV hue, 0-179; 0 = red)
+  # and at least this saturated and bright. The straw is orange (hue 12-20)
+  # and the outline black; the brightness limit leaves out the dark reddish
+  # edge pixels between band and outline. Measured on hat.png.
+  hat_band_hue: 0
+  hat_band_hue_tol: 8
+  hat_band_min_sat: 80
+  hat_band_min_val: 100
+  # War paint: two stripes in the team colour on each cheek anchor, along
+  # the eye line. Length, thickness and the gap between the stripes'
+  # centres, in face widths; tuned by eye so they fit under the eyes.
+  warpaint_len: 0.16
+  warpaint_thick: 0.035
+  warpaint_gap: 0.07
+  # Opacity of the paint (times Face.alpha): a little skin shading shows
+  # through, so it reads as paint on the face, not a sticker.
+  warpaint_opacity: 0.85
+  # Hit reaction. The hat flies off for hat_fly_s, fully
+  # visible for the first half and fading out in the second, then pops back
+  # onto the head over hat_pop_s (the design's 0.6 s and 0.2 s): long enough
+  # to see, short enough to be back before the next bolt at a fast pace.
+  # Hits while it is away do not throw another hat.
+  hat_fly_s: 0.6
+  hat_pop_s: 0.2
+  # Throw speed in face widths per second: [sideways, the way the attack
+  # went; up]. Sizes follow the face, so a far player's hat flies as far
+  # relative to their head. With hat_gravity (face widths/s^2) the hat
+  # rises ~0.3 face widths, then falls to ~0.7 below the brim after 0.6 s
+  # (3 x 0.6 - 14 x 0.6^2 / 2 = -0.72) while moving 1.8 face widths
+  # sideways. The design's 1.5 face widths/s looked like a wobble on the
+  # session clip (the hat moved ~0.3 face widths before it faded).
+  hat_fly_v: [3.0, 3.0]
+  hat_gravity: 14.0
+  # Spin while flying (the design's 360 deg/s), turning the way it flies.
+  hat_spin_deg: 360
+  # Face flash on a hit: white for the first half of flash_s, then the
+  # attacker's colour, fading out (the design's 150 ms: a few frames at
+  # 20-30 FPS, so it reads as a flash and not a colour change).
+  flash_s: 0.15
+  # Half-axes of the flash ellipse in face widths (across, down the face):
+  # the face is ~1 face width wide and ~1.3 tall from forehead to chin.
+  flash_axes: [0.55, 0.7]
+  # Peak opacity of the flash (times Face.alpha); the face stays visible.
+  flash_opacity: 0.7
+  # Cheek bulge: a radial magnifying warp around each cheek anchor
+  # (effects.bulge_map()). Radius in face widths: 0.3 covers the
+  # cheek (the cheeks are 0.66 apart, so the two circles do not overlap).
+  bulge_radius: 0.3
+  # Warp strength at its peak (the exponent k in rho' = rho (rho/r)^k(1-u^2),
+  # the design's ~0.5): within a quarter of the radius the cheek is
+  # magnified ~2x, at half the radius ~1.3x across; stronger starts to look
+  # like a lens, not a cheek.
+  bulge_k: 0.5
+  # The bulge rises and falls over this long (half a sine), chipmunk style.
+  # It starts only when the player drinks a consumable (merge_log.md,
+  # "Consumables").
+  bulge_s: 1.0
+  # While a drink sits at the open mouth, the cheeks already bulge gently:
+  # half the drinking puff (a mouthful, not yet swallowed), reached and let
+  # go over bulge_hold_ramp_s so the warp never jumps. The puff after
+  # drinking rises from this level.
+  bulge_hold_k: 0.25
+  bulge_hold_ramp_s: 0.2
+
+  # Stub backend only: above_head sits this many shoulder-widths above the
+  # nose. ~0.9 clears the top of the head for an average adult.
   above_head_factor: 0.9
-  # Fallback head scale (px) when shoulders are not visible.
+  # Stub backend only: fallback head scale (px) when shoulders are not visible.
   default_scale: 80.0
 
-gestures:                 # Task 4 — stub: no events
-  {}
+gestures:                 # Task 4 — Colour Clash rules -> events
+  # All distances are in shoulder widths (sw), so the rules hold at any
+  # distance from the camera. Values are from bodypose.py.
+  # Hands up without a visible nose: the head is taken this far above the
+  # shoulder line, roughly chin height.
+  head_above_shoulders: 0.3
+  # Hips not visible: hip level is taken this far below the shoulders. On
+  # the generous side, so the chest zone and punch height are not cut short.
+  hip_below_shoulders: 2.0
+  # Arms crossed: both wrists between this far above the shoulders and the
+  # hips, so crossing at the chest counts but crossing overhead does not.
+  chest_above_shoulders: 0.5
+  # Arms crossed: wrists closer than this, so wrists that only just pass
+  # each other far apart do not count. The older single-player
+  # pose_detector.py used 1.2; to check on the clips (merge step 4).
+  cross_max_wrist_dist: 1.5
+  # Punch: elbow angle above this (degrees) counts as a straight arm; 180 is
+  # fully straight, and 150 tolerates keypoint noise at the elbow.
+  punch_elbow_angle: 150.0
+  # Punch: wrist at least this far to the side of its shoulder (horizontal
+  # distance), so an arm pointed at the camera, held close, or hanging
+  # straight down is not a punch. bodypose.py measured the straight-line
+  # distance, which let a hanging arm through (merge step 2b).
+  punch_min_reach: 1.0
+  # Punch: wrist no higher than this above the shoulders, which excludes
+  # hands up.
+  punch_above_shoulders: 1.0
+  # Punch: wrist no lower than this below its own shoulder, so a straight arm
+  # held low is not a punch (bodypose.py allowed down to the hips; merge_log,
+  # Task 4 modifications). A level arm puts the wrist at shoulder height, give or take
+  # keypoint noise; 0.2 sw keeps those punches. 0 = strictly level or higher.
+  punch_below_shoulder: 0.2
+  # Punch: the other arm must be bent under this angle (guard), so two
+  # straight arms (e.g. a T-pose) are not a punch.
+  punch_bent_angle: 120.0
+  # No gesture while the shoulders are closer than this (px): the shoulder
+  # width is the unit of every rule, and below 10 px a few pixels of keypoint
+  # noise change it by tens of percent. Value from bodypose.py.
+  min_shoulder_px: 10.0
+  # Hands up and arms crossed must hold this long before their event
+  # (bodypose.py: CONFIRM_FRAMES = 2; at 30 FPS the 2nd frame comes 0.033 s
+  # after the 1st; 0.03 leaves room for timestamp jitter). Filters out
+  # one-frame keypoint glitches.
+  confirm_s: 0.03
+  # A punch stays on this long after its last detected frame (bodypose.py:
+  # PUNCH_HOLD_S). It bridges frames where the arm briefly fails the rule, so
+  # one punch gives one event; punches closer together than this count as one.
+  punch_hold_s: 0.5
+  # Punch: no punch while its wrist rose more than this (shoulder widths)
+  # over the last punch_rise_window_s; 0 = off. Tried and switched off
+  # (merge_log, "Evaluation tools and the team clips"): at 0.8 it stopped arm
+  # swings into hands up from firing punches (beams 14 -> 18 of 18), but a
+  # player who punches upward from the hip lost 8 of 25 punches; real punches
+  # rose 0.3-1.28 sw and false swings 0.89-1.55 sw, so no value separates
+  # them (punch recall 88 % off, 73 % at 0.8).
+  punch_max_rise_sw: 0.0
+  # The time over which the wrist's rise is measured (when the check is on);
+  # 0.2 s is about the time an arm takes to swing from the hip to shoulder height.
+  punch_rise_window_s: 0.2
+  # Hands up and arms crossed stay on until their rule has failed for this
+  # long. Without it, a keypoint dropout of a frame or two, or wrists briefly
+  # above the frame (after motion.hold_s), ended the gesture and the next
+  # frames started it again: a second beam from one raise (Task 4
+  # modifications). 0.3 s is ~9 frames at 30 FPS; lowering and raising the
+  # arms on purpose takes longer.
+  release_s: 0.3
 
-game:                     # Task 4 — stub: prints events
-  {}
+game:                     # Task 4 — Colour Clash game logic (game.py)
+  # Positions are pixels. Speeds and sizes are fractions of the frame width
+  # (_w) or height (_h), so the game plays the same at any resolution.
+  # Starting health. A bolt takes 10 and a beam 12: 10 bolts or 9 beams win.
+  max_health: 100
+  # Bolt, fired by a punch. game.py: ATTACK_COOLDOWN was 1.8 s; 0 makes every
+  # punch event fire a bolt (merge decision). The gesture stage already sends
+  # at most one punch event every 0.5 s (gestures.punch_hold_s).
+  bolt_cooldown_s: 0.0
+  # Crosses the frame in 1 s. game.py's PROJECTILE_SPEED was 1.4 (0.7 s);
+  # slowed down so the bolt is easier to see coming and shield.
+  bolt_speed_w: 1.0
+  # game.py PROJECTILE_DAMAGE.
+  bolt_damage: 10
+  # Beam, fired by hands up. It first charges in place (a visible warning),
+  # then grows across the frame. game.py BEAM_CHARGE_DURATION, BEAM_SPEED,
+  # BEAM_DURATION and BEAM_DAMAGE: stronger than a bolt, but slower to start.
+  beam_charge_s: 0.35
+  beam_speed_w: 2.4
+  beam_duration_s: 0.8
+  beam_damage: 12
+  # The beam hits a body box that comes within this distance of its line
+  # (game.py BEAM_HIT_RADIUS_Y): a thin line still hits a box it touches.
+  beam_hit_radius_h: 0.03
+  # Shield, raised by crossing the arms: blocks hits for this long (game.py
+  # SHIELD_DURATION), then fades out without blocking (SHIELD_FADE_DURATION).
+  shield_s: 1.0
+  shield_fade_s: 0.24
+  # Paint: one splash per hit, on the torso in torso coordinates (u from the
+  # screen-left shoulder 0 to the right one 1, v from the shoulder line 0
+  # to the hips 1; merge_log.md, "Normal attack"), so it moves with the body.
+  # Attacks fly sideways and enter the body box at its near edge, often at
+  # an outstretched arm, so a splash starts at the torso's side facing the
+  # attacker and steps inward by a random 0 to splat_inward_u: hits build up
+  # paint from the near side across the shirt. 0.35 keeps a splash on the
+  # near half (0.1-0.45). The band keeps its centre on the shirt: 0.1 in
+  # from the shoulder joints (the keypoints sit inside the shoulder's
+  # outline), and from just under the shoulder line to just above the hips;
+  # a hit at head height lands at the top of the chest. game.py kept its
+  # splats in the middle 0.38-0.62 of the body box, which the renderer
+  # stretched over the torso.
+  splat_band_u: [0.1, 0.9]
+  splat_band_v: [0.05, 0.9]
+  splat_inward_u: 0.35
+  # Key b throws a test blob at P1 (Game.test_hit()), so one player can try
+  # hits and paint alone: at this height on the torso (0.35: the chest, where
+  # a punch from a player of the same height arrives).
+  test_hit_v: 0.35
+  # Longest time step the game advances in one frame (main.py: dt capped
+  # at 0.1 s). After a stall or a pause, objects do not jump far ahead.
+  max_dt_s: 0.1
+  # Player position for bolts and the shield: shoulder midpoint and hip level
+  # (center_x, torso_y in bodypose.py). Same values as the gestures: section (each
+  # module reads only its own section): no position below 10 px shoulder
+  # width, and hips not visible = 2 shoulder widths below the shoulders.
+  min_shoulder_px: 10.0
+  hip_below_shoulders: 2.0
+  # A bolt's end point (a hit, a shield or the frame edge, BoltEnd.reason) is
+  # kept this long, so the renderer can play the paint blob's burst into
+  # falling drops on a shield there (game.Game.bolt_ends). 0.25 s fitted the
+  # fire bolt's break-up frames; drops thrown up need ~0.5 s to rise and fall
+  # back past the hit point.
+  bolt_end_s: 0.5
+  # --- Game phases (game start, docs/merge_log.md): waiting ->
+  # calibration -> countdown -> playing -> result. false = no waiting,
+  # calibration or countdown: the game plays at once, as before (tests, and
+  # clips recorded without the intro, e.g. data/clips/session.mp4).
+  intro: true
+  # Players the intro and the replay wait for: 2 for the 1v1 game; 1 to test
+  # the intro alone (main.py --solo): only P1 is waited for and calibrated,
+  # and a round has no opponent, so it never ends (keys r / R).
+  round_players: 2
+  # Waiting -> calibration: P1 and P2 both in view with a face for this long,
+  # so someone walking past the camera does not start the instructions.
+  ready_s: 1.0
+  # Countdown before every round (3-2-1).
+  countdown_s: 3.0
+  # Result -> next round: both players hold their hands up this long. Both,
+  # so the winner cheering alone does not restart; 2 s, so a short stretch
+  # does not either.
+  replay_hold_s: 2.0
+  # The two holds above survive gaps up to this long where their condition
+  # fails (a keypoint dropout, a face missed for a frame); as
+  # gestures.release_s.
+  hold_gap_s: 0.3
+  # Hands up for the replay without a visible nose: the head is taken this
+  # far above the shoulders (shoulder widths). Same as
+  # gestures.head_above_shoulders; each module reads only its own section.
+  head_above_shoulders: 0.3
+  # Pose calibration, the first calibration move: the neutral pose held this
+  # long while shoulder width and arm length are measured every frame; the
+  # median of ~60 samples at 30 FPS ignores a few bad keypoints.
+  neutral_s: 2.0
+  # Neutral pose: both wrists at least this far below the shoulder line
+  # (shoulder widths). Hanging arms put them ~1.5 sw below; 0.8 still
+  # counts slightly bent arms, but not hands at the chest.
+  neutral_wrist_below_sw: 0.8
+  # Standing still: both wrists slower than this (shoulder widths per s),
+  # so the arm length is not measured mid-swing. On session.mp4, wrists of
+  # lowered arms moved at a median 0.34 sw/s (90th percentile 0.81), from
+  # keypoint noise and small sways.
+  neutral_max_speed_sw: 1.0
+  # Facing the camera: head yaw at most this (degrees). Turned by 20 deg,
+  # the shoulders still show cos(20) = 94% of their width. On session.mp4,
+  # 90% of frames had the head turned less than 14 deg.
+  neutral_max_yaw_deg: 20.0
+  # Warning when the calibrated arm (shoulder-elbow-wrist) is shorter than
+  # this (shoulder widths): the punch needs the wrist 1 sw to the side
+  # (gestures.punch_min_reach) with the elbow over 150 deg, and an arm
+  # pointing a little towards the camera looks shorter. The two players on
+  # session.mp4 measured 1.67 and 1.56 sw. TO TUNE with more players.
+  min_arm_sw: 1.3
+  # Gestures count only while the player faces the camera with head and
+  # body (Game.facing_camera(), merge_log "Game start: Modifications"). A
+  # gesture made turned away is logged as the action not_facing_<gesture>,
+  # and the player sees "FACE THE CAMERA". false = every gesture counts.
+  act_facing_camera: true
+  # Head: |yaw| from the face stage at most this (degrees).
+  act_max_head_yaw_deg: 30.0
+  # Body: turned at most this (degrees), from the shoulder-to-torso ratio
+  # against the neutral pose (Game.body_yaw_deg()): cos(30) = 0.87, the
+  # shoulders look 13% narrower. Not checked before the calibration.
+  act_max_body_yaw_deg: 30.0
+  # --- Drinks (consumables, merge_log.md "Consumables"). They fall only
+  # while playing. A new one every drink_every_s (random in this range, s):
+  # often enough to matter in a ~1-2 minute round, rare enough that
+  # fighting stays the main thing.
+  drink_every_s: [6.0, 10.0]
+  # At most this many in the air at once, so the frame does not fill up.
+  drink_max: 2
+  # Time to fall through the whole frame height (s), at a constant speed:
+  # slow, so a player sees one coming and can get their head under it.
+  # 4 s was still too fast to get under on the webcam (Task 5 owner,
+  # 2026-11-01): 6 s is a third slower.
+  drink_fall_s: 6.0
+  # Base height of a drink as a fraction of the frame height (~1 face
+  # height for players at ~2.3 m on session.mp4), times its random size
+  # factor from drink_size. Bigger drinks are easier to catch and give more.
+  drink_h: 0.1
+  drink_size: [0.7, 1.4]
+  # Drinks appear at a random x this fraction of the width away from the
+  # frame edges, where players can reach them.
+  drink_margin_w: 0.1
+  # Drinking, only with the mouth. The mouth is open above this jawOpen
+  # score (MediaPipe, 0-1) and closed again below drink_mouth_closed
+  # (hysteresis). On session.mp4 talking and reacting never went above
+  # 0.44, so 0.5 needs a mouth opened on purpose.
+  drink_mouth_open: 0.5
+  drink_mouth_closed: 0.25
+  # A drink touches the open mouth when its centre is within this many face
+  # widths of the mouth anchor plus half its height (the design's ~0.6).
+  drink_catch_fw: 0.6
+  # A caught drink hangs from the mouth: its rim, this fraction of its
+  # height above its centre, at the mouth anchor.
+  drink_hold_rim: 0.4
+  # Not drunk (mouth closed) within this long, a caught drink falls on, and
+  # the same player cannot catch it again: holding the mouth open does not
+  # keep a drink forever. 1 s (the design's value) was too short on the
+  # webcam (logs/run-20261028-231534.csv): 3 of 4 caught drinks fell on,
+  # the mouth closing 1.0-1.1 s after the catch or held open longer; one
+  # closed in time (0.87 s). Closing also shows a frame or two late
+  # (MediaPipe measures each player every other frame). The mouth counted
+  # as closed 0.87, 1.00, 1.14 and 2.07 s after the catches: 2.5 s takes
+  # all four, and is still short enough that a held drink does not block.
+  drink_hold_s: 2.5
+  # Buff values from the smallest to the largest drink. hp: health at once
+  # (max_health 100: a tenth to a third of the bar). attack: damage dealt
+  # times this (a bolt's 10 becomes 12-16). defense: this fraction less
+  # damage taken (a bolt's 10 becomes 8-5). Both last drink_buff_s: ~10 s
+  # is a few exchanges, long enough to use, short enough to drink again.
+  # Damage = base x attacker's attack x (1 - target's defense), rounded.
+  drink_hp: [10, 30]
+  drink_attack: [1.2, 1.6]
+  drink_defense: [0.2, 0.5]
+  drink_buff_s: 10.0
+  # Seed of the drinks' random generator: a number replays the same drinks
+  # every run (tests, clip comparisons); null = different every game.
+  drink_seed: null
+  # --- Orb for the final smash (docs/merge_log.md, "Final smash"). Only while
+  # playing, one orb at a time: the next comes this long after the last was
+  # used or the round started (random in the range, s), and none while
+  # someone holds it.
+  orb_every_s: [5.0, 8.0]
+  # Orb radius (frame heights): 0.045 is 32 px at 720p, about half a face
+  # width for players at ~2.3 m on session.mp4: easy to see and to reach.
+  orb_r_h: 0.045
+  # The band the orb's centre bounces in (frame heights, top and bottom),
+  # at shoulder and head height, where a raised hand reaches it. On session.mp4
+  # (players ~2.3 m away) the punching hands were at 0.36-0.49 of the frame
+  # height (5th-95th percentile, 16 punches), the shoulders at 0.37-0.46,
+  # the noses at 0.25-0.32. Players nearer the camera stand taller in the
+  # frame (shield.mp4: shoulders 0.33-0.43), so the band reaches up to
+  # nose height of the far players.
+  orb_band_h: [0.25, 0.5]
+  # The orb bounces off the sides this fraction of the width in from the
+  # frame edges (as drink_margin_w), where players can reach it.
+  orb_margin_w: 0.1
+  # Speed (frame widths per s) and angle below the horizontal (degrees,
+  # random in the range): 0.12 drifts across the play area in ~7 s, slow
+  # enough to reach for, and the shallow angle crosses the band's
+  # height in ~2-3 s at 1280 x 720, so it passes both players' shoulders.
+  orb_speed_w: 0.12
+  orb_angle_deg: [15.0, 40.0]
+  # A hand grabs the orb when its wrist is within this many shoulder widths
+  # of the orb's edge: the hand reaches ~0.3-0.4 sw past the wrist
+  # keypoint, so 0.5 is a touch with a little slack.
+  orb_reach_sw: 0.5
+  # ... for this long (s), so a one-frame keypoint glitch does not grab
+  # it: 2-3 frames at 17-30 FPS.
+  orb_grab_s: 0.1
+  # Seed of the orb's random generator (as drink_seed): a number replays
+  # the same orbs; null = different every game.
+  orb_seed: null
 
 recorder:
   # Write one per-frame CSV per run (frame_id, t, stage ms, per-player
@@ -80,7 +744,428 @@ recorder:
   # Codec for recorded clips. mp4v is available in every OpenCV build.
   fourcc: mp4v
 
+pipeline:                 # Task 5 — app/pipeline.py, failing modules
+  # Catch a module's exception, use an empty output for that frame and go on
+  # (the brief asks for module failures handled in a controlled way). false
+  # = raise at once, for debugging a module.
+  catch_errors: true
+  # A stage that fails on every frame for this long is swapped for its stub
+  # backend (identity: zones, motion: stub, face: stub). 1 s rides out a
+  # one-off hiccup (a bad frame, a short CUDA stall) without dropping the
+  # real module, and is short enough that players see the game recover.
+  fallback_after_s: 1.0
+
 render:
   window_name: IPCV game
   # Show per-stage timings and FPS in the corner of the game window.
   show_timings: true
+  # Debug views (--until face, gestures, game): draw the face effects (hat,
+  # mustache) under the module's overlay, so a recorded debug view shows them
+  # with the module's state. Views before the face stage have no faces, so
+  # nothing changes there.
+  debug_face_effects: true
+  # --- Game look (moved from game: in the renderer merge; merge_log, Task 5).
+  # Retro look from renderer.py: the camera image is shrunk by this factor
+  # and scaled back up with the nearest pixel (2 = renderer.py's half size,
+  # 2 x 2 px blocks; ~1 ms at 720p). Sprites and text are drawn sharp on top.
+  # 1 = off.
+  pixel_size: 2
+  # Player boxes and skeletons in the game view, for testing; renderer.py
+  # drew none (the player is named on their health bar).
+  show_skeleton: false
+  # --- Paint on the bodies (scene/paint.py; merge_log.md, "Normal attack").
+  # renderer.py drew each splat as a cross of 5 pixel cells. Now each splash
+  # is a set of polygons in torso coordinates (u: shoulder to shoulder, v:
+  # shoulder line to hips), mapped onto the body every frame.
+  # Torso height / width (shoulder line to hips over shoulder to shoulder):
+  # shapes are sized in torso widths and their v divided by this, so a round
+  # splash stays about round on the body. Medians measured: 1.82 and 1.74
+  # on session.mp4, 1.46 on shield.mp4 (hips often out of frame there,
+  # estimated).
+  paint_aspect: 1.7
+  # Splash shapes (splash_shapes(), one per hit from its seed). Sizes of
+  # the parts are in radii of the central blob. The blob's radius is
+  # [base, growth] torso widths: base + growth x coverage (coverage = 1 -
+  # health / max_health), so every splash swells as the player loses and a
+  # player near 0 HP is mostly paint (renderer.py's crosses grew the same
+  # way). 0.1 is a palm-sized blob on a fresh player; 0.25 at 0 HP.
+  splash_r: [0.1, 0.15]
+  # Outline wobble: amplitude up to this / k for the k-th sine (k = 2..5),
+  # so the blob bends but stays one blob.
+  splash_wobble: 0.25
+  # Spikes thrown out of the blob: how many (5-10, from the design), how
+  # far past the blob's edge and how wide at the base (blob radii). A share
+  # spike_forward flies on in the attack's direction, within
+  # spike_spread_rad (~40 degrees); the rest anywhere, as paint hitting a
+  # surface sprays all round but mostly onward.
+  splash_spikes: [5, 10]
+  spike_len: [0.5, 1.4]
+  spike_width: [0.25, 0.5]
+  spike_forward: 0.7
+  spike_spread_rad: 0.7
+  # Droplets around the splash: how many, how far from the centre (blob
+  # radii, aimed like the spikes), and their radius [min, max] from a
+  # Pareto power law with this exponent: most are tiny, a few large.
+  splash_drops: [6, 12]
+  drop_dist: [1.3, 2.6]
+  drop_r: [0.06, 0.3]
+  drop_power: 2.5
+  # Drips from the blob's lower edge: how many, full length and width (blob
+  # radii), and how long they take to run down (s), fast at first, then
+  # slowing (from the design: 1-3 drips over ~1 s).
+  drips: [1, 3]
+  drip_len: [0.8, 2.0]
+  drip_w: [0.12, 0.22]
+  drip_s: 1.0
+  # Each splash is drawn once into a coverage sprite and placed every frame
+  # with one affine warp (scene/paint.py). Sprite px per blob radius: a blob
+  # is at most ~0.25 x 390 = ~100 px across on screen (0 HP, close up on
+  # shield.mp4) and ~35 px on session.mp4, so 40 is mostly shrunk and soft
+  # only when enlarged close up. The sprite reaches this many radii from
+  # the centre: the farthest droplets (2.6 + 0.3 x wobble) and the longest
+  # drips (0.8 + 2.0 + their end drop) stay inside. 257 x 257 px each.
+  paint_sprite_px: 40
+  paint_sprite_extent: 3.2
+  # Body mask, so paint never lands on the background. The torso quad is
+  # widened past the shoulder and hip keypoints (joints sit inside the
+  # body's outline: the shoulder's outline is ~0.15 torso widths further
+  # out) and reaches a little above the shoulder line, not below the hips
+  # (the belt line is where the trousers start, often loose).
+  mask_torso_u: [-0.15, 1.15]
+  mask_torso_v: [-0.1, 1.0]
+  # Thickness of the capsule along each arm and leg bone, in shoulder
+  # widths: an upper arm in a sleeve is about a third of the shoulder width
+  # across, a thigh a little more.
+  mask_arm_sw: 0.35
+  mask_leg_sw: 0.45
+  # No paint while the torso is narrower than this (px, shoulder to
+  # shoulder): a player standing side-on has the shoulders nearly on top of
+  # each other, and the map onto a sliver would smear the paint.
+  paint_min_torso_px: 12
+  # Partial shading: the paint is multiplied by (1 - s) + s x the camera's
+  # brightness relative to its mean under the paint, so folds and shadows
+  # show through while a dark shirt keeps the paint bright (decided
+  # 2026-10-29: stays visible on black clothes). 0 = flat colour, 1 = the
+  # brightness ratio in full.
+  paint_shade: 0.5
+  # Opacity of the paint; just under 1 keeps a hint of the cloth texture.
+  paint_opacity: 0.95
+  # Health bars pinned to the bottom (P1 left, P2 right, as in a fighting
+  # game): length as a fraction of the frame width (0.3 leaves the middle
+  # for the key line), height and "PLAYER N" label height as fractions of the
+  # frame height (renderer.py's 10 px bar and 0.8-scale label at 480p).
+  bar_w: 0.3
+  bar_h: 0.021
+  bar_font_h: 0.017
+  # Top bar (renderer.py: 34 px at 480p) with "COLOUR CLASH" and the
+  # controls; font scales are renderer.py's at 480p and grow with the frame.
+  hud_h: 0.07
+  hud_title_scale: 1.4
+  hud_text_scale: 1.0
+  # End of the game: the frame behind renderer.py's panel is darkened to this
+  # fraction, so the panel stands out and nothing looks frozen.
+  game_over_dim: 0.5
+  # --- Screens around the round (game start, docs/merge_log.md).
+  # Waiting: each player's start place, a box this wide (fraction of the
+  # frame width) in their half of the frame; 0.3 is about a player with
+  # arms down at the usual distance. From just under the top bar to just
+  # above the bottom (fractions of the height), so it frames the whole body.
+  start_place_w: 0.3
+  start_place_y: [0.1, 0.95]
+  # Font scale of "PLAYER N" and "STAND HERE" at 480p (as the hud_*_scale
+  # values), larger than the top bar so it reads from a few metres away.
+  start_text_scale: 1.6
+  # Countdown: the 3-2-1 numbers are this fraction of the frame height, big
+  # enough to see from the play area.
+  countdown_h: 0.3
+  # "FIGHT!" stays this long once a round starts after the countdown.
+  fight_s: 0.8
+  # Calibration: each player's instruction panel, this wide (fraction of the
+  # frame width) in their half and from y0 to y1 (fractions of the height):
+  # over the legs, so the face, arms and hat stay visible. It ends above
+  # the key line at the bottom.
+  instruction_w: 0.44
+  instruction_y: [0.6, 0.92]
+  # The panel's dark backing covers the camera image this much, so the
+  # text reads on a bright floor while the legs still show through.
+  instruction_alpha: 0.8
+  # Font scales at 480p (as hud_*_scale): the move's name, then the lines
+  # on how to do it and what it does.
+  instruction_title_scale: 2.0
+  instruction_text_scale: 1.0
+  # A move not done after this long is reminded: the panel's frame flashes
+  # remind_hz times per second and "TRY IT NOW!" appears. 8 s is enough to
+  # read the panel and try once.
+  remind_s: 8.0
+  remind_hz: 2.0
+  # After a move is done, "NICE!" with a tick shows this long before the
+  # next move, so the player sees it counted.
+  nice_s: 0.8
+  # "FACE THE CAMERA" above a player's head this long after a gesture did not
+  # count because they were turned away (game.act_facing_camera), at this
+  # text scale (at 480 px height, like the other text scales).
+  face_camera_s: 1.0
+  face_camera_text_scale: 1.2
+  # --- Status above the head (merge_log.md, "Face effects").
+  # Name tag "P1"/"P2" at the face's above_head anchor: its text height in
+  # face widths, so it scales with the player, but at least tag_min_h of the
+  # frame height (~14 px at 480p), so a far player's tag stays readable.
+  tag_face_h: 0.35
+  tag_min_h: 0.03
+  # With no room above the head (under the top bar), the tag goes beside
+  # the hat, this many face widths from the hat anchor: the hat is 1.5 face
+  # widths wide (face.hat_width), so 0.9 clears its brim.
+  tag_side_fw: 0.9
+  # Keeping the tag steady. On the session clip it jumped between above
+  # the head and beside the hat 26-45 times and changed size on 73-94% of
+  # frames. Back above the head only with this many tag heights of room to
+  # spare (hysteresis; the head bobs by about a tag height while playing).
+  tag_side_hyst: 1.0
+  # Beside the hat, the tag is on the side towards the middle of the frame;
+  # it changes sides once the player is this fraction of the frame width
+  # past the middle, so a player standing near the middle does not flip it.
+  tag_side_flip: 0.1
+  # A new text size only once the face width has changed by more than this
+  # fraction: the face width shakes by a few percent every frame.
+  tag_size_tol: 0.12
+  # One Euro filter on the tag's position, smoother than the face's (face.
+  # filter_min_cutoff 1.5 Hz): above_head is 1.6 face widths above the eyes,
+  # so small head-angle noise moves it most. beta (per px/s) lets it keep
+  # up when the player walks.
+  tag_filter_min_cutoff: 0.5
+  tag_filter_beta: 0.02
+  # Crown for the player with more HP: width in tag heights, so it is as
+  # readable as the tag.
+  crown_per_tag: 1.6
+  # Dizzy stars below this fraction of max HP (the design's 25%: the last
+  # two or three hits).
+  dizzy_hp: 0.25
+  # Stars circling the head: number, turns per second, and the ellipse
+  # (centre stars_rise face widths above the hat brim, so they ring the hat;
+  # half-width stars_orbit face widths, just outside a ~1 face-width head;
+  # height stars_flat of the width: a fixed flattening, since Face has no
+  # pitch). Star radius in face widths: 0.2 (~14 px at 2.3 m) after 0.12
+  # was hard to see on the session clip.
+  stars_n: 3
+  stars_hz: 0.7
+  stars_rise: 0.25
+  stars_orbit: 0.75
+  stars_flat: 0.3
+  star_size: 0.2
+  # --- Drinks (consumables, merge_log.md "Consumables").
+  # Sprites per buff kind, from "Fancy Drinks || Pixel Asset Pack" by Pop
+  # Shop Packs (README, third-party licences). Each kind has drinks of its
+  # own colour, away from the team colours (red, blue): green for HP,
+  # orange for attack, purple for defense. A drink picks one at random.
+  # null = plain circles in the kind's colour.
+  drink_sprites:
+    hp: ["assets/Fancy Drinks/Sprites/individual_sprites/Lime Lemonade.png", "assets/Fancy Drinks/Sprites/individual_sprites/Cucumber Water.png", "assets/Fancy Drinks/Sprites/individual_sprites/Power Up.png"]
+    attack: ["assets/Fancy Drinks/Sprites/individual_sprites/Orange Juice.png", "assets/Fancy Drinks/Sprites/individual_sprites/Tropic Cider.png", "assets/Fancy Drinks/Sprites/individual_sprites/Poolside.png"]
+    defense: ["assets/Fancy Drinks/Sprites/individual_sprites/Midnight.png", "assets/Fancy Drinks/Sprites/individual_sprites/Pomegranate.png", "assets/Fancy Drinks/Sprites/individual_sprites/Neon Night.png"]
+  # The buff badge on a drink: radius as a fraction of the drink's height,
+  # at least this many px so far drinks still show their kind.
+  drink_badge: 0.22
+  drink_badge_min_px: 7
+  # A drink held at a mouth is drawn at most this many face widths tall
+  # (falling drinks can be taller than a face at ~2.3 m), its top this many
+  # face widths below the mouth anchor (the upper lip): at the lower lip,
+  # so the cheeks stay visible while they bulge. No badge while held.
+  drink_held_fw: 0.8
+  drink_held_drop_fw: 0.15
+  # Pick-up text ("+18 HP"): shown this long, rising this fraction of the
+  # frame height, beside the head (popup_side_fw face widths from the
+  # mouth, towards the middle of the frame, so it does not cover the face),
+  # at this text scale (at 480 px, like the other scales).
+  popup_s: 1.2
+  popup_rise_h: 0.1
+  popup_side_fw: 0.9
+  popup_text_scale: 1.4
+  # Running attack and defense buffs above each health bar: icon height as
+  # a fraction of the frame height (~32 px at 720p), fading over the last
+  # buff_fade_s, so the player sees it is about to end.
+  buff_icon_h: 0.045
+  buff_fade_s: 2.0
+  # --- Orb for the final smash (scene/orb.py; docs/merge_log.md, "Final
+  # smash"). The orb (its radius is game.orb_r_h) is split into both team
+  # colours, as it belongs to no one yet, and turns this many times a
+  # second: slow enough to see the two colours, fast enough to look alive.
+  orb_spin_hz: 0.5
+  # A pale halo round the orb, this many orb radii wide, pulsing at
+  # orb_pulse_hz, so it stands out on a busy background.
+  orb_halo: 1.8
+  orb_pulse_hz: 1.5
+  # Pop where a hand grabbed the orb: a ring growing to orb_pop_ring orb
+  # radii and orb_pop_drops drops flying out, in the player's colour,
+  # over orb_pop_s (as long as a blob's burst, game.bolt_end_s).
+  orb_pop_s: 0.5
+  orb_pop_ring: 3.0
+  orb_pop_drops: 8
+  # A player holding the orb glows in their team colour, moved
+  # glow_white of the way to white so it reads as light (pure red on the
+  # red shirt in session.mp4 hardly showed) (draw_body_glow()): the body
+  # (the paint mask, mask_* keys) plus a head disc glow_head_fw face widths
+  # round the face centre (0.75: the face width is eye to eye plus a
+  # little, the head is wider), blurred so the halo fades out
+  # ~glow_reach_sw shoulder widths from the body (0.3 was a thin line at
+  # ~2.3 m on session.mp4). Opacity pulses between glow_alpha's two values
+  # at glow_hz, and on the body itself it is glow_inside of that, so the
+  # player stays visible inside a brighter halo. Drawn at glow_scale of the
+  # frame's resolution: the halo is a blur, so a quarter is enough and
+  # keeps the cost down.
+  glow_white: 0.3
+  # The glow follows the player's real outline: the Selfie Segmenter's mask
+  # (arena_segmenter) within this many shoulder widths of their keypoint
+  # mask below, enough to take in loose clothes and hair, little enough to
+  # leave out another player standing a step away. Without the segmenter
+  # the keypoint mask itself glows.
+  glow_select_sw: 0.6
+  glow_head_fw: 0.75
+  glow_reach_sw: 0.5
+  glow_alpha: [0.45, 0.8]
+  glow_hz: 1.2
+  glow_inside: 0.3
+  glow_scale: 0.25
+  # "RAISE YOUR ARMS" on the shoulder line of a player holding the orb,
+  # text scale (at 480 px, like the other scales).
+  raise_text_scale: 1.2
+  # Paint blob (normal attack, scene/paint.py draw_blob(); it replaced the
+  # assets/beam fire blast). Radius in frame widths: 0.02 is ~26 px at
+  # 1280 px wide, about a fist at 2.3 m (a 0.1 m fist is ~40 px across
+  # there); the design's 0.03 made a ball wider than the players' heads.
+  blob_r_w: 0.02
+  # Its outline wobbles: amplitude this / k for k = 2..4, phases turning at
+  # this x k turns a second, so it never looks like a still disc.
+  blob_wobble: 0.18
+  blob_wobble_hz: 1.5
+  # Stretched along the flight, as a moving drop.
+  blob_stretch: 1.25
+  # Droplets trailing behind it: how many, how far apart (blob radii), and
+  # how far the i-th sinks (this x i^2 radii, like gravity).
+  blob_trail: 3
+  blob_trail_gap: 1.3
+  blob_trail_fall: 0.15
+  # Burst on a shield (draw_burst()): the drops thrown back and up (within
+  # this spread of 45 degrees up-back), their speed (blob radii / s),
+  # gravity (blob radii / s^2) and size (blob radii); they shrink to
+  # nothing over game.bolt_end_s. Drawn over the shield's ring. At 4-9
+  # radii/s the drops stayed under the ring (~20 px in 0.1 s on
+  # shield.mp4); at 8-16 they clear it (~40 px), and with gravity 30
+  # they arc down past the hit point by the end (~0.5 s).
+  burst_drops: [8, 12]
+  burst_spread_rad: 0.7
+  burst_speed: [8.0, 16.0]
+  burst_gravity: 30.0
+  burst_drop_r: [0.2, 0.45]
+  # Beam look (power attack), from the magic_effect pack: a magic ball between
+  # the player's hands (the beam's start point) and the beam coming out of
+  # it, as in the pack's preview (magic.gif). null = a plain line.
+  # beam_ball: the ball's frames, played once over the beam's whole life
+  # (charge + firing): it grows while charging, swirls while the beam fires
+  # and shrinks to a dot as it ends.
+  beam_ball: assets/magic_effect/M5025-*.png
+  # beam_band: the beam's cross-section, thickest first. The beam starts at
+  # the thinnest band, thickens one step every beam_ramp_s and thins again
+  # at the end; 0.1 s is the preview's frame time (10 FPS). The full band is
+  # as thick as the hit band (2 x game.beam_hit_radius_h).
+  beam_band: assets/magic_effect/L5020-*.png
+  beam_ramp_s: 0.1
+  # Ball frame height as a fraction of the frame height. The ball fills
+  # about half its frame, so 0.36 gives a ~130 px ball at 720p: three times
+  # the beam's thickness, as in the preview.
+  beam_ball_h: 0.36
+  # The pack's own colours (red) are this player's (P1, the red team). Other
+  # players get a copy with every hue turned by the same angle, so it takes
+  # their team colour (scene/draw.py).
+  beam_effect_owner: 1
+  # Shield look, from the assets/shield/FX019 frames: a ring of fire around
+  # the player's chest. The pack's first shield_form_frames frames form the
+  # ring (whirling arcs closing); they play once over shield_form_s, faster
+  # than the pack's 1.3 s, because the shield blocks from its first frame and
+  # lasts only game.shield_s. The next shield_loop_frames frames are the burning
+  # ring, looped at shield_sprite_fps (the pack's preview rate); the pack's
+  # remaining frames repeat them and are not used. The ring fades out with the
+  # shield (game.shield_fade_s). null = no ring.
+  shield_sprite: assets/shield/FX019
+  shield_form_frames: 13
+  shield_loop_frames: 16
+  shield_form_s: 0.3
+  shield_sprite_fps: 10
+  # Ring diameter in shoulder widths: 2.6 frames the upper body (shoulders
+  # plus arms crossed in front) at any distance from the camera.
+  shield_ring_sw: 2.6
+  # The ring's own colours (orange fire) are P1's (red team); others get a
+  # hue-turned copy in their team colour.
+  shield_effect_owner: 1
+  # --- Arena: the room reacts to the fight (scene/arena.py) ---
+  # Wall splash sizes, as fractions of the frame height (36 / 25 / 14 px at
+  # 720p). A blob leaving the frame hits the side wall flat, so its splash
+  # is bigger than the flying blob (blob_r_w ~26 px at 1280 wide); paint
+  # spraying past a body has lost some to the body; a bounce off a shield
+  # is a smaller spray again.
+  arena_edge_r_h: 0.05
+  arena_hit_r_h: 0.035
+  arena_bounce_r_h: 0.02
+  # An edge splash's centre sits this many of its radii inside the frame,
+  # so the blob is on screen and its forward spikes run off the edge.
+  arena_edge_inset_r: 0.6
+  # Spray past a hit player: centred arena_behind_sw shoulder widths from
+  # their torso's centre on the far side (the far shoulder is at 0.5, and the
+  # person mask reaches ~0.8 past the torso's middle), arena_hit_r_sw
+  # shoulder widths in radius, so the blob is half hidden behind the body
+  # and its spikes and drops show beside it, at any distance from the
+  # camera. Without a torso: arena_behind_fw frame widths past the hit point
+  # (a torso is ~0.1 frame widths at 2.5 m with identity.camera_hfov_deg 70)
+  # and arena_hit_r_h of the frame height.
+  arena_behind_sw: 0.9
+  arena_hit_r_sw: 0.3
+  arena_behind_fw: 0.12
+  # A bounce off a shield lands this far (frame widths) back towards the shooter.
+  arena_bounce_fw: 0.03
+  # Wall paint opacity: 0.85 lets the wall's own texture and shadows show
+  # a little through, as real paint on a wall.
+  arena_wall_opacity: 0.85
+  # Lighting while a beam is up: the room loses up to arena_dim of its
+  # brightness and gains arena_tint of the caster's colour, fading in and out
+  # over arena_dim_fade_s (shorter than game.beam_charge_s 0.35 s, so the
+  # room is dark before the beam fires). 0.55 keeps the room visible; the
+  # players are excluded by the person mask, so they stand out.
+  arena_dim: 0.55
+  arena_tint: 0.12
+  arena_dim_fade_s: 0.25
+  # The players' spotlight while the room is dim: the person mask blurred by
+  # this fraction of the width (~65 px at 1280), so the light falls off
+  # softly around each player instead of tracing the coarse mask.
+  arena_light_blur_fw: 0.05
+  # Shake on a hit: arena_shake_fw of the frame width (~10 px at 1280),
+  # damped to 0 over arena_shake_s at arena_shake_hz. Short and small, so it
+  # reads as an impact and does not make the players lose their place; 0 =
+  # off.
+  arena_shake_fw: 0.008
+  arena_shake_s: 0.3
+  arena_shake_hz: 12
+  # Person mask that keeps wall paint and dimming off the players: MediaPipe's
+  # Selfie Segmenter (landscape model; README has the download), run on the
+  # pixel look's small image, ~2.5 ms at 640 x 360 on the CPU. It follows the
+  # real outline; the keypoint mask below stopped wall paint along straight
+  # capsule edges with bare wall beside thin arms (webcam, 2026-11-01).
+  # null, or the file missing, = the keypoint mask.
+  arena_segmenter: models/selfie_segmenter_landscape.tflite
+  # The model works at 256 x 144, so its mask has a soft band ~5 px of the
+  # small image wide at the outline (7% of the pixels on session.mp4 were
+  # between 0.05 and 0.95, median 0.54), where wall paint showed half
+  # transparent over hair and shoulders. Ramped from 0 at the first value
+  # to 1 at the second, the band gets narrower but stays anti-aliased.
+  arena_segmenter_ramp: [0.3, 0.7]
+  # Keypoint person mask (fallback): wider
+  # than the body paint's clip mask (mask_* above), because this one must
+  # cover clothes and hair, not stay inside them. Torso quad stretched to
+  # u, v (v -0.35 reaches up over the neck), arm and leg capsules in
+  # shoulder widths (sleeves and trousers are wider than the bones), a head
+  # disc of arena_head_sw shoulder widths around the head keypoints, then a
+  # blur of arena_mask_blur_fw of the width so paint fades out at the edge.
+  arena_mask_torso_u: [-0.3, 1.3]
+  arena_mask_torso_v: [-0.35, 1.15]
+  arena_mask_arm_sw: 0.55
+  arena_mask_leg_sw: 0.7
+  arena_head_sw: 0.55
+  arena_mask_blur_fw: 0.012

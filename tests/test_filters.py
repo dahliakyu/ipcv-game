@@ -46,3 +46,11 @@ def test_kalman_tracks_constant_velocity():
     # Predict through a 0.2 s occlusion.
     p = kf.predict(59 / 30 + 0.2)
     np.testing.assert_allclose(p, [100.0 * (59 / 30 + 0.2), -50.0 * (59 / 30 + 0.2)], atol=3.0)
+
+
+def test_ema_snap_mask_jumps_selected_rows():
+    f = EMA(tau=1.0)
+    f(np.zeros((2, 2)), 0.0)
+    y = f(np.full((2, 2), 10.0), 0.1, snap=np.array([True, False]))
+    np.testing.assert_allclose(y[0], 10.0)
+    assert 0.0 < y[1, 0] < 10.0

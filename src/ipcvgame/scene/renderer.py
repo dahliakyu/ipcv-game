@@ -1,17 +1,99 @@
-"""Task 5 — game renderer.
+"""Task 5 — game renderer, from Colour Clash renderer.py.
 
-Phase 1: OpenCV drawing of the camera frame, per-player boxes, face effects
-and a timing HUD. Will move to pygame-ce once the game design is final.
+The game view, in drawing order: the camera frame (pixelated, as in
+renderer.py) with the room's reaction to the fight on it (scene/arena.py:
+paint on the wall behind the players, dimmed light during a beam; drawn on
+the pixel look's small image), each player's paint (scene/paint.py: splashes in torso
+coordinates, placed on the body, clipped to it and shaded), the game's
+objects (paint blobs drawn by scene/paint.py, bursting into drops on a
+shield; magic ball and beam and ring of fire shields from sprites), face
+effects, each player's status above the head (name tag, dizzy stars, crown;
+docs/merge_log.md, "Face effects"), a shake of all of that on a hit
+(scene/arena.py), health bars pinned to the bottom,
+renderer.py's top bar with the controls, the end-of-game panel and a timing HUD. The
+game logic (interaction/game.py) only keeps state; this module decides how it
+looks (renderer merge, docs/merge_log.md, Task 5).
+
+Drinks (consumables, docs/merge_log.md, "Consumables"): each falling
+drink as its sprite with a badge for its buff (green "+" HP, orange lightning attack,
+purple shield defense), a drink held at a mouth in front of the face, a
+pick-up text rising beside the drinker's head, and the running attack and
+defense buffs as icons with a time bar above each health bar.
+
+The orb for the final smash (docs/merge_log.md, "Final smash"; drawing in
+scene/orb.py): the bouncing orb in both team colours, a pop and "FULL
+ORB!" where a hand grabbed it, an orb slot on each health bar's label row,
+and a player holding the orb glowing in their team colour, with "RAISE
+YOUR ARMS" on the chest.
+
+Around the round (game start, docs/merge_log.md), the game's phase
+decides what else is drawn: the players' start places while waiting, an
+instruction panel per player during calibration, 3-2-1 during the countdown,
+"FIGHT!" as a round starts and the result panel after a win. The top bar says
+what each phase expects. Health bars are shown from the countdown on.
+
+Sprites are in each team's colour: the frames' own colours belong to one
+player (*_effect_owner), and every other player gets a copy with every hue
+turned to their team colour (scene/draw.py). They are loaded on first use, so
+the game logic and tests run without them; a sprite set to null in the config
+is drawn as a plain shape instead.
 """
 
 from __future__ import annotations
 
+import math
+import time
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+import cv2
 import numpy as np
 
-from ipcvgame.core.types import FrameState
-from ipcvgame.face.effects import FaceEffects
-from ipcvgame.interaction.game import Game
-from ipcvgame.scene.draw import draw_bbox, draw_lines, draw_skeleton, player_color
+from ipcvgame.core.filters import OneEuro
+from ipcvgame.core.types import Face, FrameState
+from ipcvgame.face.effects import FaceEffects, load_sprite
+from ipcvgame.interaction.game import CALIBRATION_MOVES, Game, Shield
+from ipcvgame.scene.arena import Arena
+from ipcvgame.scene.draw import (
+    DRINK_COLORS,
+    blend_rgba,
+    draw_bbox,
+    draw_lines,
+    draw_skeleton,
+    hue_of,
+    player_color,
+    pt,
+)
+from ipcvgame.scene.fire_ring import FireRing
+from ipcvgame.scene.instructions import MOVE_TEXT, draw_figure, draw_tick
+from ipcvgame.scene.magic_beam import MagicBeam
+from ipcvgame.scene.orb import draw_body_glow, draw_orb, draw_pop, draw_slot
+from ipcvgame.scene.paint import BodyPaint, draw_blob, draw_burst
+
+WHITE = (235, 229, 210)     # renderer.py's off-white (BGR), for outlines and text
+# renderer.py's controls line, with our three gestures and what they fire.
+CONTROLS = "PUNCH: PAINT BLOB   FULL ORB + HANDS UP: BEAM   CROSS ARMS: SHIELD"
+KEYS = "R: NEW ROUND   Q: QUIT"
+DARK = (27, 16, 17)         # renderer.py's dark backing (BGR), for bars and panels
+GREY = (120, 115, 105)      # moves still to do, in the instruction panels
+STAR = (60, 220, 255)       # dizzy stars (BGR yellow)
+GOLD = (40, 190, 255)       # the crown (BGR gold)
+# The top bar's text in the phases around the round (playing: CONTROLS).
+PHASE_TEXT = {
+    "waiting": "STAND IN YOUR PLACE",
+    "calibration": "LEARN THE MOVES",
+    "countdown": "GET READY",
+    "result": "HANDS UP TO PLAY AGAIN",
+}
+
+
+@dataclass
+class _Tag:
+    """One player's name tag between frames, so it does not jitter."""
+    filter: OneEuro          # on the tag's position (px)
+    text_h: float = 0.0      # text height (px) in use; changes only past tag_size_tol
+    side: int = 0            # 0 = above the head; +1 / -1 = beside the hat, to the right / left
 
 
 class Renderer:
@@ -19,23 +101,902 @@ class Renderer:
         self.cfg = cfg
         self.face_effects = face_effects
         self.show_timings = bool(cfg.get("show_timings", True))
+        self.show_skeleton = bool(cfg.get("show_skeleton", False))
+        self._magic: dict[int, MagicBeam] = {}   # beam look per player
+        self._rings: dict[int, FireRing] = {}    # shield look per player
+        self._tags: dict[int, _Tag] = {}         # name tag per player (_draw_tag())
+        self._drink_sprites: dict[str, list[np.ndarray]] = {}   # per buff kind, on first use
+        # Pick-up texts: (pid, text, colour, Frame.t it started).
+        self._popups: list[tuple[int, str, tuple[int, int, int], float]] = []
+        # Orb pops where the orb was grabbed: (pid, x, y, Frame.t it started).
+        self._pops: list[tuple[int, float, float, float]] = []
+        self._paint: dict[int, BodyPaint] = {}    # paint per player
+        self.paint_ms: dict[int, float] = {}       # this frame's paint time per player (log)
+        self.glow_ms: dict[int, float] = {}        # this frame's full-orb glow time per player (log)
+        self.arena = Arena(cfg)                    # wall paint, light and shake (scene/arena.py)
+        self.arena_ms = 0.0                        # this frame's arena time (log)
+
+    def reset(self, pid: int | None = None) -> None:
+        """Forget the name tags' smoothing and the paint shapes (one player on
+        re-entry, or all)."""
+        self.arena.reset(pid)
+        if pid is None:
+            self._tags.clear()
+            self._paint.clear()
+        else:
+            self._tags.pop(pid, None)
+            self._paint.pop(pid, None)
+
+    def log_fields(self, state: FrameState) -> dict:
+        """Paint and full-orb glow time per player this frame (ms), for the
+        render cost; the glow only while it is drawn."""
+        row = {f"render_p{pid}_paint_ms": round(ms, 3) for pid, ms in self.paint_ms.items()}
+        row.update({f"render_p{pid}_glow_ms": round(ms, 3) for pid, ms in self.glow_ms.items()})
+        row.update(self.arena.log_fields())
+        row["render_arena_ms"] = round(self.arena_ms, 3)
+        return row
 
     def draw(self, state: FrameState, game: Game) -> np.ndarray:
-        canvas = state.frame.image.copy()
-        for pid, p in state.players.items():
-            if p.status == "active":
-                draw_bbox(canvas, p.bbox, player_color(pid), f"P{pid}")
-        for pid, m in state.motion.items():
-            draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
-        self.face_effects.draw(canvas, state.faces)
+        # The room (scene/arena.py) is drawn on the pixel look's small image,
+        # before it is scaled up: wall paint and light behind the players.
+        image = state.frame.image
+        t0 = time.perf_counter()
+        small = shrink(image, int(self.cfg.get("pixel_size", 1)))
+        self.arena.update(state, game, small.shape[:2])
+        self.arena.draw(small, state, game)
+        self.arena_ms = (time.perf_counter() - t0) * 1000.0
+        canvas = grow(small, image.shape[:2])
+        if self.show_skeleton:
+            for pid, p in state.players.items():
+                if p.status == "active":
+                    draw_bbox(canvas, p.bbox, player_color(pid), f"P{pid}")
+            for pid, m in state.motion.items():
+                draw_skeleton(canvas, m.kpts, m.valid, player_color(pid))
+        # Paint only on players the identity stage sees now (renderer.py drew
+        # only detected players).
+        visible = [pid for pid, p in sorted(state.players.items())
+                   if p.status == "active" and pid in game.players and game.players[pid].torso is not None]
+        self.paint_ms = {}
+        for pid in visible:
+            player = game.players[pid]
+            t0 = time.perf_counter()
+            paint = self._paint.setdefault(pid, BodyPaint(self.cfg))
+            paint.draw(canvas, player.torso, state.motion.get(pid), player.paint_splats,
+                       1.0 - player.health / game.max_health, state.frame.t)
+            self.paint_ms[pid] = (time.perf_counter() - t0) * 1000.0
+        phase = game.phase
+        self.glow_ms = {}
+        if phase == "playing":
+            for pid in visible:
+                if game.players[pid].has_orb:
+                    t0 = time.perf_counter()
+                    self._draw_glow(canvas, pid, state, game, small)
+                    self.glow_ms[pid] = (time.perf_counter() - t0) * 1000.0
+        if phase != "result":
+            # After a win the game stops (game.py), so bolts and beams in
+            # flight would stand still: they are not drawn.
+            self.draw_game(canvas, state, game)
+        # The game's hits start the face effects' hit reaction; a drink at a
+        # mouth bulges the cheeks gently and a drink drunk puffs them
+        # (consumables, docs/merge_log.md, "Consumables").
+        holding = [d.held_by for d in game.drinks if d.held_by is not None]
+        self.face_effects.update(game.hits, state.faces, state.frame.t, holding)
+        for d in game.drunk:
+            self.face_effects.bulge(d.pid, state.frame.t)
+        self.face_effects.draw(canvas, state.faces, state.frame.t)
+        if phase != "result":
+            self._draw_drinks(canvas, state, game)      # after the face: a held drink is at the lips
+        self._draw_status(canvas, state, game)
+        if phase == "playing":
+            self._draw_raise_arms(canvas, state, game)
+        self._draw_popups(canvas, state, game)
+        # Hits shake the picture; the health bars and the top bar stay still.
+        canvas = self.arena.shake(canvas, state.frame.t)
+        if phase in ("countdown", "playing", "result"):
+            for pid in sorted(game.players):
+                self._draw_player_health(canvas, pid, game)
+                self._draw_orb_slot(canvas, pid, game, state.frame.t)
+                self._draw_buffs(canvas, pid, game)
+        top = self._draw_hud(canvas, status_text(phase, has_player=bool(visible)),
+                             game_over=phase == "result")
+        if phase == "waiting":
+            for place in game.round_players:
+                self._draw_start_place(canvas, place, game.place_taken(state, place), len(game.round_players))
+        elif phase == "calibration":
+            for pid in game.round_players:
+                self._draw_instructions(canvas, pid, game, state.frame.t)
+        elif phase == "countdown":
+            left = game.countdown_left()
+            n = max(1, math.ceil(left))
+            # Each number starts large and settles over its second.
+            self._draw_big_text(canvas, str(n), 1.3 - 0.3 * (n - left))
+        elif phase == "playing" and game.intro and game.phase_elapsed() < self.cfg["fight_s"]:
+            self._draw_big_text(canvas, "FIGHT!", 0.6)
+        elif phase == "result":
+            self._draw_game_over(canvas, game)
+        if phase in ("calibration", "playing"):
+            self._draw_not_facing(canvas, state, game)
         if self.show_timings:
-            draw_timings(canvas, state.timings)
+            draw_timings(canvas, state.timings, (10, top + 20))
         return canvas
 
+    # -------------------------------------------------------------------- HUD
 
-def draw_timings(canvas: np.ndarray, timings: dict[str, float]) -> None:
+    def _scale(self, canvas: np.ndarray, key: str) -> float:
+        """A renderer.py font scale (for 480p) at this frame height."""
+        return self.cfg[key] * canvas.shape[0] / 480.0
+
+    def _draw_hud(self, canvas: np.ndarray, status: str, game_over: bool) -> int:
+        """renderer.py's top bar: "COLOUR CLASH" in P1's colour, and the
+        status on the right (status_text()); the keys at the bottom, centred
+        between the health bars. Returns the bar's height (px)."""
+        h, w = canvas.shape[:2]
+        bar = int(self.cfg["hud_h"] * h)
+        title, text = self._scale(canvas, "hud_title_scale"), self._scale(canvas, "hud_text_scale")
+        thick = max(1, int(round(text)))
+        cv2.rectangle(canvas, (0, 0), (w, bar), DARK, -1)
+        (title_w, _), _ = cv2.getTextSize("COLOUR CLASH", cv2.FONT_HERSHEY_PLAIN, title, thick)
+        cv2.putText(canvas, "COLOUR CLASH", (12, int(bar * 0.68)), cv2.FONT_HERSHEY_PLAIN, title,
+                    player_color(1), thick, cv2.LINE_8)
+        # Shrunk to fit beside the title on a narrow frame.
+        scale = fit_scale(status, text, thick, w - title_w - 36)
+        (tw, _), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        cv2.putText(canvas, status, (w - tw - 12, int(bar * 0.65)), cv2.FONT_HERSHEY_PLAIN, scale, WHITE,
+                    thick, cv2.LINE_8)
+        if not game_over:
+            gap = w - 2 * (int(self.cfg["bar_w"] * w) + 24)     # between the two health bars
+            scale = fit_scale(KEYS, text, thick, gap)
+            (kw, kh), _ = cv2.getTextSize(KEYS, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = (w - kw) // 2
+            # Dark backing like the health bars, so the text reads on a bright floor.
+            cv2.rectangle(canvas, (x - 6, h - 18 - kh), (x + kw + 6, h - 6), DARK, -1)
+            cv2.putText(canvas, KEYS, (x, h - 12), cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_8)
+        return bar
+
+    def _draw_game_over(self, canvas: np.ndarray, game: Game) -> None:
+        """renderer.py's end panel: the frame dimmed, a dark panel in the
+        middle framed in the winner's colour, "PLAYER N WINS!" and the keys.
+        Added (game start): each player's final health in their colour, and
+        "HANDS UP TO PLAY AGAIN" with a bar that fills while everyone holds
+        their hands up (game.hold_fraction())."""
+        h, w = canvas.shape[:2]
+        canvas[:] = (canvas * self.cfg["game_over_dim"]).astype(np.uint8)
+        k = h / 480.0
+        panel_w, panel_h = min(w - 24, int(380 * k)), int(150 * k)
+        left, top = (w - panel_w) // 2, h // 2 - panel_h // 2
+        winner = game.winner_id
+        color = player_color(winner) if winner is not None else WHITE
+        corners = (left, top), (left + panel_w, top + panel_h)
+        cv2.rectangle(canvas, *corners, DARK, -1)
+        cv2.rectangle(canvas, *corners, color, max(2, int(3 * k)), cv2.LINE_8)
+        x, thin, inner = left + int(28 * k), max(1, int(k)), panel_w - int(56 * k)
+        title = f"PLAYER {winner} WINS!" if winner is not None else "ROUND OVER"
+        cv2.putText(canvas, title, (x, top + int(38 * k)), cv2.FONT_HERSHEY_PLAIN, 2 * k, color,
+                    max(1, int(2 * k)), cv2.LINE_8)
+        hx = x
+        for pid in sorted(game.players):
+            label = f"P{pid} {game.players[pid].health} HP"
+            cv2.putText(canvas, label, (hx, top + int(64 * k)), cv2.FONT_HERSHEY_PLAIN, 1.2 * k,
+                        player_color(pid), thin, cv2.LINE_8)
+            hx += cv2.getTextSize(label + "    ", cv2.FONT_HERSHEY_PLAIN, 1.2 * k, thin)[0][0]
+        again = PHASE_TEXT["result"]
+        cv2.putText(canvas, again, (x, top + int(92 * k)), cv2.FONT_HERSHEY_PLAIN,
+                    fit_scale(again, 1.2 * k, thin, inner), WHITE, thin, cv2.LINE_8)
+        bar_top, bar_h = top + int(100 * k), max(4, int(6 * k))
+        cv2.rectangle(canvas, (x, bar_top), (x + inner, bar_top + bar_h), WHITE, 1, cv2.LINE_8)
+        fill = int((inner - 2) * game.hold_fraction())
+        if fill > 0:
+            cv2.rectangle(canvas, (x + 1, bar_top + 1), (x + fill, bar_top + bar_h - 1), WHITE, -1)
+        cv2.putText(canvas, KEYS, (x, top + int(134 * k)), cv2.FONT_HERSHEY_PLAIN,
+                    fit_scale(KEYS, k, thin, inner), WHITE, thin, cv2.LINE_8)
+
+    # ---------------------------------------------------------- phase screens
+
+    def start_place(self, pid: int, n: int, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+        """Where pid should stand while waiting (x1, y1, x2, y2 px): a box
+        start_place_w wide in their part of the frame (P1 the left half, P2
+        the right; one player: the middle), from start_place_y[0] to [1] of
+        the height."""
+        h, w = shape[:2]
+        half = self.cfg["start_place_w"] * w / 2
+        cx = (pid - 0.5) / n * w
+        y0, y1 = self.cfg["start_place_y"]
+        return int(cx - half), int(y0 * h), int(cx + half), int(y1 * h)
+
+    def _draw_start_place(self, canvas: np.ndarray, pid: int, ready: bool, n: int) -> None:
+        """Waiting: start place pid in that team's colour, dashed with
+        "PLAYER N / STAND HERE" until someone with a face stands in its half
+        of the frame (game.place_taken()), then solid with a tick and "READY".
+        The box is a guide; the whole half counts."""
+        x1, y1, x2, y2 = self.start_place(pid, n, canvas.shape)
+        color = player_color(pid)
+        thick = max(2, int(canvas.shape[0] / 240))
+        if ready:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thick, cv2.LINE_8)
+            draw_tick(canvas, ((x1 + x2) / 2, (y1 + y2) / 2), (x2 - x1) * 0.3, color, 3 * thick)
+        else:
+            draw_bbox(canvas, np.array([x1, y1, x2, y2]), color, dashed=True)
+        scale = self._scale(canvas, "start_text_scale")
+        tthick = max(1, int(round(scale)))
+        for text, y, c in ((f"PLAYER {pid}", y1, color), ("READY" if ready else "STAND HERE", y2, WHITE)):
+            sc = fit_scale(text, scale, tthick, x2 - x1 - 12)
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, sc, tthick)
+            tx, ty = (x1 + x2 - tw) // 2, y + th + 10 if y == y1 else y - 10
+            cv2.rectangle(canvas, (tx - 6, ty - th - 6), (tx + tw + 6, ty + 6), DARK, -1)
+            cv2.putText(canvas, text, (tx, ty), cv2.FONT_HERSHEY_PLAIN, sc, c, tthick, cv2.LINE_8)
+
+    def instruction_box(self, pid: int, n: int, shape: tuple[int, ...]) -> tuple[int, int, int, int]:
+        """Where pid's instruction panel goes (x1, y1, x2, y2 px): at the
+        bottom of their part of the frame (as start_place()), over the legs,
+        so the face, arms and face effects stay visible."""
+        h, w = shape[:2]
+        half = self.cfg["instruction_w"] * w / 2
+        cx = (pid - 0.5) / n * w
+        y0, y1 = self.cfg["instruction_y"]
+        return int(cx - half), int(y0 * h), int(cx + half), int(y1 * h)
+
+    def _draw_instructions(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
+        """Calibration: pid's panel. A stick figure of their current move
+        (scene/instructions.py; mirrored for P2, so the punch points at the
+        opponent), its name in the team colour, how to do it and its effect,
+        and one dot per move (filled = done, white ring = now, grey = to do).
+        Just after a move is done, "NICE!" with a tick for nice_s; when all
+        are done, "DONE!". A move not done within remind_s: the frame
+        flashes and "TRY IT NOW!" appears. The neutral pose has a bar that
+        fills while it is held (game.neutral_fraction()); a player whose arm
+        measured short for the punch rule (game.short_arm()) is told to
+        stretch it fully on the punch panel."""
+        x1, y1, x2, y2 = self.instruction_box(pid, len(game.round_players), canvas.shape)
+        x1, y1 = max(x1, 0), max(y1, 0)
+        x2, y2 = min(x2, canvas.shape[1]), min(y2, canvas.shape[0])
+        if x2 - x1 < 20 or y2 - y1 < 20:
+            return
+        color = player_color(pid)
+        player = game.players.get(pid)
+        done = player.move if player is not None else 0
+        since = t - player.move_t if player is not None else 0.0
+        move = game.current_move(pid)
+        nice = done > 0 and since < self.cfg["nice_s"]
+        remind = move is not None and not nice and since > self.cfg["remind_s"]
+        flash = remind and int(since * 2 * self.cfg["remind_hz"]) % 2 == 0
+
+        roi = canvas[y1:y2, x1:x2]
+        a = self.cfg["instruction_alpha"]
+        roi[:] = (roi * (1 - a) + np.array(DARK) * a).astype(np.uint8)
+        k = canvas.shape[0] / 480.0
+        border = max(2, int(2 * k))
+        cv2.rectangle(canvas, (x1, y1), (x2 - 1, y2 - 1), WHITE if flash else color,
+                      2 * border if flash else border, cv2.LINE_8)
+
+        pad = int(8 * k)
+        fig = y2 - y1 - 2 * pad                      # the figure's square
+        fig_center = (x1 + pad + fig / 2, y1 + pad + fig / 2)
+        hint = None
+        if nice:
+            last = CALIBRATION_MOVES[done - 1]
+            title, lines = "NICE!", ["MEASURED" if last == "neutral" else MOVE_TEXT[last][0] + " LEARNED"]
+            draw_figure(canvas, CALIBRATION_MOVES[done - 1], fig_center, fig, GREY, mirror=pid == 2)
+            draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
+        elif move is None:
+            wait = "WAIT FOR THE OTHER PLAYER" if len(game.round_players) > 1 else "GET READY"
+            title, lines = "DONE!", [wait]
+            draw_tick(canvas, fig_center, fig * 0.6, color, max(3, int(4 * k)))
+        else:
+            title, how, effect = MOVE_TEXT[move]
+            lines = [how, "= " + effect]
+            if move == "punch" and game.short_arm(pid):
+                lines.append("STRETCH YOUR ARM ALL THE WAY")
+            if remind:
+                lines.append("TRY IT NOW!")
+            draw_figure(canvas, move, fig_center, fig, color, mirror=pid == 2)
+
+        tx, text_w = x1 + 2 * pad + fig, x2 - x1 - 3 * pad - fig
+        thin = max(1, int(round(k)))
+        scale = fit_scale(title, self._scale(canvas, "instruction_title_scale"), 2 * thin, text_w)
+        (_, th), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_PLAIN, scale, 2 * thin)
+        y = y1 + pad + th
+        cv2.putText(canvas, title, (tx, y), cv2.FONT_HERSHEY_PLAIN, scale, color, 2 * thin, cv2.LINE_8)
+        for line in lines:
+            sc = fit_scale(line, self._scale(canvas, "instruction_text_scale"), thin, text_w)
+            (_, lh), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_PLAIN, sc, thin)
+            y += int(lh * 1.9)
+            if line == "TRY IT NOW!":
+                c = WHITE if flash else color
+            else:
+                c = color if line == hint else WHITE
+            cv2.putText(canvas, line, (tx, y), cv2.FONT_HERSHEY_PLAIN, sc, c, thin, cv2.LINE_8)
+
+        r = max(4, int(6 * k))                       # progress dots along the bottom
+        if move == "neutral" and not nice:
+            # Under the last line of text, above the dots.
+            bar_h = max(4, int(6 * k))
+            top = min(y + int(10 * k), y2 - pad - 2 * r - int(6 * k) - bar_h)
+            cv2.rectangle(canvas, (tx, top), (tx + text_w, top + bar_h), WHITE, 1, cv2.LINE_8)
+            fill = int((text_w - 2) * game.neutral_fraction(pid))
+            if fill > 0:
+                cv2.rectangle(canvas, (tx + 1, top + 1), (tx + fill, top + bar_h - 1), color, -1)
+        for i in range(len(CALIBRATION_MOVES)):
+            c = (tx + r + i * 3 * r, y2 - pad - r)
+            if i < done:
+                cv2.circle(canvas, c, r, color, -1, cv2.LINE_AA)
+            else:
+                cv2.circle(canvas, c, r, WHITE if i == done else GREY, thin + (i == done), cv2.LINE_AA)
+
+    def _draw_not_facing(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """"FACE THE CAMERA" above a player's head for face_camera_s after a
+        gesture did not count because they were turned away
+        (Game.facing_camera()), in their team colour with a dark outline:
+        at the face's above_head anchor, or above the body box without a
+        face."""
+        t = state.frame.t
+        for pid, when in game.not_facing_t.items():
+            p = state.players.get(pid)
+            if t - when > self.cfg["face_camera_s"] or p is None:
+                continue
+            face = state.faces.get(pid)
+            if face is not None and face.valid and "above_head" in face.anchors:
+                cx, cy = face.anchors["above_head"]
+            else:
+                cx, cy = (p.bbox[0] + p.bbox[2]) / 2.0, p.bbox[1]
+            text = "FACE THE CAMERA"
+            scale = self._scale(canvas, "face_camera_text_scale")
+            thick = max(1, int(round(canvas.shape[0] / 480.0)))
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = int(np.clip(cx - tw / 2, 4, canvas.shape[1] - tw - 4))
+            y = int(np.clip(cy, th + 4, canvas.shape[0] - 4))
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                        cv2.LINE_AA)
+
+    def _hint_shown(self, pid: int, t: float, game: Game) -> bool:
+        """"FACE THE CAMERA" is above this player's head now (_draw_not_facing())."""
+        when = game.not_facing_t.get(pid)
+        return (game.phase in ("calibration", "playing") and when is not None
+                and t - when <= self.cfg["face_camera_s"])
+
+    # ---------------------------------------------- status above the head
+
+    def crowned(self, game: Game) -> int | None:
+        """The round player with the most HP, or None at a draw or with
+        fewer than two players."""
+        hp = {pid: game.players[pid].health for pid in game.round_players if pid in game.players}
+        if len(hp) < 2:
+            return None
+        best = max(hp.values())
+        top = [pid for pid, h in hp.items() if h == best]
+        return top[0] if len(top) == 1 else None
+
+    def _draw_status(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """Above each visible face (docs/merge_log.md, "Face effects"): the
+        name tag "P1" in the team colour at above_head, a crown above it for the player with more HP
+        (_draw_tag()), and dizzy stars around the head below dizzy_hp.
+        "FACE THE CAMERA" takes the tag's and crown's place while shown.
+        Health only counts from the countdown on. All of it fades with
+        Face.alpha."""
+        t = state.frame.t
+        fight = game.phase in ("countdown", "playing", "result")
+        crown = self.crowned(game) if fight else None
+        for pid, f in sorted(state.faces.items()):
+            if not f.valid or f.alpha <= 0 or "above_head" not in f.anchors:
+                continue
+            # Fading: draw on a copy and blend it in (only during a face's short fade-out)
+            layer = canvas if f.alpha >= 1 else canvas.copy()
+            player = game.players.get(pid)
+            if fight and player is not None and player.health < self.cfg["dizzy_hp"] * game.max_health:
+                self._draw_stars(layer, f, t)
+            if not self._hint_shown(pid, t, game):
+                self._draw_tag(layer, pid, f, crowned=pid == crown, t=t)
+            if layer is not canvas:
+                cv2.addWeighted(layer, f.alpha, canvas, 1.0 - f.alpha, 0.0, dst=canvas)
+
+    def _draw_tag(self, canvas: np.ndarray, pid: int, f: Face, crowned: bool, t: float) -> None:
+        """"P<pid>", tag_face_h face widths tall (at least tag_min_h of the
+        frame height), with the crown above it when `crowned`. Upright, so
+        it stays readable when the head tilts.
+
+        Centred on above_head with its baseline there; when that would put
+        the tag or crown under the top bar (a head near the top of the
+        frame), it goes beside the hat instead, tag_side_fw face widths
+        from it on the side towards the middle of the frame.
+
+        Kept steady per player (_Tag): the size changes only when the face
+        width has changed by more than tag_size_tol; the tag goes back
+        above the head only once there is tag_side_hyst tag heights of room
+        to spare, so a head near the limit does not flip it every frame;
+        beside the hat, it changes sides only once the player is
+        tag_side_flip frame widths past the middle; and its position has
+        its own One Euro filter, smoother than the face's, because
+        above_head is far from the face and shakes most."""
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        st = self._tags.get(pid)
+        if st is None:
+            st = self._tags[pid] = _Tag(OneEuro(cfg["tag_filter_min_cutoff"], cfg["tag_filter_beta"]))
+        text_h = max(cfg["tag_face_h"] * f.scale, cfg["tag_min_h"] * h)
+        if st.text_h <= 0 or abs(text_h / st.text_h - 1.0) > cfg["tag_size_tol"]:
+            st.text_h = text_h
+        scale = st.text_h / 10.0                            # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        thick = max(1, int(round(st.text_h / 12.0)))
+        text = f"P{pid}"
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        crown_h = (0.6 * cfg["crown_per_tag"] + 0.25) * th if crowned else 0.0
+        top_limit = cfg["hud_h"] * h + 4
+        cx, cy = f.anchors["above_head"]
+        hx, hy = f.anchors.get("hat", (cx, cy))
+        room = cy - th - crown_h - top_limit                # px to spare above the head
+        if st.side == 0 and room < 0:
+            st.side = 1 if hx < w / 2 else -1
+        elif st.side != 0 and room > cfg["tag_side_hyst"] * th:
+            st.side = 0
+        elif (hx - w / 2) * st.side > cfg["tag_side_flip"] * w:
+            st.side = -st.side                              # walked past the middle: other side
+        if st.side != 0:
+            cx = hx + st.side * (cfg["tag_side_fw"] * f.scale + tw / 2)
+            cy = max(hy, top_limit + th + crown_h)
+        cx, cy = st.filter(np.array([cx, cy]), t)
+        x = int(np.clip(cx - tw / 2, 4, w - tw - 4))
+        y = int(np.clip(cy, th + 4, h - 4))
+        cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+        cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                    cv2.LINE_AA)
+        if crowned:
+            self._draw_crown(canvas, x + tw / 2, float(y - th), float(th))
+
+    def _draw_crown(self, canvas: np.ndarray, cx: float, top: float, tag_h: float) -> None:
+        """A gold crown with three points just above the name tag, sized by the tag."""
+        w = self.cfg["crown_per_tag"] * tag_h
+        h = 0.6 * w
+        b = top - 0.25 * tag_h                              # small gap above the tag
+        pts = np.array([[cx - w / 2, b], [cx + w / 2, b], [cx + w / 2, b - h], [cx + w / 4, b - 0.45 * h],
+                        [cx, b - h], [cx - w / 4, b - 0.45 * h], [cx - w / 2, b - h]])
+        poly = [np.round(pts).astype(np.int32)]
+        cv2.fillPoly(canvas, poly, GOLD, cv2.LINE_AA)
+        cv2.polylines(canvas, poly, True, DARK, max(1, int(round(tag_h / 12.0))), cv2.LINE_AA)
+
+    def _draw_stars(self, canvas: np.ndarray, f: Face, t: float) -> None:
+        """stars_n stars circling the head at stars_hz turns per second, on
+        an ellipse round the hat (stars_rise face widths above the brim,
+        stars_orbit face widths wide each side, flattened to stars_flat),
+        turned with the head's roll. Stars behind the head are drawn first
+        and smaller, so the ring reads as going round the head."""
+        cfg = self.cfg
+        u = np.array([np.cos(f.roll), np.sin(f.roll)])     # along the eye line
+        down = np.array([-u[1], u[0]])
+        centre = f.anchors.get("hat", f.anchors["above_head"]) - cfg["stars_rise"] * f.scale * down
+        rx = cfg["stars_orbit"] * f.scale
+        ry = cfg["stars_flat"] * rx
+        r = max(cfg["star_size"] * f.scale, 3.0)
+        n = int(cfg["stars_n"])
+        angles = [2 * np.pi * (cfg["stars_hz"] * t + k / n) for k in range(n)]
+        thick = max(1, int(round(r / 6.0)))
+        for a in sorted(angles, key=np.sin):              # sin < 0: behind the head, drawn first
+            p = centre + rx * np.cos(a) * u + ry * np.sin(a) * down
+            size = r * (0.8 + 0.2 * np.sin(a))
+            poly = [np.round(star(p, size, a)).astype(np.int32)]
+            cv2.fillPoly(canvas, poly, STAR, cv2.LINE_AA)
+            cv2.polylines(canvas, poly, True, DARK, thick, cv2.LINE_AA)
+
+    # ------------------------------------------------------------- drinks
+
+    def drink_sprites(self, kind: str) -> list[np.ndarray]:
+        """The drink sprites of one buff kind (drink_sprites), cropped to
+        their visible part, loaded on first use; [] when set to null."""
+        if kind not in self._drink_sprites:
+            paths = (self.cfg.get("drink_sprites") or {}).get(kind) or []
+            sprites = []
+            for path in paths:
+                img = load_sprite(path)
+                ys, xs = np.nonzero(img[:, :, 3])
+                sprites.append(img[ys.min():ys.max() + 1, xs.min():xs.max() + 1])
+            self._drink_sprites[kind] = sprites
+        return self._drink_sprites[kind]
+
+    def _draw_drinks(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """Each drink as one of its kind's sprites (Drink.variant picks it),
+        scaled to the drink's height with the nearest pixel (pixel art), or
+        a circle without sprites; a badge with the buff's icon at its upper
+        right.
+
+        A drink held at a mouth is drawn at most drink_held_fw face widths
+        tall, its top drink_held_drop_fw below the mouth anchor (the upper
+        lip), without its badge: at the lower lip, leaving the cheeks free
+        to show their bulge."""
+        for d in game.drinks:
+            h = game.drink_height(d)
+            x, y = d.x, d.y
+            f = state.faces.get(d.held_by) if d.held_by is not None else None
+            held = f is not None and f.valid and "mouth" in f.anchors
+            if held:
+                h = min(h, self.cfg["drink_held_fw"] * f.scale)
+                x = float(f.anchors["mouth"][0])
+                y = float(f.anchors["mouth"][1]) + self.cfg["drink_held_drop_fw"] * f.scale + h / 2
+            sprites = self.drink_sprites(d.kind)
+            if sprites:
+                sprite = sprites[int(d.variant * len(sprites)) % len(sprites)]
+                s = h / sprite.shape[0]
+                img = cv2.resize(sprite, (max(1, round(sprite.shape[1] * s)), max(1, round(h))),
+                                 interpolation=cv2.INTER_NEAREST)
+                w = img.shape[1]
+                blend_rgba(canvas, img, x - w / 2, y - h / 2)
+            else:
+                w = 0.6 * h
+                cv2.circle(canvas, pt((x, y)), int(h / 2), DRINK_COLORS[d.kind], -1, cv2.LINE_AA)
+            if not held:
+                r = max(self.cfg["drink_badge"] * h, self.cfg["drink_badge_min_px"])
+                draw_badge(canvas, d.kind, (x + w / 2, y - h / 2 + r), r)
+
+    def _draw_popups(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """For popup_s after a drink: "+18 HP", "ATTACK x1.4" or "DEFENSE
+        35%" in the buff's colour; after grabbing the orb: "FULL ORB!" in the
+        team colour. Beside the player's head on the side
+        towards the middle of the frame, rising by popup_rise_h of the frame
+        height and fading over the last third. It starts at the mouth and
+        follows the player; without a face, at the top of the body box."""
+        cfg, t = self.cfg, state.frame.t
+        for d in game.drunk:
+            text = {"hp": f"+{round(d.value)} HP", "attack": f"ATTACK x{d.value:.1f}",
+                    "defense": f"DEFENSE {d.value:.0%}"}[d.kind]
+            self._popups.append((d.pid, text, DRINK_COLORS[d.kind], t))
+        for pid, _, _ in game.orbs_taken:
+            self._popups.append((pid, "FULL ORB!", player_color(pid), t))
+        self._popups = [p for p in self._popups if 0 <= t - p[3] < cfg["popup_s"]]
+        h, w = canvas.shape[:2]
+        scale = self._scale(canvas, "popup_text_scale")
+        thick = max(1, int(round(scale)))
+        for pid, text, color, t0 in self._popups:
+            f, p = state.faces.get(pid), state.players.get(pid)
+            if f is not None and f.valid and "mouth" in f.anchors:
+                (cx, cy), side_px = f.anchors["mouth"], cfg["popup_side_fw"] * f.scale
+            elif p is not None:
+                cx, cy, side_px = (p.bbox[0] + p.bbox[2]) / 2, p.bbox[1], 0.0
+            else:
+                continue
+            k = (t - t0) / cfg["popup_s"]
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            side = 1 if cx < w / 2 else -1
+            x = cx + side * side_px - (0 if side > 0 else tw)
+            y = cy - k * cfg["popup_rise_h"] * h
+            x = int(np.clip(x, 4, w - tw - 4))
+            y = int(np.clip(y, cfg["hud_h"] * h + th + 4, h - 4))
+            alpha = min(1.0, 3.0 * (1.0 - k))
+            box = (x - 4, y - th - 4, x + tw + 4, y + 8)
+            with faded(canvas, box, alpha):
+                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+                cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, color, thick, cv2.LINE_AA)
+
+    # ---------------------------------------------------------------- orb
+
+    def _draw_glow(self, canvas: np.ndarray, pid: int, state: FrameState, game: Game,
+                   small: np.ndarray) -> None:
+        """pid holds the orb: their body glows in their team colour
+        (scene/orb.py draw_body_glow()), pulsing between glow_alpha's two
+        values at glow_hz, around their real outline from the arena's
+        silhouette() of the small image (the keypoint mask without the
+        segmenter). The head is a disc glow_head_fw face widths round the
+        face centre (none without a face)."""
+        cfg, player = self.cfg, game.players[pid]
+        f = state.faces.get(pid)
+        head = (f.center, cfg["glow_head_fw"] * f.scale) if f is not None and f.valid else None
+        lo, hi = cfg["glow_alpha"]
+        pulse = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * state.frame.t)
+        people = self.arena.silhouette(small, state.frame.t)
+        draw_body_glow(canvas, player.torso, state.motion.get(pid), head, player_color(pid),
+                       lo + (hi - lo) * pulse, cfg, people, small.shape[1] / canvas.shape[1])
+
+    def _draw_raise_arms(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """"RAISE YOUR ARMS" for each visible player holding the orb, in
+        their team colour, centred on the shoulder line (beside the head it
+        ran into the name tag, hat and crown), growing and shrinking a
+        little at glow_hz with the glow. Without shoulders: at the top of
+        the body box."""
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        pulse = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * state.frame.t)
+        scale = self._scale(canvas, "raise_text_scale") * (1.0 + 0.08 * pulse)
+        thick = max(1, int(round(scale)))
+        for pid, player in sorted(game.players.items()):
+            p = state.players.get(pid)
+            if not player.has_orb or p is None or p.status != "active":
+                continue
+            m = state.motion.get(pid)
+            torso = game.torso(m) if m is not None else None
+            if torso is not None:
+                cx, cy = torso[0], torso[1]
+            else:
+                cx, cy = (p.bbox[0] + p.bbox[2]) / 2, p.bbox[1]
+            text = "RAISE YOUR ARMS"
+            (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            x = int(np.clip(cx - tw / 2, 4, w - tw - 4))
+            y = int(np.clip(cy + th / 2, cfg["hud_h"] * h + th + 4, h - 4))
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+            cv2.putText(canvas, text, (x, y), cv2.FONT_HERSHEY_PLAIN, scale, player_color(pid), thick,
+                        cv2.LINE_AA)
+
+    def _draw_orb_slot(self, canvas: np.ndarray, pid: int, game: Game, t: float) -> None:
+        """pid's orb slot, a small ball on their health bar's label row, at
+        the end towards the middle of the frame (the label "PLAYER N" is at
+        the outer end): filled in the team colour and pulsing at glow_hz
+        while they hold the orb."""
+        if pid not in (1, 2) or pid not in game.players:
+            return
+        cfg = self.cfg
+        h, w = canvas.shape[:2]
+        bar_h = max(4, int(cfg["bar_h"] * h))
+        label_h = int(12 * cfg["bar_font_h"] * h / 10.0)
+        length = int(cfg["bar_w"] * w)
+        left = 12 if pid == 1 else w - 12 - length
+        right = left + length
+        r = max(3.0, 0.4 * label_h)
+        cy = h - 12 - bar_h - label_h / 2.0 - 1
+        x = right - r - 1 if pid == 1 else left + r + 1
+        held = game.players[pid].has_orb
+        glow = 0.5 + 0.5 * math.sin(2 * math.pi * cfg["glow_hz"] * t) if held else 0.0
+        draw_slot(canvas, (x, cy), r, held, player_color(pid), glow)
+
+    def _draw_buffs(self, canvas: np.ndarray, pid: int, game: Game) -> None:
+        """The running attack and defense buffs above the player's health
+        bar (P1 from the left, P2 from the right): the buff's badge, its
+        value ("x1.4", "35%") and a bar for the time left, fading over the
+        last buff_fade_s."""
+        if pid not in (1, 2) or pid not in game.players:
+            return
+        cfg, player = self.cfg, game.players[pid]
+        h, w = canvas.shape[:2]
+        size = cfg["buff_icon_h"] * h
+        bar_h = max(4, int(cfg["bar_h"] * h))
+        label_h = int(12 * cfg["bar_font_h"] * h / 10.0)
+        bottom = h - 12 - bar_h - label_h - 8                 # just above the health bar's label
+        scale = size / 14.0                         # text a bit smaller than the icon
+        thick = max(1, int(round(scale)))
+        x = 12.0 if pid == 1 else w - 12.0
+        for kind, value, left in (("attack", f"x{player.attack:.1f}", player.attack_left),
+                                  ("defense", f"{player.defense:.0%}", player.defense_left)):
+            if left <= 0:
+                continue
+            (tw, th), _ = cv2.getTextSize(value, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+            slot = size + 4 + tw
+            x0 = x if pid == 1 else x - slot
+            cy = bottom - 6 - size / 2
+            alpha = min(1.0, left / cfg["buff_fade_s"])
+            box = (x0 - 2, bottom - 6 - size - 2, x0 + slot + 2, bottom + 2)
+            with faded(canvas, box, alpha):
+                draw_badge(canvas, kind, (x0 + size / 2, cy), size / 2)
+                org = (int(x0 + size + 4), int(cy + th / 2))
+                cv2.putText(canvas, value, org, cv2.FONT_HERSHEY_PLAIN, scale, DARK, thick + 3, cv2.LINE_AA)
+                cv2.putText(canvas, value, org, cv2.FONT_HERSHEY_PLAIN, scale, DRINK_COLORS[kind], thick,
+                            cv2.LINE_AA)
+                frac = max(0.0, min(1.0, left / game.drink_buff_s))
+                cv2.rectangle(canvas, (int(x0), int(bottom - 4)), (int(x0 + slot), int(bottom)), DARK, -1)
+                cv2.rectangle(canvas, (int(x0), int(bottom - 4)), (int(x0 + slot * frac), int(bottom)),
+                              DRINK_COLORS[kind], -1)
+            x = x0 + slot + 10 if pid == 1 else x0 - 10
+
+    def _draw_big_text(self, canvas: np.ndarray, text: str, size: float) -> None:
+        """Text in the middle of the frame, `size` x countdown_h of its height
+        tall, off-white with a dark outline so it reads on any background."""
+        h, w = canvas.shape[:2]
+        scale = size * self.cfg["countdown_h"] * h / 10.0   # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        thick = max(2, int(scale))
+        scale = fit_scale(text, scale, thick, w - 24)
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thick)
+        org = ((w - tw) // 2, (h + th) // 2)
+        outline = thick + max(4, thick)
+        cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_PLAIN, scale, DARK, outline, cv2.LINE_AA)
+        cv2.putText(canvas, text, org, cv2.FONT_HERSHEY_PLAIN, scale, WHITE, thick, cv2.LINE_AA)
+
+    # ------------------------------------------------------ paint and health
+
+    def _draw_player_health(self, canvas: np.ndarray, pid: int, game: Game) -> None:
+        """renderer.py's health bar (dark backing, "PLAYER N", off-white
+        outline, fill in the team colour), pinned to the bottom of the frame
+        like in a fighting game: P1 bottom left, P2 bottom right, each filling
+        from its outer edge, so it drains towards the corner. Other pids have
+        no slot. Drawn for every known player, also while out of view."""
+        if pid not in (1, 2):
+            return
+        h, w = canvas.shape[:2]
+        bar_h = max(4, int(self.cfg["bar_h"] * h))
+        length = int(self.cfg["bar_w"] * w)
+        font = self.cfg["bar_font_h"] * h / 10.0          # FONT_HERSHEY_PLAIN is ~10 px tall at scale 1
+        label_h = int(12 * font)
+        left = 12 if pid == 1 else w - 12 - length
+        right = left + length
+        top = h - 12 - bar_h
+        color = player_color(pid)
+        label = f"PLAYER {pid}"
+        (lw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, font, 1)
+        cv2.rectangle(canvas, (left - 2, top - label_h - 2), (right + 2, top + bar_h + 2), DARK, -1)
+        cv2.putText(canvas, label, (left if pid == 1 else right - lw, top - 3), cv2.FONT_HERSHEY_PLAIN, font,
+                    color, 1, cv2.LINE_8)
+        cv2.rectangle(canvas, (left, top), (right, top + bar_h), WHITE, 1, cv2.LINE_8)
+        fill = int((length - 2) * max(0, game.players[pid].health) / game.max_health)
+        if fill > 0:
+            x0, x1 = (left + 1, left + fill) if pid == 1 else (right - fill, right - 1)
+            cv2.rectangle(canvas, (x0, top + 1), (x1, top + bar_h - 1), color, -1, cv2.LINE_8)
+
+    # ----------------------------------------------------------- game objects
+
+    def draw_game(self, canvas: np.ndarray, state: FrameState, game: Game) -> None:
+        """The orb and the pops where it was grabbed (under
+        everything else: the attacks fly in front), bolts (the paint blob,
+        the normal attack, and its burst into
+        drops where a shield stopped it; at a hit the splash on the body
+        is the effect, at the frame edge it just leaves), beams (magic ball
+        and beam) and shields (ring of fire on the chest)."""
+        cfg = self.cfg
+        t = state.frame.t
+        orb_r = game.orb_radius()
+        if game.orb is not None:
+            o = game.orb
+            draw_orb(canvas, o.x, o.y, orb_r, o.age, (player_color(1), player_color(2)), cfg)
+        self._pops += [(pid, x, y, t) for pid, x, y in game.orbs_taken]
+        self._pops = [p for p in self._pops if 0 <= t - p[3] < cfg["orb_pop_s"]]
+        for pid, x, y, t0 in self._pops:
+            draw_pop(canvas, x, y, orb_r, t - t0, cfg["orb_pop_s"], player_color(pid), cfg)
+        radius = cfg["blob_r_w"] * canvas.shape[1]
+        for b in game.projectiles:
+            draw_blob(canvas, b.x, b.y, b.direction, b.age, radius, player_color(b.owner_id), cfg)
+
+        thickness = max(2, int(2 * game.beam_band_px()))
+        ball_px = int(self.cfg["beam_ball_h"] * canvas.shape[0])
+        for beam in game.beams:
+            magic = self.beam_effect(beam.owner_id)
+            if magic is not None:
+                magic.draw(canvas, beam.start_x, beam.x, beam.y, beam.direction, beam.age,
+                           game.beam_charge_s, game.beam_life_s, thickness, ball_px)
+            elif beam.age >= game.beam_charge_s:
+                cv2.line(canvas, pt((beam.start_x, beam.y)), pt((beam.x, beam.y)),
+                         player_color(beam.owner_id), thickness, cv2.LINE_AA)
+
+        for pid, shield in game.shields.items():
+            ring = self.shield_effect(pid)
+            center, diameter = self.ring_geometry(pid, shield, state, game)
+            if ring is not None:
+                ring.draw(canvas, center, diameter, shield.age, game.shield_opacity(shield))
+            elif game.shield_opacity(shield) > 0:
+                cv2.circle(canvas, pt(center), int(diameter / 2), player_color(pid), 3, cv2.LINE_AA)
+
+        # Bursts after the shields: the ring is wide and would hide the drops.
+        for end in game.bolt_ends:
+            if end.reason == "shield":
+                # Seeded by where it ended, so each burst keeps its drops.
+                seed = int(end.x) * 7919 + int(end.y) * 31 + end.owner_id
+                draw_burst(canvas, end.x, end.y, end.direction, end.age, game.bolt_end_s, radius,
+                           player_color(end.owner_id), cfg, seed)
+
+    def ring_geometry(self, pid: int, shield: Shield, state: FrameState,
+                      game: Game) -> tuple[tuple[float, float], float]:
+        """Centre and diameter (px) of the shield's fire ring: on the
+        player's chest (halfway between shoulders and hips), following them,
+        shield_ring_sw shoulder widths across; without a shoulder width, where
+        the shield went up and as wide as the body box."""
+        m = state.motion.get(pid)
+        torso = game.torso(m) if m is not None else None
+        if torso is not None:
+            x, shoulder_y, hip_y, sw = torso
+            return (x, (shoulder_y + hip_y) / 2.0), self.cfg["shield_ring_sw"] * sw
+        player = game.players.get(pid)
+        width = (player.bounds[2] - player.bounds[0]) if player and player.bounds is not None else 100.0
+        return (shield.x, shield.y), float(width)
+
+    # ---------------------------------------------------------------- sprites
+
+    def _team_copy(self, cache: dict, owner: int, owner_id: int, load: Callable[[int], object]):
+        """The effect for owner_id: the frames as they are for `owner`, a
+        hue-turned copy in their team colour for everyone else."""
+        if owner_id not in cache:
+            base = cache.get(owner) or load(0)
+            cache[owner] = base
+            if owner_id != owner:
+                cache[owner_id] = load(hue_of(player_color(owner_id)) - base.hue)
+        return cache[owner_id]
+
+    def beam_effect(self, owner_id: int) -> MagicBeam | None:
+        """The beam's look for one player (beam_ball, beam_band); None = a
+        plain line."""
+        cfg = self.cfg
+        if not cfg.get("beam_ball"):
+            return None
+        return self._team_copy(self._magic, cfg["beam_effect_owner"], owner_id, lambda shift: MagicBeam(
+            cfg["beam_ball"], cfg["beam_band"], cfg["beam_ramp_s"], shift))
+
+    def shield_effect(self, owner_id: int) -> FireRing | None:
+        """The shield's look for one player (shield_sprite); None = a plain
+        circle."""
+        cfg = self.cfg
+        if not cfg.get("shield_sprite"):
+            return None
+        return self._team_copy(self._rings, cfg["shield_effect_owner"], owner_id, lambda shift: FireRing(
+            cfg["shield_sprite"], cfg["shield_form_frames"], cfg["shield_loop_frames"],
+            cfg["shield_form_s"], cfg["shield_sprite_fps"], shift))
+
+
+def status_text(phase: str, has_player: bool) -> str:
+    """The top bar's status: what the phase expects; while playing, the
+    controls, or "STEP INTO VIEW" while nobody is seen."""
+    if phase == "playing":
+        return CONTROLS if has_player else "STEP INTO VIEW"
+    return PHASE_TEXT[phase]
+
+
+# Buff icons in a unit square (-1..1, y down): HP a plus, attack a
+# lightning bolt, defense a shield.
+ICONS = {
+    "hp": np.array([[-0.3, -0.85], [0.3, -0.85], [0.3, -0.3], [0.85, -0.3], [0.85, 0.3], [0.3, 0.3],
+                    [0.3, 0.85], [-0.3, 0.85], [-0.3, 0.3], [-0.85, 0.3], [-0.85, -0.3], [-0.3, -0.3]]),
+    "attack": np.array([[0.2, -0.95], [-0.6, 0.15], [-0.05, 0.15], [-0.25, 0.95], [0.6, -0.2],
+                        [0.05, -0.2]]),
+    "defense": np.array([[-0.75, -0.85], [0.75, -0.85], [0.75, 0.1], [0.4, 0.6], [0.0, 0.9],
+                         [-0.4, 0.6], [-0.75, 0.1]]),
+}
+
+
+def draw_badge(canvas: np.ndarray, kind: str, centre, radius: float) -> None:
+    """A buff's badge: a light disc with a dark rim and the kind's icon in
+    its colour (ICONS, DRINK_COLORS)."""
+    c = pt(centre)
+    r = max(3, int(round(radius)))
+    cv2.circle(canvas, c, r, WHITE, -1, cv2.LINE_AA)
+    cv2.circle(canvas, c, r, DARK, max(1, r // 6), cv2.LINE_AA)
+    poly = np.round(np.asarray(centre, float) + ICONS[kind] * 0.65 * r).astype(np.int32)
+    cv2.fillPoly(canvas, [poly], DRINK_COLORS[kind], cv2.LINE_AA)
+
+
+@contextmanager
+def faded(canvas: np.ndarray, box, alpha: float):
+    """Draw inside the with-block at opacity `alpha`: the box (x1, y1, x2,
+    y2, clipped to the frame) is blended back towards how it was before."""
+    h, w = canvas.shape[:2]
+    x1, y1 = max(int(box[0]), 0), max(int(box[1]), 0)
+    x2, y2 = min(int(box[2]), w), min(int(box[3]), h)
+    before = canvas[y1:y2, x1:x2].copy() if alpha < 1 and x2 > x1 and y2 > y1 else None
+    yield
+    if before is not None:
+        roi = canvas[y1:y2, x1:x2]
+        roi[:] = (roi * alpha + before * (1.0 - alpha)).astype(np.uint8)
+
+
+def star(centre, radius: float, angle: float) -> np.ndarray:
+    """A five-pointed star (10 points, px): outer radius `radius`, inner
+    0.45 of it, turned by `angle` (rad)."""
+    a = angle + np.arange(10) * np.pi / 5 - np.pi / 2
+    r = np.where(np.arange(10) % 2 == 0, radius, 0.45 * radius)
+    return np.asarray(centre, float) + np.stack([r * np.cos(a), r * np.sin(a)], axis=1)
+
+
+def fit_scale(text: str, scale: float, thickness: int, max_w: float) -> float:
+    """The font scale, made smaller if needed so `text` is at most max_w px wide."""
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_PLAIN, scale, thickness)
+    return scale if tw <= max_w else scale * max(max_w, 1.0) / tw
+
+
+def pixelate(image: np.ndarray, size: int) -> np.ndarray:
+    """renderer.py's retro look: shrink by `size` and scale back up with the
+    nearest pixel, so every size x size block has one colour. 1 = a copy."""
+    return grow(shrink(image, size), image.shape[:2])
+
+
+def shrink(image: np.ndarray, size: int) -> np.ndarray:
+    """The pixel look's first half: the image shrunk by `size` (area
+    average); a copy for size 1."""
+    if size <= 1:
+        return image.copy()
+    h, w = image.shape[:2]
+    return cv2.resize(image, (max(1, w // size), max(1, h // size)), interpolation=cv2.INTER_AREA)
+
+
+def grow(small: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """The second half: `small` scaled up to shape (h, w) with the nearest
+    pixel; the same array when it already has that size."""
+    h, w = shape[:2]
+    if small.shape[:2] == (h, w):
+        return small
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+
+
+def draw_timings(canvas: np.ndarray, timings: dict[str, float], org: tuple[int, int] = (10, 24)) -> None:
     """Per-stage ms of the previous frame, plus FPS from its total."""
     lines = [f"{k:>9s} {v:6.1f} ms" for k, v in timings.items() if k != "total"]
     if "total" in timings and timings["total"] > 0:
         lines.append(f"{'total':>9s} {timings['total']:6.1f} ms  ({1000 / timings['total']:.0f} FPS)")
-    draw_lines(canvas, lines)
+    draw_lines(canvas, lines, org)

@@ -10,6 +10,10 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 
+# Teammates' raw prototype code, kept local during the Colour Clash merge
+# (temporary: remove this entry once the merge is done)
+garb/
+
 # Environments (conda env lives outside the repo; venv users keep it here)
 .venv/
 venv/
@@ -35,6 +39,7 @@ models/
 *.avi
 *.mov
 *.mkv
+*.webm
 
 # Shared clips come from the drive
 data/clips/
@@ -43,3 +48,8 @@ data/clips/
 logs/
 runs/
 *.csv.tmp
+
+# Preview GIFs of the sprite packs; reference only, not used by the game
+assets/**/*.gif
+
+docs/oral_exam

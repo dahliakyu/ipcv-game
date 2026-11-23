@@ -5,11 +5,23 @@
     python -m ipcvgame.app.main --until identity         # debug one module
     python -m ipcvgame.app.main --headless --max-frames 100 --set pose.backend=none
     python -m ipcvgame.app.main --record data/clips/session.mp4   # also save the raw input
+    python -m ipcvgame.app.main --until game --record data/clips/s.mp4 --record-view
+        # raw input to s.mp4 and the shown view (effects, overlays) to s_view.mp4
 
 Every run writes a per-frame CSV to logs/ (recorder.log in the config; --no-log
 to skip). For recording test clips without the pipeline, use tools/record_clip.py.
 
-Keys: q / Esc quit, p pause, r reset all module state.
+Keys: q / Esc quit, p pause, r new round (same players, from the countdown),
+R (shift) reset all module state (players are identified again and the game
+goes back to waiting), b throw a test blob at P1 while playing (to try hits
+and paint alone), n fill P1's orb for the final smash while playing (to try
+it without grabbing the orb).
+
+    python -m ipcvgame.app.main --source data/clips/session.mp4 --no-intro
+        # no waiting, calibration or countdown: play from the first frame
+        # (same as --set game.intro=false), for clips recorded without the intro
+    python -m ipcvgame.app.main --solo
+        # the intro with one player (game.round_players=1), to test it alone
 """
 
 from __future__ import annotations
@@ -35,6 +47,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="run up to this stage and show its debug overlay")
     ap.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="KEY=VALUE", help="config override, e.g. pose.det_conf=0.5")
+    ap.add_argument("--no-intro", action="store_true",
+                    help="start playing at once, without waiting, calibration or countdown "
+                         "(game.intro=false), e.g. for test clips")
+    ap.add_argument("--solo", action="store_true",
+                    help="the intro and rounds need only P1 (game.round_players=1), to test alone")
     ap.add_argument("--headless", action="store_true", help="no window (tests, benchmarks)")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--log", default=None, metavar="CSV",
@@ -42,11 +59,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--no-log", action="store_true", help="do not write the per-frame CSV")
     ap.add_argument("--record", default=None, metavar="MP4",
                     help="also record the raw input frames to this clip")
+    ap.add_argument("--record-view", nargs="?", const="", default=None, metavar="MP4",
+                    help="also record the shown view (overlays, effects, timings) to this clip; "
+                         "without a path: <--record clip>_view.mp4")
     return ap.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.record_view == "":
+        if not args.record:
+            raise SystemExit("--record-view without a path needs --record")
+        raw = Path(args.record)
+        args.record_view = str(raw.with_name(raw.stem + "_view" + raw.suffix))
+    if args.no_intro:
+        args.overrides.append("game.intro=false")
+    if args.solo:
+        args.overrides.append("game.round_players=1")
     cfg = load_config(args.config, args.overrides)
     pipeline = Pipeline(cfg, until=args.until)
     window = cfg["render"].get("window_name", "IPCV game")
@@ -72,6 +101,13 @@ def main(argv: list[str] | None = None) -> None:
             clip = stack.enter_context(ClipRecorder(
                 args.record, cfg["source"].get("fps", 30), source.size,
                 mirrored=source.mirror, fourcc=rec_cfg.get("fourcc", "mp4v")))
+        view_clip = None
+        if args.record_view:
+            # The view is stored as shown (mirrored): it is for watching, not
+            # for replaying through the pipeline like the raw clip.
+            view_clip = stack.enter_context(ClipRecorder(
+                args.record_view, cfg["source"].get("fps", 30), source.size,
+                mirrored=False, fourcc=rec_cfg.get("fourcc", "mp4v")))
         paused = False
         frames = iter(source)
         canvas = None
@@ -83,6 +119,8 @@ def main(argv: list[str] | None = None) -> None:
                 if clip is not None:
                     clip.write(frame)
                 state, canvas = pipeline.step(frame)
+                if view_clip is not None:
+                    view_clip.write(replace(frame, image=canvas))
                 if logger is not None:
                     # state.timings is the previous frame's; log this frame's own.
                     logger.log(replace(state, timings=pipeline.prof.last()),
@@ -96,7 +134,13 @@ def main(argv: list[str] | None = None) -> None:
                 if key == ord("p"):
                     paused = not paused
                 if key == ord("r"):
+                    pipeline.new_round()
+                if key == ord("R"):
                     pipeline.reset()
+                if key == ord("b"):
+                    pipeline.test_hit()
+                if key == ord("n"):
+                    pipeline.test_orb()
             if args.max_frames is not None and n >= args.max_frames:
                 break
 
@@ -106,6 +150,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"log: {logger.path}")
     if args.record:
         print(f"clip: {args.record}")
+    if args.record_view:
+        print(f"view clip: {args.record_view}")
     summary = pipeline.prof.summary()
     print(f"processed {n} frames; mean ms per stage:")
     for k, v in summary.items():

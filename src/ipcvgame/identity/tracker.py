@@ -1,44 +1,445 @@
 """Task 3 — multiplayer identity tracking.
 
-PHASE-1 STUB (owned by Task 3): Player 1 = best detection in the left half of
-the screen, Player 2 = best detection in the right half. No motion model, no
-appearance model; swaps whenever players cross. Replace with the real tracker
-(Kalman + Hungarian + colour histogram) keeping the same update() signature.
+backend "reid" is Colour Clash `PlayerIdentityTracker` (Project/bodypose.py)
+with its tracking loop from main.py:
+
+- BoT-SORT (identity/tracks.py) gives every person a short-lived track id
+  while it can follow them from frame to frame, on the pose model's boxes.
+- A track already linked to a player keeps that player; OSNet does not run.
+- A new track's person crop goes through OSNet (identity/embedding.py). Its
+  vector is compared with each stored player's vector by cosine similarity
+  (`_find_player`); the best player at >= reid_threshold gets the track.
+  Players already in use this frame are skipped.
+- No match: once the track has been seen for new_player_s it becomes a new
+  player, up to max_players. Its vector is stored.
+
+Changed from bodypose.py (merge_log, Task 3):
+- Occluded, then lost. While the tracker still holds a player's track (not
+  seen for at most its track_buffer), the player is "occluded" with the
+  tracker's predicted box, and keeps the link. Only when the tracker drops the
+  track is the player "lost"; when OSNet links a new track to them,
+  `reentered` is True for that frame. bodypose.py dropped the link on every
+  frame without the track.
+- Linked tracks are checked: one active player per frame, in turn, at most
+  every update_every_s, when their box overlaps no other detection, OSNet
+  runs on their crop. If it looks more like the other player, the links are
+  swapped (the tracker carried a track onto the wrong person). Otherwise, if
+  still similar (update_min_sim), the stored vector moves update_weight of
+  the way towards it.
+- Only tracks with a visible face (nose or eyes, min_face_conf) are
+  identified, so a coat the pose model takes for a person never becomes a
+  player.
+- Linked tracks are handled before new ones, so a new track cannot take a
+  player whose own track is visible this frame.
+- A track that found no player while every player slot is taken retries only
+  every retry_s, so a bystander does not cost an OSNet run every frame.
+- New players take the lowest free id, so reset(pid) frees that id.
+- Seconds instead of frames (NEW_PLAYER_CONFIRMATION = 5 frames).
+
+Game start (docs/merge_log.md, "Game start", step 5), called by the
+pipeline:
+- When calibration starts, `order_left_to_right()` renumbers the players by
+  where they stand, so P1 is the one in the left start place: players are
+  numbered in the order they were first seen, which need not match. Their
+  vectors and track links move with them, and they come out as `reentered`
+  on the next update, so the other modules drop their per-player state.
+- When a player's neutral pose is measured, `refresh_vector()` replaces
+  their stored vector with one from that frame: standing apart and facing
+  the camera, a cleaner reference than the first sight, which may be from
+  walking in at an angle. `set_body_reference()` stores the measured shoulder
+  width and torso length for the position below.
+
+Player.pos (step 6): (x, depth) in metres from the pinhole model, depth =
+f * S / s, with f the focal length in px (from camera_hfov_deg), S the real
+shoulder width (shoulder_m, assumed the same for everyone) and s the
+shoulder width in px. After calibration, the depth at calibration (facing the
+camera) is the reference, and it is scaled by the torso length instead:
+depth = depth_cal * torso_cal / torso. The torso does not shrink when the
+player turns, the shoulder width does. x is the shoulder midpoint's offset
+from the image centre, x_px * depth / f. Smoothed with an EMA (pos_tau_s).
+
+backend "zones" is the phase-1 stub: Player 1 = best detection in the left
+half of the screen, Player 2 = best in the right half; no model needed (tests).
 """
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass, field, replace
+
 import numpy as np
 
-from ipcvgame.core.geometry import bbox_center
+from ipcvgame.core import skeleton as sk
+from ipcvgame.core.filters import EMA
+from ipcvgame.core.geometry import bbox_center, bbox_iou, crop
 from ipcvgame.core.types import Frame, FrameState, Player, PoseDetection
-from ipcvgame.scene.draw import draw_bbox, player_color
+from ipcvgame.pose.measure import shoulder_px, torso_px
+from ipcvgame.scene.draw import draw_bbox, draw_text, player_color
+
+# A track is identified only when one of these is visible (min_face_conf).
+FACE_KPTS = [sk.NOSE, sk.L_EYE, sk.R_EYE]
+
+
+@dataclass
+class Tracks:
+    """One frame of tracker output."""
+    active: list[tuple[int, int]]                  # (track_id, index into dets), seen this frame
+    lost: dict[int, np.ndarray] = field(default_factory=dict)   # track_id -> predicted box, still held
+
+
+@dataclass
+class _Pending:
+    """A track not linked to a player yet (bodypose.py: pending_tracks)."""
+    first_t: float
+    last_try_t: float
+    embedding: np.ndarray | None = None
 
 
 class IdentityTracker:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, embedder=None, tracker=None):
+        """embedder (OSNet) and tracker (BoT-SORT) are built from the config;
+        tests pass fakes with the same methods."""
         self.cfg = cfg
-        self.num_players = int(cfg.get("num_players", 2))
+        self.backend = cfg.get("backend", "reid")
+        self.max_players = int(cfg["max_players"])
         self.players: dict[int, Player] = {}
+        if self.backend == "reid":
+            if embedder is None:
+                from ipcvgame.identity.embedding import OSNetEmbeddingExtractor
+                embedder = OSNetEmbeddingExtractor(cfg["reid_weights"], cfg.get("reid_device", "auto"))
+                # The first run sets up the GPU (~85 ms); do it now, not when
+                # the first player walks in.
+                embedder.extract(np.zeros((256, 128, 3), np.uint8))
+            self.embedding_extractor = embedder
+            if tracker is None:
+                from ipcvgame.identity.tracks import BotSortTracks
+                tracker = BotSortTracks(cfg["botsort"])
+            self.tracker = tracker
+        elif self.backend != "zones":
+            raise ValueError(f"Unknown identity backend {self.backend!r}")
+        self._clear()
+
+    def _clear(self) -> None:
+        self.players.clear()
+        self.embeddings: dict[int, np.ndarray] = {}        # bodypose.py: players
+        self.track_to_player: dict[int, int] = {}
+        self.pending_tracks: dict[int, _Pending] = {}
+        self.last_update_t: dict[int, float] = {}           # vector update, per player
+        self._update_turn = 0
+        self._tracks = Tracks([])
+        self._dets: list[PoseDetection] = []
+        self._sim: dict[int, float] = {}                    # this frame's OSNet similarity per pid
+        self._new_best_sim: float | None = None             # best similarity of a new track this frame
+        self._osnet_runs = 0                                # OSNet crops this frame
+        self._renumbered: set[int] = set()                  # reentered on the next update
+        self._vector_wanted: set[int] = set()               # refresh_vector() still to do
+        self.calibrated: set[int] = set()                   # vector from the neutral pose
+        self.body_ref: dict[int, tuple[float, float]] = {}  # (shoulder px, torso px) at calibration
+        self._pos_ema: dict[int, EMA] = {}
+
+    # ------------------------------------------------------------------ reid
 
     def update(self, dets: list[PoseDetection], frame: Frame) -> dict[int, Player]:
+        if self.backend == "zones":
+            return self._update_zones(dets, frame)
+        self._dets = dets
+        self._sim = {}
+        self._new_best_sim = None
+        self._osnet_runs = 0
+        tracks = self.tracker.update(dets, frame)
+        self._tracks = tracks
+        self.forget_missing_tracks(tracks)
+
+        seen: dict[int, PoseDetection] = {}
+        new_tracks = []
+        for track_id, i in tracks.active:
+            pid = self.track_to_player.get(track_id)
+            if pid is None or pid in seen:
+                new_tracks.append((track_id, i))
+            else:
+                seen[pid] = dets[i]
+        for track_id, i in new_tracks:
+            pid = self._identify(track_id, dets[i], frame, excluded=set(seen))
+            if pid is not None:
+                seen[pid] = dets[i]
+
+        relinked = self._check_and_update(frame, seen) | self._renumbered
+        self._renumbered = set()
+        for pid in sorted(self._vector_wanted & set(seen)):
+            self._take_vector(frame, pid, seen[pid])
+
+        occluded = {pid: tracks.lost[tid] for tid, pid in self.track_to_player.items()
+                    if tid in tracks.lost and pid not in seen}
+        for pid in sorted(set(self.players) | set(seen)):
+            prev = self.players.get(pid)
+            if pid in seen:
+                det = seen[pid]
+                reentered = prev is not None and (prev.status == "lost" or pid in relinked)
+                self.players[pid] = Player(
+                    pid=pid, status="active", det=det, bbox=det.bbox.copy(),
+                    pos=self._position(pid, det, frame, prev, reentered), reentered=reentered,
+                )
+            else:
+                status = "occluded" if pid in occluded else "lost"
+                bbox = occluded[pid].copy() if pid in occluded else prev.bbox.copy()
+                self.players[pid] = Player(pid=pid, status=status, det=None, bbox=bbox,
+                                           pos=prev.pos.copy(), reentered=False)
+        return dict(self.players)
+
+    def forget_missing_tracks(self, tracks: Tracks) -> None:
+        """Drop links and pending tracks the tracker no longer holds. Pending
+        tracks must be seen every frame to count towards new_player_s."""
+        held = {tid for tid, _ in tracks.active} | set(tracks.lost)
+        self.track_to_player = {tid: pid for tid, pid in self.track_to_player.items() if tid in held}
+        visible = {tid for tid, _ in tracks.active}
+        self.pending_tracks = {tid: p for tid, p in self.pending_tracks.items() if tid in visible}
+
+    def _crop(self, frame: Frame, det: PoseDetection) -> np.ndarray | None:
+        """Person crop inside the frame, or None when it is too small for
+        OSNet (bodypose.py MIN_PERSON_HEIGHT / MIN_PERSON_WIDTH)."""
+        image, _ = crop(frame.image, det.bbox)
+        if image.shape[0] < self.cfg["min_crop_h"] or image.shape[1] < self.cfg["min_crop_w"]:
+            return None
+        return image
+
+    def _embed(self, person: np.ndarray) -> np.ndarray:
+        self._osnet_runs += 1
+        return self.embedding_extractor.extract(person)
+
+    def _find_player(self, embedding: np.ndarray, excluded_player_ids: set[int]) -> int | None:
+        best_player, best_similarity = None, -1.0
+        for player_id, player_embedding in self.embeddings.items():
+            if player_id in excluded_player_ids:
+                continue
+            similarity = float(np.dot(embedding, player_embedding))
+            if similarity > best_similarity:
+                best_player, best_similarity = player_id, similarity
+        if best_player is not None:
+            self._new_best_sim = max(best_similarity, self._new_best_sim or -1.0)
+        if best_player is not None and best_similarity >= self.cfg["reid_threshold"]:
+            self._sim[best_player] = best_similarity
+            return best_player
+        return None
+
+    def _free_id(self) -> int | None:
+        for pid in range(1, self.max_players + 1):
+            if pid not in self.embeddings:
+                return pid
+        return None
+
+    def _identify(self, track_id: int, det: PoseDetection, frame: Frame, excluded: set[int]) -> int | None:
+        """bodypose.py PlayerIdentityTracker.update() for a track without a player."""
+        t = frame.t
+        pending = self.pending_tracks.get(track_id)
+        slots_full = self._free_id() is None
+        if pending is not None and slots_full and t - pending.last_try_t < self.cfg["retry_s"]:
+            return None
+        if det.conf[FACE_KPTS].max() < self.cfg["min_face_conf"]:
+            return None     # no face: a coat or chair the pose model took for a person
+        person = self._crop(frame, det)
+        if person is None:
+            return None
+        embedding = self._embed(person)
+        matched_player = self._find_player(embedding, excluded)
+        if matched_player is not None:
+            # The player may still be linked to an older track the tracker holds as lost.
+            self.track_to_player = {tid: pid for tid, pid in self.track_to_player.items()
+                                    if pid != matched_player}
+            self.track_to_player[track_id] = matched_player
+            self.pending_tracks.pop(track_id, None)
+            return matched_player
+
+        if pending is None:
+            pending = self.pending_tracks[track_id] = _Pending(first_t=t, last_try_t=t)
+        pending.last_try_t = t
+        pending.embedding = embedding
+        if t - pending.first_t < self.cfg["new_player_s"] or slots_full:
+            return None
+
+        player_id = self._free_id()
+        self.pending_tracks.pop(track_id)
+        self.embeddings[player_id] = pending.embedding.copy()
+        self.track_to_player[track_id] = player_id
+        self.last_update_t[player_id] = t
+        return player_id
+
+    def _check_and_update(self, frame: Frame, seen: dict[int, PoseDetection]) -> set[int]:
+        """One active player per frame, in turn (new): OSNet on their crop.
+
+        - Wrong person: the crop looks more like another stored player (at
+          least reid_threshold, and more than like its own), e.g. after the
+          tracker carried a track onto the other player. If that player is
+          active too and their crop looks more like this one, the two links
+          are swapped; if that player is not active, the link moves to them
+          and this player loses it. bodypose.py never checked a linked track.
+        - Same person, similar enough (update_min_sim): the stored vector
+          moves update_weight of the way towards the fresh one.
+
+        Returns the players whose link changed; their per-player state must
+        be reset like on a re-entry (their position jumped).
+        """
+        active = sorted(seen)
+        for k in range(len(active)):
+            pid = active[(self._update_turn + k) % len(active)]
+            if frame.t - self.last_update_t.get(pid, -np.inf) < self.cfg["update_every_s"]:
+                continue
+            det = seen[pid]
+            person = self._clear_crop(frame, det)
+            if person is None:
+                continue
+            self._update_turn = (self._update_turn + k + 1) % len(active)
+            self.last_update_t[pid] = frame.t
+            fresh = self._embed(person)
+            sim = float(fresh @ self.embeddings[pid])
+            self._sim[pid] = sim
+            other, other_sim = self._most_similar_other(fresh, pid)
+            if other is not None and other_sim >= self.cfg["reid_threshold"] and other_sim > sim:
+                return self._relink(frame, seen, pid, other)
+            if sim >= self.cfg["update_min_sim"]:
+                w = self.cfg["update_weight"]
+                v = (1 - w) * self.embeddings[pid] + w * fresh
+                self.embeddings[pid] = v / np.linalg.norm(v)
+            return set()
+        return set()
+
+    def _clear_crop(self, frame: Frame, det: PoseDetection) -> np.ndarray | None:
+        """The crop, unless another detection overlaps it (IoU above
+        update_max_iou): the other person would be in it."""
+        others = [d for d in self._dets if d is not det]
+        if any(bbox_iou(det.bbox, d.bbox) > self.cfg["update_max_iou"] for d in others):
+            return None
+        return self._crop(frame, det)
+
+    def _most_similar_other(self, embedding: np.ndarray, pid: int) -> tuple[int | None, float]:
+        sims = {q: float(embedding @ v) for q, v in self.embeddings.items() if q != pid}
+        if not sims:
+            return None, -1.0
+        q = max(sims, key=sims.get)
+        return q, sims[q]
+
+    def _relink(self, frame: Frame, seen: dict[int, PoseDetection], pid: int, other: int) -> set[int]:
+        """The track linked to pid shows `other`: move or swap the links."""
+        track_of = self._track_of()
+        tid = track_of[pid]
+        if other in seen:
+            # Swap only if the other track also shows pid, so one doubtful crop
+            # cannot move two players.
+            person = self._clear_crop(frame, seen[other])
+            if person is None:
+                return set()
+            fresh = self._embed(person)
+            if float(fresh @ self.embeddings[pid]) <= float(fresh @ self.embeddings[other]):
+                return set()
+            self.track_to_player[tid], self.track_to_player[track_of[other]] = other, pid
+            seen[pid], seen[other] = seen[other], seen[pid]
+            return {pid, other}
+        self.track_to_player = {t: p for t, p in self.track_to_player.items() if p != other}
+        self.track_to_player[tid] = other
+        seen[other] = seen.pop(pid)
+        for pending in self.pending_tracks.values():
+            pending.last_try_t = -np.inf     # pid is free to be found again right away
+        return {other}
+
+    # ------------------------------------------------------------ game start
+
+    def order_left_to_right(self, xs: dict[int, float]) -> set[int]:
+        """Renumber the players in xs (pid -> x position in px) so that the
+        lowest number is the leftmost, the next one the next, and so on.
+        Players not in xs keep their numbers. Their stored vectors, track
+        links and pending vector refreshes move with them. Returns the new
+        numbers that changed; they are `reentered` on the next update, since
+        the player behind each of them is someone else now."""
+        if self.backend != "reid":
+            return set()            # zones: P1 is always the left half already
+        new = dict(zip(sorted(xs, key=xs.get), sorted(xs), strict=True))
+        changed = {old: n for old, n in new.items() if old != n}
+        if not changed:
+            return set()
+
+        def renumber(pid: int) -> int:
+            return changed.get(pid, pid)
+        self.embeddings = {renumber(p): v for p, v in self.embeddings.items()}
+        self.last_update_t = {renumber(p): v for p, v in self.last_update_t.items()}
+        self.track_to_player = {t: renumber(p) for t, p in self.track_to_player.items()}
+        self.players = {renumber(p): replace(pl, pid=renumber(p)) for p, pl in self.players.items()}
+        self.calibrated = {renumber(p) for p in self.calibrated}
+        self.body_ref = {renumber(p): v for p, v in self.body_ref.items()}
+        self._pos_ema = {}
+        self._vector_wanted = {renumber(p) for p in self._vector_wanted}
+        self._sim = {}
+        self._renumbered |= set(changed.values())
+        return set(changed.values())
+
+    def refresh_vector(self, pid: int, frame: Frame) -> None:
+        """Replace pid's stored vector with one from this frame's crop. If the
+        crop is not usable now (another person overlaps it, or pid is not
+        active), it is taken on the first update where it is."""
+        if self.backend != "reid" or pid not in self.embeddings:
+            return
+        self._vector_wanted.add(pid)
+        p = self.players.get(pid)
+        if p is not None and p.status == "active":
+            self._take_vector(frame, pid, p.det)
+
+    def set_body_reference(self, pid: int, shoulder: float, torso: float) -> None:
+        """pid's shoulder width and torso length (px) measured in the
+        neutral pose: from now on the depth follows the torso length."""
+        self.body_ref[pid] = (shoulder, torso)
+
+    def _position(self, pid: int, det: PoseDetection, frame: Frame, prev: Player | None,
+                  reentered: bool) -> np.ndarray:
+        """Player.pos, (x, depth) in metres (see the module docstring). Keeps
+        the last value when neither the torso nor the shoulders are usable."""
+        if reentered:
+            self._pos_ema.pop(pid, None)
+        held = prev.pos.copy() if prev is not None else np.zeros(2)
+        cfg, w = self.cfg, frame.image.shape[1]
+        f = (w / 2) / math.tan(math.radians(cfg["camera_hfov_deg"]) / 2)
+        good = det.conf >= cfg["pos_kpt_conf"]
+        sw, torso = shoulder_px(det.kpts, good), torso_px(det.kpts, good)
+        ref = self.body_ref.get(pid)
+        if ref is not None and torso:
+            depth = f * cfg["shoulder_m"] / ref[0] * ref[1] / torso
+        elif sw:
+            depth = f * cfg["shoulder_m"] / sw
+        else:
+            return held
+        if sw is not None:
+            x_px = (det.kpts[sk.L_SHOULDER][0] + det.kpts[sk.R_SHOULDER][0]) / 2.0
+        else:
+            x_px = bbox_center(det.bbox)[0]
+        pos = np.array([(x_px - w / 2) * depth / f, depth])
+        return self._pos_ema.setdefault(pid, EMA(cfg["pos_tau_s"]))(pos, frame.t)
+
+    def _take_vector(self, frame: Frame, pid: int, det: PoseDetection) -> None:
+        person = self._clear_crop(frame, det)
+        if person is None:
+            return
+        self.embeddings[pid] = self._embed(person)
+        self.last_update_t[pid] = frame.t
+        self._vector_wanted.discard(pid)
+        self.calibrated.add(pid)
+
+    # ----------------------------------------------------------------- zones
+
+    def _update_zones(self, dets: list[PoseDetection], frame: Frame) -> dict[int, Player]:
         width = frame.image.shape[1]
-        zone_w = width / self.num_players
+        zone_w = width / self.max_players
         best: dict[int, PoseDetection] = {}
         for d in dets:
-            zone = min(int(bbox_center(d.bbox)[0] // zone_w), self.num_players - 1)
+            zone = min(int(bbox_center(d.bbox)[0] // zone_w), self.max_players - 1)
             pid = zone + 1
             if pid not in best or d.score > best[pid].score:
                 best[pid] = d
 
-        for pid in range(1, self.num_players + 1):
+        for pid in range(1, self.max_players + 1):
             prev = self.players.get(pid)
             det = best.get(pid)
             if det is not None:
+                reentered = prev is not None and prev.status == "lost"
                 self.players[pid] = Player(
                     pid=pid, status="active", det=det, bbox=det.bbox.copy(),
-                    pos=np.zeros(2),  # stub: (x, depth) in metres not estimated yet
-                    reentered=prev is not None and prev.status == "lost",
+                    pos=self._position(pid, det, frame, prev, reentered), reentered=reentered,
                 )
             elif prev is not None:
                 self.players[pid] = Player(
@@ -47,18 +448,78 @@ class IdentityTracker:
                 )
         return dict(self.players)
 
+    # ------------------------------------------------------------- interface
+
     def reset(self, pid: int | None = None) -> None:
+        """None: forget every player and track (a new round re-identifies
+        everyone). A pid: forget that player's vector and links; the id is
+        free for the next new player."""
         if pid is None:
-            self.players.clear()
-        else:
-            self.players.pop(pid, None)
+            self._clear()
+            if self.backend == "reid" and self.tracker is not None:
+                self.tracker.reset()
+            return
+        self.players.pop(pid, None)
+        self.embeddings.pop(pid, None)
+        self.last_update_t.pop(pid, None)
+        self.calibrated.discard(pid)
+        self._vector_wanted.discard(pid)
+        self.body_ref.pop(pid, None)
+        self._pos_ema.pop(pid, None)
+        self.track_to_player = {tid: p for tid, p in self.track_to_player.items() if p != pid}
+
+    def _track_of(self) -> dict[int, int]:
+        return {pid: tid for tid, pid in self.track_to_player.items()}
 
     def draw_debug(self, canvas: np.ndarray, state: FrameState) -> None:
-        """Zone split line, player boxes (dashed when not active) and status."""
-        h, w = canvas.shape[:2]
-        for z in range(1, self.num_players):
-            x = int(w * z / self.num_players)
-            canvas[:, max(0, x - 1):x + 1] = (255, 255, 255)
+        """Player boxes (dashed when not active) with status, BoT-SORT track
+        id and this frame's OSNet similarity; green "Identifying..." boxes for
+        tracks without a player (main.py's label); zones: the split line."""
+        if self.backend == "zones":
+            w = canvas.shape[1]
+            for z in range(1, self.max_players):
+                x = int(w * z / self.max_players)
+                canvas[:, max(0, x - 1):x + 1] = (255, 255, 255)
+        track_of = self._track_of() if self.backend == "reid" else {}
         for p in state.players.values():
-            label = f"P{p.pid} {p.status}" + (" REENTER" if p.reentered else "")
+            label = f"P{p.pid} {p.status}"
+            if p.pid in track_of:
+                label += f" t{track_of[p.pid]}"
+            if p.pid in self._sim:
+                label += f" sim {self._sim[p.pid]:.2f}"
+            if p.pos[1] > 0:
+                label += f" {p.pos[1]:.1f} m"
+            if p.pid in self.calibrated:
+                label += " cal"
+            if p.reentered:
+                label += " REENTER"
             draw_bbox(canvas, p.bbox, player_color(p.pid), label, dashed=p.status != "active")
+        if self.backend == "reid":
+            for tid, i in self._tracks.active:
+                if tid not in self.track_to_player:
+                    draw_bbox(canvas, self._dets[i].bbox, (0, 255, 0), f"Identifying... t{tid}")
+            draw_text(canvas, f"stored players: {sorted(self.embeddings)}  OSNet runs: {self._osnet_runs}",
+                      (12, canvas.shape[0] - 12))
+
+    def log_fields(self, state: FrameState) -> dict:
+        """CSV columns (status, box and reentered are in the base log):
+        identity_p<pid>_track: BoT-SORT track id linked to the player, empty
+        when none; identity_p<pid>_sim: OSNet similarity this frame (a match
+        or a vector update), empty when OSNet did not run for the player;
+        identity_p<pid>_calibrated: 1 once the stored vector is from the
+        neutral pose (refresh_vector), else 0; identity_new_best_sim: best
+        similarity of a track without a player to any stored player (shows
+        how close a returning player came to reid_threshold); identity_pending: tracks without a player;
+        identity_osnet_runs: OSNet crops this frame (cost)."""
+        if self.backend != "reid":
+            return {}
+        track_of = self._track_of()
+        row: dict = {}
+        for pid in sorted(self.players):
+            row[f"identity_p{pid}_track"] = track_of.get(pid, "")
+            row[f"identity_p{pid}_sim"] = self._sim.get(pid, "")
+            row[f"identity_p{pid}_calibrated"] = int(pid in self.calibrated)
+        row["identity_new_best_sim"] = "" if self._new_best_sim is None else self._new_best_sim
+        row["identity_pending"] = sum(tid not in self.track_to_player for tid, _ in self._tracks.active)
+        row["identity_osnet_runs"] = self._osnet_runs
+        return row

@@ -9,6 +9,8 @@ from ipcvgame.core.config import load_config
 from ipcvgame.core.types import Frame, FrameState, PoseDetection
 
 W, H = 640, 480
+# Stub face backend: the tests feed black frames and need no YuNet model file.
+NO_MODELS = ["pose.backend=none", "face.backend=stub", "identity.backend=zones"]
 
 
 def fake_det(cx: float) -> PoseDetection:
@@ -22,7 +24,7 @@ def fake_det(cx: float) -> PoseDetection:
 
 @pytest.fixture
 def pipeline():
-    cfg = load_config(overrides=["pose.backend=none"])
+    cfg = load_config(overrides=NO_MODELS)
     return Pipeline(cfg)
 
 
@@ -43,7 +45,9 @@ def test_runs_end_to_end(pipeline, monkeypatch):
     assert {"pose", "identity", "motion", "face", "render", "total"} <= set(state.timings)
 
 
-def test_velocity_uses_frame_time(pipeline, monkeypatch):
+def test_velocity_uses_frame_time(monkeypatch):
+    # The EMA with tau = 0 does not smooth, so the velocity is the plain finite difference.
+    pipeline = Pipeline(load_config(overrides=NO_MODELS + ["motion.backend=ema", "motion.tau=0"]))
     xs = iter([150.0, 160.0])
     monkeypatch.setattr(pipeline.pose, "detect", lambda f: [fake_det(next(xs))])
     pipeline.step(Frame(np.zeros((H, W, 3), np.uint8), 0, 0.0))
@@ -64,8 +68,90 @@ def test_lost_and_reentered(pipeline, monkeypatch):
 
 @pytest.mark.parametrize("until", STAGES)
 def test_until_each_stage(until, monkeypatch):
-    p = Pipeline(load_config(overrides=["pose.backend=none"]), until=until)
+    p = Pipeline(load_config(overrides=NO_MODELS), until=until)
     monkeypatch.setattr(p.pose, "detect", lambda f: [fake_det(150)])
     state, canvas = p.step(frame(0))
     assert canvas.shape == (H, W, 3)
     assert bool(state.players) == (STAGES.index(until) >= STAGES.index("identity"))
+
+
+class RecordingIdentity:
+    def __init__(self):
+        self.ordered, self.refreshed = [], []
+
+    def order_left_to_right(self, xs):
+        self.ordered.append(xs)
+
+    def refresh_vector(self, pid, frame):
+        self.refreshed.append(pid)
+
+    def set_body_reference(self, pid, shoulder, torso):
+        self.refs = {pid: (shoulder, torso)}
+
+
+def test_game_start_tells_identity_who_is_who(pipeline, monkeypatch):
+    """Game start (docs/merge_log.md), step 5: ordered by position when calibration starts; a new
+    vector when a player's neutral pose is measured."""
+    rec = RecordingIdentity()
+    pipeline.identity = rec
+    game = pipeline.game
+    monkeypatch.setattr(game, "in_view", lambda state, pid: True)
+    monkeypatch.setattr(game, "player_x", lambda state, pid: {1: 500.0, 2: 100.0}[pid])
+    state = FrameState(frame(0), {}, {}, {}, [], {})
+
+    game.phase = "calibration"
+    pipeline._calibrate_identity(state, "waiting")
+    assert rec.ordered == [{1: 500.0, 2: 100.0}]
+    pipeline._calibrate_identity(state, "calibration")      # only when it starts
+    assert len(rec.ordered) == 1
+
+    game.get_player(2).shoulder_px, game.get_player(2).torso_px = 80.0, 150.0
+    game.actions = [(2, "learned_neutral"), (1, "learned_punch")]
+    pipeline._calibrate_identity(state, "calibration")
+    assert rec.refreshed == [2] and rec.refs == {2: (80.0, 150.0)}
+
+
+def boom(*args, **kwargs):
+    raise RuntimeError("module crashed")
+
+
+def test_failing_stage_does_not_stop_the_game(pipeline, monkeypatch, capsys):
+    """A crashing face stage: empty faces that frame, the rest runs; after
+    pipeline.fallback_after_s of failing it is swapped for its stub."""
+    monkeypatch.setattr(pipeline.pose, "detect", lambda f: [fake_det(150), fake_det(500)])
+    monkeypatch.setattr(pipeline.face, "update", boom)
+    state, canvas = pipeline.step(frame(0))
+    assert state.faces == {} and set(state.players) == {1, 2} and canvas.shape == (H, W, 3)
+    assert pipeline.failed == ["face"]
+    assert pipeline.log_fields(state)["pipeline_failed"] == "face"
+    assert "module crashed" in capsys.readouterr().err       # the traceback, once
+    after = pipeline.cfg["pipeline"]["fallback_after_s"]
+    i = 1
+    while not pipeline.fallen_back:
+        state, _ = pipeline.step(frame(i))
+        i += 1
+    assert pipeline.fallen_back == {"face"} and (i - 1) / 30 >= after
+    state, _ = pipeline.step(frame(i))
+    assert pipeline.failed == [] and pipeline.face.backend == "stub" and state.faces
+    assert pipeline.log_fields(state)["pipeline_fallback"] == "face"
+
+
+def test_failing_stage_without_stub_keeps_trying(pipeline, monkeypatch):
+    monkeypatch.setattr(pipeline.pose, "detect", boom)
+    for i in range(60):
+        state, _ = pipeline.step(frame(i))
+    assert state.players == {} or all(p.status == "lost" for p in state.players.values())
+    assert pipeline.failed == ["pose"] and pipeline.fallen_back == set()
+
+
+def test_failing_render_shows_the_frame(pipeline, monkeypatch):
+    monkeypatch.setattr(pipeline.renderer, "draw", boom)
+    state, canvas = pipeline.step(frame(0))
+    assert canvas.shape == (H, W, 3) and canvas.any()        # black frame + "RENDER FAILED"
+
+
+def test_catch_errors_off_raises(monkeypatch):
+    p = Pipeline(load_config(overrides=NO_MODELS + ["pipeline.catch_errors=false"]))
+    monkeypatch.setattr(p.gestures, "update", boom)
+    with pytest.raises(RuntimeError):
+        p.step(frame(0))

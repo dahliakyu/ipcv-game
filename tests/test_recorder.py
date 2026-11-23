@@ -1,10 +1,13 @@
 import csv
+import shutil
 
 import cv2
 import numpy as np
+import pytest
 
+from ipcvgame.app.main import main
 from ipcvgame.core.types import Frame, FrameState, Player
-from ipcvgame.io.recorder import ClipRecorder, RunLogger, timestamps_path
+from ipcvgame.io.recorder import ClipRecorder, RunLogger, sidecar_fps, timestamps_path
 from ipcvgame.io.source import VideoFile
 
 W, H = 320, 240
@@ -37,6 +40,32 @@ def test_clip_roundtrip_mirror_and_timestamps(tmp_path):
     assert frames[0].image[:, W // 2:].mean() > frames[0].image[:, : W // 2].mean()
     dts = np.diff([f.t for f in frames])
     np.testing.assert_allclose(dts, np.diff(times), atol=1e-5)
+
+
+def first_frame(path) -> np.ndarray:
+    cap = cv2.VideoCapture(str(path))
+    ok, img = cap.read()
+    cap.release()
+    assert ok
+    return img
+
+
+def test_record_raw_and_view(tmp_path):
+    """--record keeps the raw input, --record-view (no path) the shown view
+    next to it as <clip>_view.mp4, mirrored as on screen."""
+    src = tmp_path / "src.mp4"
+    with ClipRecorder(src, 30, (W, H), mirrored=False) as rec:
+        for i in range(5):
+            rec.write(gradient_frame(i, i / 30))     # bright half on the right in the file
+    raw = tmp_path / "out.mp4"
+    main(["--source", str(src), "--until", "game", "--headless", "--no-log",
+          "--set", "pose.backend=none", "--set", "face.backend=stub", "--set", "identity.backend=zones",
+          "--record", str(raw), "--record-view"])
+    view = tmp_path / "out_view.mp4"
+    assert view.exists() and timestamps_path(view).exists()
+    r, v = first_frame(raw), first_frame(view)
+    assert r[:, W // 2:].mean() > r[:, : W // 2].mean()      # raw: as in the source file
+    assert v[:, : W // 2].mean() > v[:, W // 2:].mean()      # view: mirrored, as shown
 
 
 def player(pid: int, status: str = "active") -> Player:
@@ -76,3 +105,21 @@ def test_run_logger_column_order(tmp_path):
     assert header.index("ms_pose") < header.index("ms_total") < header.index("p1_status")
     assert header.index("p1_score") < header.index("p2_status")
     assert header[-1] == "face_p2_roll"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+def test_clip_container_gets_the_real_frame_rate(tmp_path):
+    """Frames arriving at 10 fps into a clip opened at 30: on close the
+    container says 10 fps (players show real speed), frames unchanged."""
+    path = tmp_path / "slow.mp4"
+    with ClipRecorder(path, 30, (W, H), mirrored=False) as rec:
+        for i in range(61):
+            rec.write(gradient_frame(i, 5.0 + i * 0.1))
+    cap = cv2.VideoCapture(str(path))
+    # The container's rate is estimated from its duration: within a frame.
+    assert cap.get(cv2.CAP_PROP_FPS) == pytest.approx(10.0, rel=0.03)
+    assert int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) == 61
+    cap.release()
+    assert sidecar_fps(path) == pytest.approx(10.0)
+    frames = list(VideoFile(path, mirror=False, video_time="file"))
+    np.testing.assert_allclose(np.diff([f.t for f in frames]), 0.1, atol=1e-5)
